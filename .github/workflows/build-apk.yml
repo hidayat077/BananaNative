@@ -44,12 +44,20 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '10.0.x'
+      # Cached on the packer's own sources (build.sh pins its downloads by SHA-256); a change to any of them rebuilds the stage.
+      - name: Packer stage cache
+        id: pack
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pack/stage
+          key: packer-${{ hashFiles('android/ondevice/**', 'dm/gfx/tools/dmsh_xlate_android/**', 'dm/gfx/tools/*.cs', 'dm/gfx/tools/cra_unscramble.c', 'dm/third_party/zstd-zbic/**') }}
       - name: Packer stage
+        if: steps.pack.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zsh ninja-build cmake clang zlib1g-dev
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           android/ondevice/build.sh "$RUNNER_TEMP/pack" all
-          echo "NX_PACK_STAGE=$RUNNER_TEMP/pack/stage" >> "$GITHUB_ENV"
+      - run: echo "NX_PACK_STAGE=$RUNNER_TEMP/pack/stage" >> "$GITHUB_ENV"
       - name: Build
         working-directory: android/app
         run: ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} apk
