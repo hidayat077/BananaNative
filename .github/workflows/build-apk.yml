@@ -45,6 +45,8 @@ jobs:
           grep -v '^#' android/app/debug.keystore.b64 | tr -d '\n' | base64 -d > /tmp/debug.keystore
           keytool -list -keystore /tmp/debug.keystore -storepass android -alias androiddebugkey >/dev/null || { echo "::error::debug keystore is invalid"; exit 1; }
           mkdir -p ~/.android && cp /tmp/debug.keystore ~/.android/debug.keystore
+          # AGP does not look at ~/.android/debug.keystore on the runner (three runs produced three certificates), so build.gradle signs with this path explicitly
+          echo "NX_DEBUG_STORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
       # The APK carries the on-device packer: its native stage is built first (android/README.md), with the tools build.sh calls.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
