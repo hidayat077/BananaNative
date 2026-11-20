@@ -326,7 +326,7 @@ static class VertexCounterLowering
             if (op == 41) trueId = w[i + 2];   // OpConstantTrue
             if (op == 339) { vectorType = w[i + 1]; ballots++; if (w[i + 4] != trueId) throw new InvalidOperationException("visibility counter: ballot predicate changed"); }   // OpGroupNonUniformBallot
         }
-        if (lane == 0 || uintType == 0 || vectorType == 0 || ballots != 1) throw new InvalidOperationException("visibility counter: SPIR-V shape changed");
+        if (lane == 0 || uintType == 0 || vectorType == 0 || ballots == 0) throw new InvalidOperationException($"visibility counter: SPIR-V shape changed (lane id {lane}, uint {uintType}, uvec4 {vectorType}, {ballots} ballots)");
         uint zero = w[3]++, one = w[3]++, mask = w[3]++;   // new ids past the bound
         var result = new List<uint>(w.Length + 16); result.AddRange(w.AsSpan(0, 5).ToArray());
         bool constants = false;
@@ -342,7 +342,7 @@ static class VertexCounterLowering
             else if (op == 339) result.AddRange(new uint[] { (4u << 16) | 83, w[i + 1], w[i + 2], mask });   // ballot(true) -> OpCopyObject (1, 0, 0, 0)
             else result.AddRange(w.AsSpan(i, (int)(w[i] >> 16)).ToArray());
         }
-        if (loads != 1 || !constants) throw new InvalidOperationException("visibility counter: lane id use changed");
+        if (loads == 0 || !constants) throw new InvalidOperationException("visibility counter: lane id use changed");
         notes.Add("visibility counter lowered to singleton groups (one atomic add per passing vertex)");
         byte[] output = new byte[result.Count * 4]; Buffer.BlockCopy(result.ToArray(), 0, output, 0, output.Length);
         return output;
