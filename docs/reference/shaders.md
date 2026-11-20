@@ -670,13 +670,6 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** `ForcePreciseEnable.cs` marks the value stored to `IoVariable.FragmentOutputDepth` and its defining operations `ForcePrecise` (the `NoContraction` SPIR-V decoration), as in the colour bias case above. The chain and the libraries have to be rebuilt for it to take effect.
 - **Found on:** [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) (Android, Turnip), reported by nx2android (`android.tsv`, `DM_VK_FDZ=0`); TOTKDroid `1ff1c7b4b` found the same in its own translator.
 
-### Switch sub-texel precision (1/256) and D16 shadow references
-
-- **Symptom:** (Android, Adreno) small dark dashes on the ground at fixed world positions that blink as the camera moves; dotted dark cracks between terrain tiles; rows of dark dots by grass; black squares in a grid around the player.
-- **Cause:** Maxwell's texture unit weighs a sub-texel coordinate with 8 bits and rounds a sample's coordinate to 1/256 of a texel. A vertex sample of a shared tile edge at a texel centre therefore reads exactly that texel; Adreno's finer weights blend in a trace of the neighbour, so adjacent tiles' edge heights differ and pixel centres in the gap show the cleared target. A gather takes the 2x2 around its coordinate, which at a texel centre hangs on the last bit; Adreno picked the previous pixel's 2x2 and shaded rows of dark dots. Shadow compares of D16 array cascades have the same issue: a reference left in full float narrowly fails its own compare.
-- **Fix:** `SnapTextureCoords` in `CodeGen/Spirv/Instructions.cs` rounds every 2D gather coordinate to 1/256 with a +1/1024 nudge (so the centre stays the 2x2's top-left) and every vertex-stage 2D sample to 1/256; array layers pass through. Shadow array compares round the reference to D16 (`round(d * 65535) / 65535`). General, for every game and shader; the chain and libraries must be rebuilt. From TOTKDroid `8adbc5c`, `c02a43f`, `ebf93f7`.
-- **Found on:** [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) (Android, Turnip Adreno 650), dark dashes on the Great Sky Island ground; the same mechanisms were found on Breath of the Wild's grassy ground in TOTKDroid. Needs a phone check.
-
 ### iOS math mode (relaxed)
 
 - **Cause:** the translated shaders reproduce Maxwell's NaN behaviour with `isnan` selects (8,337 of 12,809 use them), and the default fast mode allows the GPU compiler to assume there is no NaN.
