@@ -663,6 +663,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Note:** ruled out on the way: the TBDR optimizations, same-pass feedback, the present path. Evaluating the game's conditional rendering on the CPU from earlier frames' results made it worse (the condition belongs to the same frame on the GPU), so the host still ignores the condition there and draws.
 - **Mesh programs (Android):** the translator marks `gl_Position` `Invariant` in every vertex stage under relaxed precision (`Declarations.cs`), but NVN2 mesh programs' position went without it, although Ocarina of Time draws its foliage with a depth-only mesh prepass and an EQUAL colour pass of other mesh programs. `SpirvMeshEntry.cs` now decorates the mesh position the same way (after Swap2-Native's change). It does not explain the [prepass spikes on Qualcomm's driver](rendering.md#depth-only-mesh-prepass-drawn-as-spikes-on-qualcomms-driver), whose primitives reference vertex slots never written; whether EQUAL then holds without the cut is for a phone run (`DM_VK_MESH_PREPASS_SKIP=0`). Check: `test_dmsh_ampere_mesh.py` `test_position_invariant_under_relaxed_precision`.
 
+### Exact fragment depth under relaxed precision
+
+- **Symptom:** water and lakes rendered black on a Turnip driver: the light classifier's material id no longer met the lighting pass's `EQUAL` depth test.
+- **Cause:** the translator compiles with relaxed precision, and the depth a fragment shader writes went through unmarked arithmetic. Turnip reassociated that arithmetic (an ulp apart), so the stored D16 material id differed from the depth the lighting quad tested against; Qualcomm's driver kept the order. The same reassociation is harmless for colour, which is why only the lighting selection failed.
+- **Fix:** `ForcePreciseEnable.cs` marks the value stored to `IoVariable.FragmentOutputDepth` and its defining operations `ForcePrecise` (the `NoContraction` SPIR-V decoration), as in the colour bias case above. The chain and the libraries have to be rebuilt for it to take effect.
+- **Found on:** [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md) (Android, Turnip), reported by nx2android (`android.tsv`, `DM_VK_FDZ=0`); TOTKDroid `1ff1c7b4b` found the same in its own translator.
+
 ### iOS math mode (relaxed)
 
 - **Cause:** the translated shaders reproduce Maxwell's NaN behaviour with `isnan` selects (8,337 of 12,809 use them), and the default fast mode allows the GPU compiler to assume there is no NaN.
