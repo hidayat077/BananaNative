@@ -106,6 +106,9 @@ static int layout_slow(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout
             if (s->memu == 1) { k.b[k.n].binding = VKA_MEMU_REC_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++;
                                 k.pc |= (uint32_t)stage_bit(s->e->stage); }
         }
+        if (s->tf_fx && k.n + 5 <= MAXB) {   // transform feedback capture: the four capture buffers and the control block (vk_android_spv.py tf_capture)
+            for (int b = 0; b < 5; b++) { k.b[k.n].binding = b < 4 ? VKA_TF_BUF_BINDING(b) : VKA_TF_CTL_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++; }
+        }
         if (s->gs_fx > 0 && k.n < MAXB) {   // the claim words of a geometry shader that writes memory (vka_spv_gs_claim)
             k.b[k.n].binding = VKA_GS_CLAIM_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++;
         }
@@ -394,12 +397,13 @@ static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_la
         vka_shader *s = sh[order[i]]; if (!s) continue;
         int fs = order[i] == 1, gl = k->gl_depth && order[i] == last_pre && (s->e->flags & DMSH_VK_F_GL_DEPTH);
         uint32_t fu = 0, fsm = 0; if (fs && k->fs_variant == VKA_FS_RETYPE) fout_masks(s, k, &fu, &fsm);
-        VkShaderModule mod = order[i] == 0 && (k->vin_u | k->vin_s) ? vka_shader_vin_module(s, k->vin_u, k->vin_s) : order[i] == 2 && k->gs_fx ? vka_shader_gs_module(s)
+        VkShaderModule mod = order[i] == 0 && k->gs_fx == 2 && s->tf_fx ? vka_shader_module(s, DMSH_VK_MOD_TF)   // transform feedback capture (vka_draw.c g_tf_cap)
+                           : order[i] == 0 && (k->vin_u | k->vin_s) ? vka_shader_vin_module(s, k->vin_u, k->vin_s) : order[i] == 2 && k->gs_fx == 1 ? vka_shader_gs_module(s)
                            : fs && k->fs_variant == VKA_FS_RETYPE ? (fu | fsm ? vka_shader_fout_module(s, fu, fsm) : vka_shader_module(s, DMSH_VK_MOD_BASE))
                            : vka_shader_module(s, fs ? k->fs_variant : DMSH_VK_MOD_BASE);
-        if (!mod && order[i] == 2 && k->gs_fx) mod = vka_shader_module(s, DMSH_VK_MOD_BASE);   // no module with the claim (logged): the shader as it is
+        if (!mod && (order[i] == 2 || order[i] == 0) && k->gs_fx) mod = vka_shader_module(s, DMSH_VK_MOD_BASE);   // no module with the claim (logged): the shader as it is
         if (mod && order[i] == 2 && sh[1]) {   // the pixel shader's inputs the geometry shader does not write, added (vka_shader_gs_link_module); none: the module above
-            VkShaderModule lm = vka_shader_gs_link_module(s, sh[0], sh[1], k->gs_fx && mod == vka_shader_gs_module(s));
+            VkShaderModule lm = vka_shader_gs_link_module(s, sh[0], sh[1], k->gs_fx == 1 && mod == vka_shader_gs_module(s));
             if (lm) mod = lm;
         }
         if (!mod) return 0;

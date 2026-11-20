@@ -48,6 +48,8 @@ static uint64_t g_skip_dev[VKS_N];   // the skips the warning counts by cause (v
 // are skipped for a while and nobody is told to prepare the game again
 int vka_layer_on(void);
 #define SKIP_COUNT(bad) do { if (!((bad) & VKA_BAD_MISSING)) g_skip_dev[VKS_SHADER]++; else if (!vka_layer_on()) g_skip_dev[VKS_MISSING]++; } while (0)
+static int g_tf_cap;   // the draw captures transform feedback: its vertex shader's DMSH_VK_MOD_TF module, the buffers and the control block bound (bind_sets)
+static struct { VkBuffer buf[4]; VkDeviceSize off[4], size[4]; uint32_t ctl[12]; } g_tf;
 static uint32_t g_claim_words;   // the draw's claim words (an upper bound of its primitives): 0 = its geometry shader takes no claim
 #define SKIPD(c, ...) do { g_skip_dev[c]++; SKIP(__VA_ARGS__); } while (0)   // (SKIP, counted as a device cause)
 #define SKIP(...) do { g_skipped++; static _Atomic int n_; if (atomic_fetch_add(&n_, 1) < 4) VRED(__VA_ARGS__); return; } while (0)
@@ -133,8 +135,8 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
     case OP_BLEND_COLOR: memcpy(d->blend_color, ((const p_blend_color *)a)->rgba, 16); break;
     case OP_ALPHA_REF: d->alpha_ref = ((const p_alpha_ref *)a)->ref; break;
     case OP_PUSH_CONST: { const p_push_const *b = a; if ((uint32_t)b->offset + b->size <= DMSH_PUSH_SIZE) { memcpy(d->b.push[b->compute ? 1 : 0] + b->offset, b->data, b->size); d->s_push = vka_stamp(); } break; }
-    case OP_TF_BIND: break;
-    case OP_TF_STATE: { const p_tf_state *b = a; d->tf_on = b->what == 0 || b->what == 3; break; }
+    case OP_TF_BIND: { const p_tf_bind *b = a; if (b->index >= 0 && b->index < 4) d->tf[b->index] = *b; break; }
+    case OP_TF_STATE: { const p_tf_state *b = a; d->tf_on = b->what == 0 || b->what == 3; if (b->what == 0) memset(d->tf_off, 0, sizeof d->tf_off); break; }   // (the control buffer's saved counters are not kept: open, vka_draw.c g_tf_cap)
     case OP_PRIM_RESTART: d->restart = *(const p_prim_restart *)a; break;
     case OP_RAST_DISCARD: d->rast_discard = ((const p_rast_discard *)a)->on; break;
     default: return 0;
@@ -1598,6 +1600,18 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
         g_w.bi[k] = (VkDescriptorBufferInfo){cs.buf, cs.off, n};
         g_w.w[k] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = VKA_GS_CLAIM_BINDING, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &g_w.bi[k]};
     }
+    if (g_tf_cap && bp == VK_PIPELINE_BIND_POINT_GRAPHICS) {   // the capture buffers and the control block (vk_android_spv.py tf_capture)
+        vka_span cs;
+        if (g_w.n + 5 > 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
+        if (!vka_scratch(sizeof g_tf.ctl, V.sb_align, &cs)) return 0;
+        memcpy(cs.ptr, g_tf.ctl, sizeof g_tf.ctl);
+        for (int b = 0; b < 5; b++) {
+            uint32_t k = g_w.n++;
+            if (b < 4) g_w.bi[k] = g_tf.buf[b] ? (VkDescriptorBufferInfo){g_tf.buf[b], g_tf.off[b], g_tf.size[b]} : (VkDescriptorBufferInfo){g_sink.buf, g_sink.off, 65536};
+            else g_w.bi[k] = (VkDescriptorBufferInfo){cs.buf, cs.off, sizeof g_tf.ctl};
+            g_w.w[k] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = b < 4 ? VKA_TF_BUF_BINDING(b) : VKA_TF_CTL_BINDING, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &g_w.bi[k]};
+        }
+    }
     if (sh[0] && sh[0]->memu == 2 && bp == VK_PIPELINE_BIND_POINT_GRAPHICS) memu_bind_arena();   // a mesh draw through compute: the arena it draws (vka_memu_draw.inc)
     if (g_sets_dry) { g_dry_pool = any_pool; return 1; }   // DM_VK_INSTANCE: the writes only (sets_push binds them)
     return sets_push(lay, bp, any_pool);
@@ -1623,6 +1637,7 @@ static int make_images(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], in
 
 // The draw writes memory: a storage buffer or image it writes, raw global stores (their write log), a geometry shader's claimed writes (from the walk, walk_all)
 static int draw_writes(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
+    if (g_tf_cap) return 1;
     if (sh[2] && sh[2]->gs_fx > 0) return 1;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
@@ -2364,8 +2379,6 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (bad) { g_skipped++; SKIP_COUNT(bad); return; }   // a refused or missing shader (logged when it was made; a missing one is not the device's: vka_skipwarn.h)
         if (!sh[0]) SKIP("draw with no vertex shader bound: skipped");
         if (sh[1] && (sh[1]->e->flags & DMSH_VK_F_MESH_PRIM)) SKIP("pixel shader %016llx reads per-primitive mesh outputs and is drawn with a vertex shader: skipped", (unsigned long long)sh[1]->key);
-        if (d->rast_discard && d->tf_on) SKIP("transform feedback is not on Vulkan yet (F_TF): the draw is skipped");
-        if (d->tf_on) VRED_ONCE("transform feedback is not on Vulkan yet: the draw is drawn without capture");
     }
     // DM_VK_DRAW_SKIP_KEY=<pixel shader key>,... (diagnostic): the draws of those pixel shaders are not drawn (their pass still opens and clears), to see a pass's share of the picture
     { static char sk[1024]; static int got; if (!got) { const char *e = getenv("DM_VK_DRAW_SKIP_KEY"); snprintf(sk, sizeof sk, "%s", e ? e : ""); got = 1; }
@@ -2383,6 +2396,33 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     uint64_t ind = memu_e ? 0 : dw ? dw->ind : di->ind;
     // A geometry shader that writes memory makes those writes in the run that claims its primitive (vka_spv_gs_claim): a zeroed word per primitive at VKA_GS_CLAIM_BINDING.
     // Primitive IDs restart with each instance and an indirect draw's count is the GPU's, so those draws take the shader as it is (each run writing)
+    g_tf_cap = 0;
+    if (d->tf_on && !mesh) {   // Transform feedback of a direct array draw: the vertex shader's capture module writes each vertex's outputs into the bound buffers (vk_android_spv.py tf_capture), at the byte
+        // offsets this replay has counted since the capture began. Open (marked in the game's note): DrawTransformFeedback, indexed and indirect captures, a geometry shader's capture, and the
+        // control buffer's saved counters (End / Pause do not write them)
+        const char *why = !sh[0]->tf_fx ? "its vertex shader has no capture module" : !dw ? "an indexed draw" : dw->ind || dw->mdi_cnt ? "an indirect draw" : expand ? "quads or a line loop" : sh[2] || sh[3] || sh[4] ? "geometry or tessellation" : NULL;
+        int64_t rec = dw ? (int64_t)dw->count * (dw->instances > 0 ? dw->instances : 1) : 0;
+        if (!why) {
+            for (int b = 0; b < 4 && !why; b++) {
+                if (!sh[0]->tf_stride[b]) continue;
+                uint64_t st = sh[0]->tf_stride[b], size = d->tf[b].size, off = d->tf_off[b];
+                if (!d->tf[b].addr || off >= size) { why = "a capture buffer is unbound or full"; break; }
+                if ((uint64_t)rec > (size - off) / st) rec = (int64_t)((size - off) / st);
+                VkBuffer bb; VkDeviceSize bo;
+                if (!vka_addr(d->tf[b].addr, size, &bb, &bo, NULL)) why = "a capture buffer is outside placed guest memory";
+                else { g_tf.buf[b] = bb; g_tf.off[b] = bo; g_tf.size[b] = size; }
+            }
+        }
+        if (!why && rec > 0) {
+            memset(g_tf.ctl, 0, sizeof g_tf.ctl);
+            for (int b = 0; b < 4; b++) g_tf.ctl[b] = (uint32_t)d->tf_off[b];
+            g_tf.ctl[4] = (uint32_t)rec; g_tf.ctl[8] = (uint32_t)dw->first; g_tf.ctl[9] = (uint32_t)dw->count; g_tf.ctl[10] = (uint32_t)dw->base_instance;
+            g_tf_cap = 1;
+        } else if (why) {
+            if (d->rast_discard) SKIP("transform feedback (%s): the draw is skipped", why);
+            VRED_ONCE("transform feedback (%s): the draw is drawn without capture", why);
+        }
+    }
     g_claim_words = 0;
     if (sh[2] && sh[2]->gs_fx > 0) {
         int inst_n = dw ? dw->instances : di->instances;
@@ -2478,7 +2518,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         for (uint32_t i = 0; i < R.ncolor; i++) if (R.cf[i] && (R.ckind[i] == 1 || R.ckind[i] == 2) && (fs->e->fout_mask >> i & 1) && (fs->e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (R.ckind[i] == 1) fu |= 1u << i; else fsm |= 1u << i; }
         if ((fu | fsm) && vka_shader_fout_retyped((vka_shader *)fs, fu, fsm)) variant = VKA_FS_RETYPE;
     }
-    k.fs_variant = (uint8_t)variant; k.gs_fx = g_claim_words != 0;
+    k.fs_variant = (uint8_t)variant; k.gs_fx = g_tf_cap ? 2 : g_claim_words != 0;
     int src1_used = 0;
     for (uint32_t i = 0; i < R.ncolor; i++) {
         k.cfmt[i] = R.cf[i];
@@ -2679,6 +2719,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     vka_oq_draw();   // counting samples passed: the pass's first draw (or the first after a report, a reset or a clear) begins an occlusion query
 
     PT(7);
+    if (g_tf_cap) for (int b = 0; b < 4; b++) d->tf_off[b] += (uint64_t)g_tf.ctl[4] * sh[0]->tf_stride[b];   // the records this draw captures follow the earlier ones
     if (g_fs_sub) g_sub_drawn = 1;   // (prepass_draw: its depth reached the draw)
     // The draw
     uint32_t inst = (uint32_t)((dw ? dw->instances : di->instances) > 0 ? (dw ? dw->instances : di->instances) : 1), binst = d->b.base_instance;

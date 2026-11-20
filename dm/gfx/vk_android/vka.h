@@ -449,11 +449,13 @@ VkSampler vka_samp_default(void);                   // the sampler an unbound sa
 typedef struct vka_shader {
     uint64_t key; const dmsh_vk_entry *e; const dmsh_vk_bind *b;
     const vka_shlib *lib;               // the library the entry is in (its header's translator answers; its other modules)
-    VkShaderModule mods[5];             // by DMSH_VK_MOD_* variant, made when a pipeline first asks (the base when the shader is made)
+    VkShaderModule mods[6];             // by DMSH_VK_MOD_* variant, made when a pipeline first asks (the base when the shader is made)
     struct vka_vinmod *vin;             // vertex modules with integer-fed inputs retyped, by masks (vka_shader_vin_module)
     struct vka_vinmod *fout;            // pixel modules with float outputs retyped for integer targets, by masks (vka_shader_fout_module)
     vka_span c1; VkDeviceSize c1_len;   // the c1 bytes in static memory (none when c1_len is 0)
     int bad;                            // refused: no module, an unknown binding, an NV-only capability (logged once with its key)
+    int tf_fx;                          // a vertex shader with a DMSH_VK_MOD_TF module (transform feedback capture): its layout has the capture bindings, tf_stride[] its strides in bytes
+    uint32_t tf_stride[4];
     int gs_fx;                          // a geometry shader's memory writes (vka_spv_gs_claim): above 0, its draws bind a claim buffer at VKA_GS_CLAIM_BINDING
     VkShaderModule gs_claim;            // its module with those writes under the per-primitive claim, made when a pipeline first asks
     VkShaderModule frz[2]; int frz_none;   // a task / mesh module with its specialization constants folded, by GL depth (vka_shader_spec_module); frz_none: it needs none
@@ -500,6 +502,8 @@ VkShaderModule vka_shader_img_module(vka_shader *s, uint64_t umask, uint64_t sma
 VkShaderModule vka_shader_inst_module(vka_shader *s, uint32_t binding, uint32_t loc);   // an instanced variant of the base module (vka_spv_instance), made each call
 VkShaderModule vka_shader_gs_module(vka_shader *s);   // a geometry shader's module with its memory writes made once per primitive (vka_spv_gs_claim)
 VkShaderModule vka_shader_gs_link_module(vka_shader *gs, vka_shader *vs, vka_shader *fs, int claim);   // with the pixel inputs it does not write added (VK_NULL_HANDLE: none to add)
+#define VKA_TF_BUF_BINDING(b) (DMSH_VK_TF_BINDING_BUF + (b))   // set 0, vertex range: the capture buffers and the control block (dmsh_abi_vk.h, vk_android_spv.py tf_capture)
+#define VKA_TF_CTL_BINDING DMSH_VK_TF_BINDING_CTL
 #define VKA_GS_CLAIM_BINDING (DMSH_VK_STAGE_GS * DMSH_VK_STAGE_BINDINGS + DMSH_VK_STAGE_BINDINGS - 1)   // set 0: the claim words of such a shader (the stage's last binding)
 VkShaderModule vka_shader_fout_module(vka_shader *s, uint32_t umask, uint32_t smask);
 typedef struct { int variant; uint32_t vin_u, vin_s, fout_u, fout_s; int frz; uint64_t tex_u, tex_s; } vka_texmod_key;   // variant: DMSH_VK_MOD_*; frz: -1 or the folded GL depth
@@ -536,6 +540,7 @@ typedef struct {
     uint8_t vp_origin[16];             // per viewport: the recording device's window origin, 1 + NVNwindowOriginMode (p_viewports.origin), 0 = the device origin now
     float blend_color[4], alpha_ref;
     p_prim_restart restart; int rast_discard, tf_on;
+    p_tf_bind tf[4]; uint64_t tf_off[4];   // the capture buffers bound and the bytes captured into each since the capture began (kept by the replay: the draws' record counts are known)
     int inited;
     uint32_t bind_gen;                 // raised by every state record but a uniform buffer bind (vka_draw.c's instanced runs: a draw that joins without its walk)
     uint32_t ubo_dirty[VKA_NSTAGE];    // uniform buffer slots bound since the open run's last draw, a bit per slot

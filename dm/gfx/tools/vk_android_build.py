@@ -629,6 +629,9 @@ def finish(key, w, job, c1):
     if stage == 'cs':   # its subgroup shuffles through workgroup memory, for drivers without an arbitrary-index shuffle instruction (vk_android_spv.py shuffle_lds)
         x = spv.Module(m.data())
         if spv.shuffle_lds(x, VK['SHARED_MAX']): mods.append((VK['MOD_SHUFFLE_LDS'], x.data()))
+    if stage == 'vs' and job.get('tf'):   # transform feedback capture (vk_android_spv.py tf_capture)
+        x = spv.Module(m.data())
+        if spv.tf_capture(x, job['tf']): mods.append((VK['MOD_TF'], x.data()))
     for variant, data in mods:
         err = validate(data, w, f'{key}_{variant}')
         if err: return 'spirv-val failed', err, None
@@ -685,6 +688,13 @@ def pack_module(data):
     return (c, VK['CODEC_ZSTD']) if len(c) < len(data) else (data, VK['CODEC_RAW'])
 
 
+
+def tf_strides(refl):
+    """A vertex shader's shared word (unused for it): the capture strides of its DMSH_VK_MOD_TF module, in 32-bit words, a byte per stream (0: none)"""
+    if not refl.get('tf') or VK['MOD_TF'] not in refl.get('variants', ()): return 0
+    return sum((e['stride'] // 4) << (8 * b) for b, e in enumerate(refl['tf']) if e)
+
+
 def entry_parts(key, refl, nmods):
     """One shader's part of the library as the library stores it: (its 64-byte entry with its positions in the file zero, its binding records, its c1 bytes). A result
     reused from an older library (delta) carries them as they were there"""
@@ -700,7 +710,7 @@ def entry_parts(key, refl, nmods):
     fout_mask = sum(1 << int(l) for l in refl['fout'] if int(l) < 8); fout_types = sum(t << (2 * int(l)) for l, t in refl['fout'].items() if int(l) < 8)
     lx, ly, lz = (list(refl['local']) + [1, 1, 1])[:3]
     entry = delta.ENTRY.pack(key_int(key), vin_types, STAGE[refl['stage']], nmods, refl['flags'], 0, 0, len(refl['bindings']), fout_types,
-                             lx, ly, lz, fout_mask, refl.get('uint_mask', 0), refl['shared'], 0, len(c1), vin_mask)
+                             lx, ly, lz, fout_mask, refl.get('uint_mask', 0), tf_strides(refl) if refl['stage'] == 'vs' else refl['shared'], 0, len(c1), vin_mask)
     return entry, bytes(binds), c1
 
 
