@@ -1,0 +1,80 @@
+# Builds the test-app APK with only Pokemon Z-A and Zelda TotK (title IDs below); add a game by adding its ID to nxGames.
+name: build-apk
+
+on:
+  push:
+    branches: [modification]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  nxGames: 0100F43008C44000,0100F2C0115B6000
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: JDK 21
+        run: echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV" && echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+      - name: NDK cache
+        id: ndk
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/ndk/28.2.13676358 # the runner image's ANDROID_HOME
+          key: ndk-28.2.13676358
+      - name: Android SDK and NDK
+        run: |
+          if [ "${{ steps.ndk.outputs.cache-hit }}" != true ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358"
+          fi
+          echo "sdk.dir=$ANDROID_HOME" > android/app/local.properties
+      # A fixed signing key keeps every build upgradable in place. The build signs with the debug key, so the secret is a
+      # base64 debug.keystore (alias androiddebugkey, password android): see the comment at the end of the file.
+      - name: Signing key
+        env:
+          KS: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KS" || { echo "::error::secret DEBUG_KEYSTORE_BASE64 is missing"; exit 1; }
+          mkdir -p ~/.android && echo "$KS" | base64 -d > ~/.android/debug.keystore
+      # The APK carries the on-device packer: its native stage is built first (android/README.md), with the tools build.sh calls.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      # Cached on the packer's own sources (build.sh pins its downloads by SHA-256); a change to any of them rebuilds the stage.
+      - name: Packer stage cache
+        id: pack
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pack/stage
+          key: packer-${{ hashFiles('android/ondevice/**', 'dm/gfx/tools/dmsh_xlate_android/**', 'dm/gfx/tools/*.cs', 'dm/gfx/tools/cra_unscramble.c', 'dm/third_party/zstd-zbic/**') }}
+      - name: Packer stage
+        if: steps.pack.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh ninja-build cmake clang zlib1g-dev
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          android/ondevice/build.sh "$RUNNER_TEMP/pack" all
+      - run: echo "NX_PACK_STAGE=$RUNNER_TEMP/pack/stage" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: android/app
+        run: ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} apk
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nxnative-android-apk
+          path: android/app/out/nxnative-android.apk
+
+# Make the secret once, locally: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \
+#   -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Android Debug,O=Android,C=US" && base64 -w0 debug.keystore
+# then paste the output into Settings > Secrets and variables > Actions > DEBUG_KEYSTORE_BASE64. Keep the file; never commit it.
+# An APK signed by another key (a local build, an older CI run) still needs one uninstall, the first time only.

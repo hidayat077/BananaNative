@@ -1844,3 +1844,86 @@ def hmma_lds(m, keep=None):
     m.index()
     promote_locals(m)
     return calls
+
+
+TF_BINDING_CTL, TF_BINDING_BUF = 63, 59   # set 0 bindings of the capture control block and of the four capture buffers (dmsh_abi_vk.h DMSH_VK_TF_BINDING_*)
+DEC_OFFSET, DEC_ARRAY_STRIDE, BUILTIN_VERTEX_INDEX, BUILTIN_INSTANCE_INDEX = 35, 6, 42, 43
+OP_BRANCH, OP_BRANCH_COND, OP_SELECTION_MERGE, OP_ULESS = 249, 250, 247, 176
+
+
+def tf_capture(m, tf):
+    """Transform feedback capture (the module of DMSH_VK_MOD_TF; dmsh_build.py vs_tf on Metal): before every return of the entry function, when the vertex's record index is
+    below the control block's count, its output components (tf from dmsh_build.py tf_layout: per stream the stride and [location, components] in order) are stored as
+    32-bit words into storage buffer TF_BINDING_BUF + stream at offset[stream] / 4 + record * stride / 4 + k. The record is (InstanceIndex - base_instance) * count +
+    VertexIndex - first (the host puts the draw's firstVertex / firstInstance in the block). Components the shader does not write read (0, 0, 0, 1) as on the hardware.
+    The control block is uint[12]: offset[4], args[4] (args[0]: records to capture), first, count, base_instance, pad. → True when a capture was added"""
+    if m.model != 'vs' or not any(tf) or any(e and (e['stride'] % 4 or not 4 <= e['stride'] <= 1020) for e in tf): return False   # (strides travel as bytes of words in the entry)
+    u32 = m.find_type(OP_TYPE_INT, 32, 0) or m.add_type(OP_TYPE_INT, 32, 0)
+    f32 = m.find_type(OP_TYPE_FLOAT, 32)
+    boolean = m.add_type(OP_TYPE_BOOL)
+    c = lambda v: m.add_const(u32, v)
+    sb_u = m.add_type(OP_TYPE_POINTER, SC_STORAGE_BUFFER, u32)
+    in_u = m.add_type(OP_TYPE_POINTER, SC_INPUT, u32)
+    i32 = m.find_type(OP_TYPE_INT, 32, 1)
+    vid_v = input_builtin(m, BUILTIN_VERTEX_INDEX, i32 or u32)
+    iid_v = input_builtin(m, BUILTIN_INSTANCE_INDEX, i32 or u32)
+    idx_t = i32 or u32
+    ctl_s = m.add_type(OP_TYPE_STRUCT, *([u32] * 12)); ctl_p = m.add_type(OP_TYPE_POINTER, SC_STORAGE_BUFFER, ctl_s)
+    ra = m.new_id(); m._insert_decl([3 << 16 | OP_TYPE_RUNTIME_ARRAY, ra, u32]); m.types[ra] = [3 << 16 | OP_TYPE_RUNTIME_ARRAY, ra, u32]
+    buf_s = m.new_id(); m._insert_decl([3 << 16 | OP_TYPE_STRUCT, buf_s, ra]); m.types[buf_s] = [3 << 16 | OP_TYPE_STRUCT, buf_s, ra]
+    buf_p = m.new_id(); m._insert_decl([4 << 16 | OP_TYPE_POINTER, buf_p, SC_STORAGE_BUFFER, buf_s]); m.types[buf_p] = [4 << 16 | OP_TYPE_POINTER, buf_p, SC_STORAGE_BUFFER, buf_s]
+    dec = []   # annotations, placed before the first OpDecorate
+    def var(ptr, binding):
+        v = m.new_id(); m._insert_decl([4 << 16 | OP_VARIABLE, ptr, v, SC_STORAGE_BUFFER])
+        dec.extend([[4 << 16 | OP_DECORATE, v, DEC_SET, 0], [4 << 16 | OP_DECORATE, v, DEC_BINDING, binding]])
+        return v
+    ctl = var(ctl_p, TF_BINDING_CTL)
+    dec.append([3 << 16 | OP_DECORATE, ctl_s, DEC_BLOCK])
+    dec.extend([[5 << 16 | OP_MEMBER_DECORATE, ctl_s, i, DEC_OFFSET, 4 * i] for i in range(12)])
+    dec.extend([[4 << 16 | OP_DECORATE, ra, DEC_ARRAY_STRIDE, 4], [3 << 16 | OP_DECORATE, buf_s, DEC_BLOCK], [5 << 16 | OP_MEMBER_DECORATE, buf_s, 0, DEC_OFFSET, 0]])
+    bufs = {b: var(buf_p, TF_BINDING_BUF + b) for b, e in enumerate(tf) if e}
+    at = next(k for k, y in enumerate(m.ins) if y[0] & 0xffff == OP_DECORATE)
+    m.ins[at:at] = dec
+    if m.header[1] >= 0x10400:   # SPIR-V 1.4: every global variable the entry uses is in its interface
+        k = next(k for k, x in enumerate(m.ins) if x[0] & 0xffff == OP_ENTRY_POINT)
+        m.ins[k] = m.ins[k] + [ctl, *bufs.values()]; m.ins[k][0] = len(m.ins[k]) << 16 | OP_ENTRY_POINT
+    m.index()
+    outs = m.io(SC_OUTPUT)
+    for v in (*range(13), 2, 0x3f800000, *(e['stride'] // 4 for e in tf if e)): c(v)   # the constants first: adding one moves the instructions the loop walks
+    a, e = m.function_range(m.entry_function())
+    out, n = [], 0
+    for k, x in enumerate(list(m.ins)):
+        if a < k < e and x[0] & 0xffff == OP_RETURN:
+            def ld(index):   # load control word index
+                p, v = m.new_id(), m.new_id(); out.extend([[5 << 16 | OP_ACCESS_CHAIN, sb_u, p, ctl, c(index)], [4 << 16 | OP_LOAD, u32, v, p]]); return v
+            def op(code, ty, *ops):
+                r = m.new_id(); out.append([(3 + len(ops)) << 16 | code, ty, r, *ops]); return r
+            def as_u(v): return v if idx_t == u32 else op(OP_BITCAST, u32, v)
+            lv, li = m.new_id(), m.new_id(); out.extend([[4 << 16 | OP_LOAD, idx_t, lv, vid_v], [4 << 16 | OP_LOAD, idx_t, li, iid_v]])
+            vid, iid = as_u(lv), as_u(li)
+            first, count, base, limit = ld(8), ld(9), ld(10), ld(4)
+            linear = op(128, u32, op(132, u32, op(130, u32, iid, base), count), op(130, u32, vid, first))   # IAdd(IMul(ISub(iid, base), count), ISub(vid, first))
+            ok, go, done = op(OP_ULESS, boolean, linear, limit), m.new_id(), m.new_id()
+            out.extend([[3 << 16 | OP_SELECTION_MERGE, done, 0], [4 << 16 | OP_BRANCH_COND, ok, go, done], [2 << 16 | OP_LABEL, go]])
+            for b, ent in enumerate(tf):
+                if not ent: continue
+                base_w = op(194, u32, ld(b), c(2))   # ShiftRightLogical: offset / 4
+                rec = op(128, u32, base_w, op(132, u32, linear, c(ent['stride'] // 4)))
+                w = 0
+                for loc, comps in ent['outputs']:
+                    ov = outs.get(loc)
+                    vals = None
+                    if ov:
+                        val = m.new_id(); out.append([4 << 16 | OP_LOAD, ov[1], val, ov[0]]); vals = (val, ov[1])
+                    for i in range(comps):
+                        if vals and m.op(vals[1]) == OP_TYPE_VECTOR and i < m.types[vals[1]][3]:
+                            comp = op(OP_COMPOSITE_EXTRACT, m.scalar_of(vals[1]), vals[0], i); word = comp if m.scalar_of(vals[1]) == u32 else op(OP_BITCAST, u32, comp)
+                        else: word = c(0x3f800000 if i == 3 else 0)
+                        p = m.new_id(); out.extend([[6 << 16 | OP_ACCESS_CHAIN, sb_u, p, bufs[b], c(0), op(128, u32, rec, c(w + i))], [3 << 16 | OP_STORE, p, word]])
+                    w += comps
+            out.extend([[2 << 16 | OP_BRANCH, done], [2 << 16 | OP_LABEL, done]])
+            n += 1
+        out.append(x)
+    m.ins = out
+    m.index()
+    return n > 0

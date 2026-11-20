@@ -104,6 +104,9 @@
 #define DMSH_VK_MOD_UINT 1               // every colour output as the unsigned integer vector of its bits: for a pipeline whose colour attachments are all UINT formats
 #define DMSH_VK_MOD_UINT_MIXED 2         // only the targets of the entry's uint_mask as unsigned integers, the others float: for exactly those UINT attachments
 #define DMSH_VK_MOD_DUAL 3               // output 1 as Location 0 Index 1: for a pipeline blending target 0 with a SRC1 factor (dualSrcBlend); profile table dual_want.tsv
+#define DMSH_VK_MOD_TF 5                 // vertex: the base plus transform feedback capture (vk_android_spv.py tf_capture): storage buffers at set 0 bindings DMSH_VK_TF_BINDING_BUF + stream, control block at DMSH_VK_TF_BINDING_CTL (uint[12]: offset[4], args[4] (args[0] records to capture), first, count, base_instance, pad)
+#define DMSH_VK_TF_BINDING_BUF 59
+#define DMSH_VK_TF_BINDING_CTL 63
 #define DMSH_VK_MOD_SHUFFLE_LDS 4        // compute: its 32-bit subgroup shuffles through workgroup memory (vk_android_spv.py shuffle_lds), for a driver without an arbitrary-index
                                          // shuffle instruction (Turnip makes each one a loop); its workgroup memory, with the rows this adds, is at most DMSH_VK_SHARED_MAX bytes
 // How a module is stored: the SPIR-V words as they are, or one zstd frame of them (about a fifth of the size; the replay links zstd's decompressor)
@@ -121,7 +124,7 @@
 #define DMSH_VK_F_EARLY_Z 1              // early fragment tests (control +0x718; also an EarlyFragmentTests execution mode in the module)
 #define DMSH_VK_F_SOFTFLOAT64 2          // FP64 lowered to FP32 (the device has no shaderFloat64)
 #define DMSH_VK_F_SUBGROUP 4             // subgroup operations (built for header subgroup_size lanes: see DMSH_VK_SUBGROUP_SIZE)
-#define DMSH_VK_F_TF 8                   // transform feedback in the program's control section: not captured by this library (no Xfb decorations)
+#define DMSH_VK_F_TF 8                   // transform feedback in the program's control section: captured by the DMSH_VK_MOD_TF module (storage buffer stores, no Xfb decorations)
 #define DMSH_VK_F_NV_PASSTHROUGH 16      // geometry passthrough through SPV_NV_geometry_shader_passthrough (none since the gs_passthrough answer)
 #define DMSH_VK_F_NV_VIEWPORT 32         // ViewportMaskNV / SPV_NV_viewport_array2 (none: see DMSH_VK_F_VIEWPORT_CULL)
 #define DMSH_VK_F_INTERLOCK 64           // fragment shader interlock (VK_EXT_fragment_shader_interlock)
@@ -172,7 +175,7 @@ typedef struct {
     uint16_t local[3];       // compute workgroup size
     uint8_t fout_mask;       // colour targets written (output locations)
     uint8_t uint_mask;       // the DMSH_VK_MOD_UINT_MIXED module's unsigned integer targets (0: no such module; older libraries: always 0)
-    uint32_t shared;         // compute shared memory bytes (the answer table's)
+    uint32_t shared;         // compute shared memory bytes (the answer table's); a vertex shader with a DMSH_VK_MOD_TF module: its capture stride in words per stream, a byte each (stream b at bits 8 * b)
     uint32_t c1_off;         // the c1 bytes, in the blob: the low 32 bits of their offset (c1_off_hi has the rest)
     uint32_t c1_len;
     uint32_t vin_mask;       // vertex inputs read, by location (NVN attribute index)
