@@ -24,7 +24,7 @@ Capstone comes from pip: conda-forge's Capstone 5 finds its library only through
 
 ### The launcher and the window
 
-`scripts/bananative.command` (macOS) and `scripts/bananative.bat` (Windows, through `bananative.ps1`) make the environment ready without any of the above: they use `BANANATIVE_ENV`, the environment remembered in `.bananative-env` (not committed), an active conda environment or a micromamba / conda environment named `bananative*`, the first whose tools pass `scripts/bananative_env.py` (Python 3.14, Capstone 5, lz4, zbic, zstd, Tk, `spirv-val`, the translator under .NET 10). With none, they make one from `android/environment.yml` in `<folder>/bananative/` (asked once; micromamba is downloaded there when none is on PATH, and its package caches stay there); one of theirs that lacks a tool is remade. An environment made before zbic was in `android/environment.yml` (before 0.2.2) only needs it added: `<environment>/bin/python -m pip install zbic==1.0.1.post1` (Windows: `<environment>\python.exe -m pip install zbic==1.0.1.post1`). `android/environment.yml` carries the .NET runtime (conda-forge `dotnet-runtime`), so no system .NET is needed: the launchers and `bananative_env.apply()` set `DOTNET_ROOT` to the environment's.
+`scripts/bananative.command` (macOS), `scripts/bananative.sh` (Linux, e.g. Fedora KDE) and `scripts/bananative.bat` (Windows, through `bananative.ps1`) make the environment ready without any of the above: they use `BANANATIVE_ENV`, the environment remembered in `.bananative-env` (not committed), an active conda environment or virtualenv (`CONDA_PREFIX` / `VIRTUAL_ENV`), or a micromamba / conda environment named `bananative*`, the first whose tools pass `scripts/bananative_env.py` (Python 3.14, Capstone 5, lz4, zbic, zstd, Tk, `spirv-val`, the translator under .NET 10). With none, they make one from `android/environment.yml` in `<folder>/bananative/` (asked once; micromamba is downloaded there when none is on PATH, and its package caches stay there); one of theirs that lacks a tool is remade. An environment made before zbic was in `android/environment.yml` (before 0.2.2) only needs it added: `<environment>/bin/python -m pip install zbic==1.0.1.post1` (Windows: `<environment>\python.exe -m pip install zbic==1.0.1.post1`). `android/environment.yml` carries the .NET runtime (conda-forge `dotnet-runtime`), so no system .NET is needed: the launchers and `bananative_env.apply()` set `DOTNET_ROOT` to the environment's.
 
 | Command | What |
 |---|---|
@@ -33,6 +33,8 @@ Capstone comes from pip: conda-forge's Capstone 5 finds its library only through
 | `scripts/bananative.command check` | the tool check |
 | `scripts/bananative.command setup [<folder>]` | make (or remake) the environment in `<folder>/bananative/` |
 | `scripts/bananative.command python [...]` | the environment's Python, set up as for the packer |
+
+On Linux the same commands are `scripts/bananative.sh` (mark it executable); it picks a Linux micromamba build when it has to make the environment. For a KDE application-menu entry, make `~/.local/share/applications/bananative.desktop` with `Exec=<repo>/scripts/bananative.sh gui`, `Icon=<repo>/android/images/logo.svg`, `Type=Application`, `Terminal=false` and a `Name`/`Comment` (a local file, not committed: its paths are machine-specific).
 
 The window runs `pack_android.py` as a subprocess with the options it shows (the first log line is the command), so both make the same pack. The Windows launcher and the window's Windows parts have not run on Windows yet.
 

@@ -37,14 +37,16 @@ jobs:
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358"
           fi
           echo "sdk.dir=$ANDROID_HOME" > android/app/local.properties
-      # A fixed signing key keeps every build upgradable in place. The build signs with the debug key, so the secret is a
-      # base64 debug.keystore (alias androiddebugkey, password android): see the comment at the end of the file.
+      # A fixed signing key keeps every build upgradable in place without uninstalling. The base64 of the JKS debug keystore
+      # (alias androiddebugkey, password android) is committed at android/app/debug.keystore.b64 so every run signs with the
+      # same key; a secret decoded to a fresh keystore on each run gave three different certificates in three builds.
       - name: Signing key
-        env:
-          KS: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          test -n "$KS" || { echo "::error::secret DEBUG_KEYSTORE_BASE64 is missing"; exit 1; }
-          mkdir -p ~/.android && echo "$KS" | base64 -d > ~/.android/debug.keystore
+          grep -v '^#' android/app/debug.keystore.b64 | tr -d '\n' | base64 -d > /tmp/debug.keystore
+          keytool -list -keystore /tmp/debug.keystore -storepass android -alias androiddebugkey >/dev/null || { echo "::error::debug keystore is invalid"; exit 1; }
+          mkdir -p ~/.android && cp /tmp/debug.keystore ~/.android/debug.keystore
+          # AGP does not look at ~/.android/debug.keystore on the runner (three runs produced three certificates), so build.gradle signs with this path explicitly
+          echo "NX_DEBUG_STORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
       # The APK carries the on-device packer: its native stage is built first (android/README.md), with the tools build.sh calls.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -58,7 +60,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/pack/stage
-          key: packer-${{ hashFiles('android/ondevice/**', 'dm/gfx/tools/dmsh_xlate_android/**', 'dm/gfx/tools/*.cs', 'dm/gfx/tools/cra_unscramble.c', 'dm/third_party/zstd-zbic/**') }}
+          key: packer-${{ hashFiles('android/ondevice/**', 'dm/gfx/tools/dmsh_xlate/**', 'dm/gfx/tools/dmsh_xlate_android/**', 'dm/gfx/tools/*.cs', 'dm/gfx/tools/cra_unscramble.c', 'dm/third_party/ryujinx/**', 'dm/third_party/zstd-zbic/**') }}
       - name: Packer stage
         if: steps.pack.outputs.cache-hit != 'true'
         run: |
@@ -74,7 +76,8 @@ jobs:
           name: nxnative-android-apk
           path: android/app/out/nxnative-android.apk
 
-# Make the secret once, locally: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \
-#   -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Android Debug,O=Android,C=US" && base64 -w0 debug.keystore
-# then paste the output into Settings > Secrets and variables > Actions > DEBUG_KEYSTORE_BASE64. Keep the file; never commit it.
-# An APK signed by another key (a local build, an older CI run) still needs one uninstall, the first time only.
+# The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
+# generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \
+#   -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Android Debug,O=Android,C=US" -storetype JKS && base64 -w0 debug.keystore
+# Regenerate it only when rotating the key; every CI build decodes the same bytes, so new versions install over old ones.
+# An APK signed by a different key (a local build, an older CI run before this file) still needs one uninstall, the first time only.

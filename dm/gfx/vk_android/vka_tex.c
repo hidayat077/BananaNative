@@ -2694,7 +2694,11 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     VkImageViewType vt = vt_want >= 0 ? (VkImageViewType)vt_want : view_type(tgt, na);
     // What the image's type lets the view be (img_create: 3D for a 3D target, 1D for the 1D targets, cube-compatible for square 2D images of whole cubes)
     int img3d = im->d.target == NVN_TEXTURE_TARGET_3D;
-    if ((vt == VK_IMAGE_VIEW_TYPE_3D) != img3d || vt == VK_IMAGE_VIEW_TYPE_1D || vt == VK_IMAGE_VIEW_TYPE_1D_ARRAY) return VK_NULL_HANDLE;   // no 1D images (img_create)
+    // A shader's 2D sampler bound to a 3D texture reads slice 0 on NVN. Tears of the Kingdom does this with the 8x8x8 format 0x3f volume of shader
+    // 9808aabbd3219e97; refusing the view left that slot unbound (zeros) and its ground tiles wrong. A 3D image made as (or usable as) an attachment
+    // has VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT, so vkCreateImageView takes a 2D view of slice 0; without the bit it simply fails as before.
+    if (vt == VK_IMAGE_VIEW_TYPE_1D || vt == VK_IMAGE_VIEW_TYPE_1D_ARRAY ||
+        (img3d ? vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
     if (vt == VK_IMAGE_VIEW_TYPE_CUBE || vt == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
         if (im->w != im->h || im->layers < 6 || im->layers % 6 || im->samples > 1 || na < 6) return VK_NULL_HANDLE;
         if (vt == VK_IMAGE_VIEW_TYPE_CUBE) na = 6; else na -= na % 6;
