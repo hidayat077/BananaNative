@@ -1,4 +1,4 @@
-# Builds the test-app APK with only Pokemon Z-A and Zelda TotK (title IDs below); add a game by adding its ID to nxGames.
+# Builds the test-app APK with Pokemon Z-A, Zelda TotK and Final Fantasy Resonance (title IDs below); add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F43008C44000,0100F2C0115B6000
+  nxGames: 0100F43008C44000,0100F2C0115B6000,0100606026F12000
 
 jobs:
   apk:

@@ -404,6 +404,22 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `uepak.py` writes them out as version 2 archives, so the split reads them as any other.
 - **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md) (Unreal Engine 5.6.1): 73,496 unique shaders (9,253 vertex, 61,305 pixel, 2,934 compute, 4 geometry).
 
+### Unreal modern paks and IoStore containers in the split
+
+- **Symptom:** a phone's shader split is killed with no `[RED]` line naming the file: the process tree reaches 15.7 GB of resident memory on a 24 GB phone, and an 11 GB phone is killed mid-scan. The game's shaders are found only in the shader code archives the decode stage wrote.
+- **Cause:** `shader_split.py` read every RomFS file whole to look for shader records. A version 11 pak and the `.utoc` / `.ucas` containers hold no shaders the whole-file scan can read (a modern Unreal game keeps them in `ue_shaders`), and they are the largest files: FINAL FANTASY RESONANCE has a 2.96 GB pak and a 5.98 GB `.ucas`, read whole in parallel. A legacy version 4 pak does keep shaders inline and must still be scanned.
+- **Fix:** `shader_split.py` (`ue_modern_pack`) checks the pak footer's version and the IoStore extensions and skips those files in `scan_file_in`, after the archive-job branches so a container a job reads is still scanned through that job. The line says which file was skipped and how big it was.
+- **Check:** `dm/tools/tests/test_ue_build_memory.py`.
+- **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md): peak 810 MB and 8 s instead of 15.7 GB and 40 s, with the package and the three tables byte for byte the same (measured on the Android port).
+
+### A decoded Unreal archive larger than the device's memory
+
+- **Symptom:** a phone's UE shader decode dies while building a game's shader archives, with no error naming a file.
+- **Cause:** `uepak.py decoded_archive()` built `head + entries + b''.join(raws)` in memory: a decoded archive can exceed 1.5 GB, on top of the compressed bytes already held.
+- **Fix:** `uepak.py write_decoded_archive()` serializes the tables and shader records straight to the work file and `lz4_records()` yields one decoded shader at a time. `job()` writes the final layout directly (an LZ4 attempt that hits an Oodle block is replaced by the original archive), and `finish()` copies an already-decoded work file instead of decoding it again. `decoded_archive()` stays as the in-memory form for callers that need bytes.
+- **Check:** `dm/tools/tests/test_ue_build_memory.py`.
+- **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md).
+
 ### Images whose handle is in the game's uniform buffer
 
 - **Symptom:** the Android library build fails compute shaders with `NotSupportedException: SUATOM handle in bank 3` (and `SURED handle in bank 3`), and its summary counts many more under `shaders with a binding whose slot was not decoded`, as `IMG cp_i_cb3_0_`, `cp_i_cb3_2_` … (`fp_i_cb3_…` in pixel shaders): images the replay would bind as null.
