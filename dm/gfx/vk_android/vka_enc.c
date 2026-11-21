@@ -66,7 +66,7 @@ static uint64_t mono_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC
 // How long either thread waits with WFE before the futex (DM_VK_ENC_SPIN). The clock is read at every wake, not every so many wakes: with nothing stored to the line, WFE
 // returns only at the kernel's event stream tick (10 kHz), so a count of wakes is a count of 100 us ticks. A thread on WFE still runs: it counts as CPU time, keeps its core
 // out of idle and looks busy to the frequency governor
-static _Atomic uint64_t g_spin_ns = 200000;
+static _Atomic uint64_t g_spin_ns = 50000;
 static inline int spin_over(uint64_t t0) { return mono_ns() - t0 >= atomic_load_explicit(&g_spin_ns, memory_order_relaxed); }   // checked before each wait: 0 goes straight to the futex
 
 // The producer waits until the consumer's tail reaches at least `want` (spinning a little, then on the futex)
@@ -117,7 +117,7 @@ static void *rec_alloc(uint32_t id, size_t n) {
 // head wakes the encoder from WFE, and a frame makes ~45,000 calls. One wake a call kept the encoder thread busy on a prime core between calls (profile p2: 70 % of its
 // cycles in its own loop: power and heat). Nothing reaches the GPU before a part's submit, which flushes, so the batch only delays when the encoder starts on a call
 static uint64_t g_pub;        // the head published last
-static uint32_t g_batch = 4096;
+static uint32_t g_batch = 16384;
 static uint64_t g_n_total;   // every call recorded, never reset (vka_enc_total: the instanced runs' "nothing recorded in between")
 static inline void rec_done(size_t n) { g_ph += n; g_n_calls++; g_n_total++; if (g_ph - g_pub >= g_batch) { g_pub = g_ph; publish(); } }
 static inline void flush_pub(void) { if (g_pub != g_ph) { g_pub = g_ph; publish(); } }
@@ -496,8 +496,8 @@ void vka_enc_start(VkCommandBuffer cb) {
     vka_enc_sync();
     extern int vka_gp_active;
     if (!VKA_ENV("DM_VK_ENC", 1) || vka_gp_active || vka_nan_on() || vka_texstats_on() || !up()) { atomic_store(&g_ecb, VK_NULL_HANDLE); return; }
-    { int bt = VKA_ENV("DM_VK_ENC_BATCH", 4096); g_batch = bt < 0 ? 0 : bt > (1 << 20) ? (1 << 20) : (uint32_t)bt; }   // live: from this submission
-    { int us = VKA_ENV("DM_VK_ENC_SPIN", 200); atomic_store_explicit(&g_spin_ns, (uint64_t)(us < 0 ? 0 : us > 100000 ? 100000 : us) * 1000, memory_order_relaxed); }   // live: from this submission
+    { int bt = VKA_ENV("DM_VK_ENC_BATCH", 16384); g_batch = bt < 0 ? 0 : bt > (1 << 20) ? (1 << 20) : (uint32_t)bt; }   // live: from this submission
+    { int us = VKA_ENV("DM_VK_ENC_SPIN", 50); atomic_store_explicit(&g_spin_ns, (uint64_t)(us < 0 ? 0 : us > 100000 ? 100000 : us) * 1000, memory_order_relaxed); }   // live: from this submission
     { int tb = VKA_ENV("DM_VK_ENC_TAIL", 16384); atomic_store_explicit(&g_tail_every, tb <= 0 ? 0 : tb > (1 << 20) ? (1u << 20) : (uint32_t)tb, memory_order_relaxed); }   // live: from this submission
     atomic_store(&g_ecb, cb);
 }

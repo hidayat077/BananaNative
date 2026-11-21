@@ -27,6 +27,7 @@ static int g_prof_all, g_prof_every;   // DM_VK_PROF: every draw timed; the pace
 static int g_vin_skip = 1;             // DM_VK_VIN_SKIP (vin_build_kept)
 static int g_inst_on;   // DM_VK_INSTANCE (the instanced runs below)
 static int g_push_dedup = 1, g_push_delta = 1, g_tex_retype = 1, g_fout_retype = 1, g_shader_stats;
+static int g_ub_defer = 1, g_bc_rt = 1, g_rp_area = 1, g_lrz_touch, g_bar_keep = 1, g_xp_scissor, g_img_retype = 1;
 // The instanced runs' per-instance table is vertex input location INST_LOC at binding INST_BIND (below): valid only on a device whose maxVertexInputAttributes and
 // maxVertexInputBindings are above them (Vulkan guarantees 16; Turnip and Qualcomm's driver report 32). Past a limit the driver's behaviour is undefined: DM_VK_INSTANCE
 // on a Mali (PanVK) and a PowerVR phone stopped the game with SIGSEGV at the first instanced draw (#59, #228, #321: sig=11 addr=0x40c, the same place in each)
@@ -174,6 +175,13 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     g_tex_retype = VKA_ENV("DM_VK_TEX_RETYPE", 1);
     g_fout_retype = VKA_ENV("DM_VK_FOUT_RETYPE", 1);
     g_shader_stats = VKA_ENV("DM_VK_SHADER_STATS", 0);
+    g_ub_defer = VKA_ENV("DM_VK_UB_DEFER", 1);
+    g_bc_rt = VKA_ENV("DM_VK_BC_RT", 1);
+    g_rp_area = VKA_ENV("DM_VK_RP_AREA", 1);
+    g_lrz_touch = VKA_ENV("DM_VK_LRZ_TOUCH", 0);
+    g_bar_keep = VKA_ENV("DM_VK_BAR_KEEP", 1);
+    g_xp_scissor = VKA_ENV("DM_VK_XP_SCISSOR", 0);
+    g_img_retype = VKA_ENV("DM_VK_IMG_RETYPE", 1);
     vka_texu_elem = VKA_ENV("DM_VK_TEXU_ELEM", 1);   // see vka_bind.h (live, A/B)
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
     g_cur_dp[g_slot] = 0;
@@ -262,7 +270,7 @@ static void ub_flush(void) {
 }
 static void inst_close(void);
 int vka_rp_ub_defer(uint64_t dst, uint64_t n, const void *data) {
-    if (!R.on || !n || n > 65536 || !VKA_ENV("DM_VK_UB_DEFER", 1)) return 0;
+    if (!R.on || !n || n > 65536 || !g_ub_defer) return 0;
     for (uint64_t done = 0; done < n;) {
         VkBuffer b; VkDeviceSize o; uint64_t k = vka_addr_run(dst + done, n - done, &b, &o);
         if (!k) return 0;
@@ -495,7 +503,7 @@ static VkImageCopy bcrt_region(const vka_img *im, uint32_t lv, uint32_t l0, uint
 }
 // The shadow's view for colour target i of a pass, or VK_NULL_HANDLE (not this case, or it cannot: logged); *f the view's format, *shp the shadow
 static VkImageView bcrt_attach(const p_set_rt *rt, int i, vka_img *im, const vka_fmt *f, uint32_t *w, uint32_t *h, uint32_t *nlo, vka_img **shp) {
-    if (!VKA_ENV("DM_VK_BC_RT", 1) || !(rt->has_cview[i] && rt->cview[i].set_format) || !bc_fmt(&im->f) || f->kind >= 3 || bc_fmt(f) || f->bpb != im->f.bpb) return VK_NULL_HANDLE;
+    if (!g_bc_rt || !(rt->has_cview[i] && rt->cview[i].set_format) || !bc_fmt(&im->f) || f->kind >= 3 || bc_fmt(f) || f->bpb != im->f.bpb) return VK_NULL_HANDLE;
     uint32_t lv, l0, nl; rt_range(im, &rt->cview[i], rt->has_cview[i], &lv, &l0, &nl);
     if (lv >= im->levels || !nl || R.nbc == 8) return VK_NULL_HANDLE;
     uint32_t mw = im->w >> lv ? im->w >> lv : 1, mh = im->h >> lv ? im->h >> lv : 1;
@@ -613,7 +621,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
     uint32_t aw = w, ah = h;
     // Passes on very large targets (>= 16M pixels: Splatoon Raiders' 6400x6400 ink map) that load the attachments (no pending clears) and draw inside a scissor covering at most
     // half the target area bound their renderArea to the scissor's far corner (DM_VK_RP_AREA, default 1); a later draw or clear outside that area ends the pass
-    if (VKA_ENV("DM_VK_RP_AREA", 1) && (uint64_t)w * h >= (16ull << 20) && !(g_miss_n >= 2 && has_rt && rt_same(rt, 1, &g_miss_rt, 1)) && !PC.n && has_sc && !d->rast_discard) {
+    if (g_rp_area && (uint64_t)w * h >= (16ull << 20) && !(g_miss_n >= 2 && has_rt && rt_same(rt, 1, &g_miss_rt, 1)) && !PC.n && has_sc && !d->rast_discard) {
         int64_t x0 = sc->x < 0 ? 0 : sc->x, y0 = sc->y < 0 ? 0 : sc->y, x1 = (int64_t)sc->x + sc->w, y1 = (int64_t)sc->y + sc->h;
         if (x1 > w) x1 = w; if (y1 > h) y1 = h;
         if (x1 > x0 && y1 > y0 && (uint64_t)x1 * y1 * 2 <= (uint64_t)w * h && ((uint32_t)x1 < w || (uint32_t)y1 < h)) {
@@ -640,7 +648,7 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
         else vka_clear_outside(c);
     }
     if (sp) sp = &sa;
-    if ((dp || sp) && VKA_ENV("DM_VK_LRZ_TOUCH", 0)) vka_lrz_touch(g_cb, s_im[8], dp && da.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD);   // Adreno LRZ (vka_tex.c), outside the pass
+    if ((dp || sp) && g_lrz_touch) vka_lrz_touch(g_cb, s_im[8], dp && da.loadOp == VK_ATTACHMENT_LOAD_OP_LOAD);   // Adreno LRZ (vka_tex.c), outside the pass
     #undef INAREA
     #undef WHOLE
     vka_tex_feedback(fb_im, fb_lv, nfb);
@@ -724,7 +732,7 @@ int vka_rp_game_barrier(uint32_t bits) {
     (void)bits;
     if (!R.on) return 0;
     g_bar_in++;
-    if (R.swrite || !VKA_ENV("DM_VK_BAR_KEEP", 1)) return 0;
+    if (R.swrite || !g_bar_keep) return 0;
     R.bar_pending = 1; g_bar_kept++;
     if (R.df) g_zs.nbk++;
     if (g_zlog_pass && zlog_room()) VLOG("zlog game barrier %#x kept inside pass %llu", bits, (unsigned long long)vka_n_rp);
@@ -1629,14 +1637,16 @@ static int make_images(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], in
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st]) continue;
         const vka_res *r = g_wk.r[st];
-        for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid
-                                                 && (vka_tex_id_pending_rec(r[i].tid, r[i].dim) || (r[i].what == VKA_R_IMG && vka_tex_id_storage_pending(r[i].tid)))) {   // (an image remade with storage use copies its content: outside the pass)
-            any = 1; if (dry) return 1;
-            vka_tex_id_view(r[i].tid, g_cb, r[i].dim, wbf_view_of_binding(r[i].what == VKA_R_IMG, r[i].flags, DMSH_VK_BF_RW), NULL);
-        }
-        for (int i = 0; i < g_wk.n[st]; i++) if (r[i].what == VKA_R_TEX && r[i].tid && vka_tbuf_pending(r[i].tid, r[i].dim)) {   // a buffer texture read as an image: its copy (vka_tbuf.c), outside the pass
-            any = 1; if (dry) return 1;
-            vka_tbuf_refresh(r[i].tid, r[i].dim, g_cb);
+        for (int i = 0; i < g_wk.n[st]; i++) {
+            const vka_res *x = &r[i];
+            if (!x->tid || (x->what != VKA_R_TEX && x->what != VKA_R_IMG)) continue;
+            if (vka_tex_id_pending_rec(x->tid, x->dim) || (x->what == VKA_R_IMG && vka_tex_id_storage_pending(x->tid))) {   // (an image remade with storage use copies its content: outside the pass)
+                any = 1; if (dry) return 1;
+                vka_tex_id_view(x->tid, g_cb, x->dim, wbf_view_of_binding(x->what == VKA_R_IMG, x->flags, DMSH_VK_BF_RW), NULL);
+            } else if (x->what == VKA_R_TEX && vka_tbuf_pending(x->tid, x->dim)) {   // a buffer texture read as an image: its copy (vka_tbuf.c), outside the pass
+                any = 1; if (dry) return 1;
+                vka_tbuf_refresh(x->tid, x->dim, g_cb);
+            }
         }
     }
     return any;
@@ -2466,12 +2476,13 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (make_images(d, sh, 1)) { vka_rp_end(); make_images(d, sh, 0); }
     if (R.on && R.bar_pending && bar_hazard(sh, d)) { g_bar_late++; vka_rp_end(); }   // the game barrier taken inside the pass is needed here: the pass ends (its full barrier) first
     if (R.on && UB.n && ub_hazard(d, sh, mesh, dw, di)) vka_rp_end();
+    int ds_checked = 0, ds_val = 0;
     if (R.on && (R.df || R.sf) && rt_same(rt, has_rt, &R.rt, R.has_rt)) {   // SetRenderTargets of the same targets between a depth write and sampling depth (or sampling depth then writing it)
-        int ds = (R.rt_cont || !R.dread) ? depth_sampled(sh, d) : 0;
+        if (R.rt_cont || !R.dread) { ds_checked = 1; ds_val = depth_sampled(sh, d); }
         int hd_ = R.df != VK_FORMAT_UNDEFINED, hs_ = R.sf != VK_FORMAT_UNDEFINED;
         int dw_ = !d->rast_discard && ((hd_ && d->ds.dt && d->ds.dw) || (hs_ && d->ds.st && (d->st_wmask[0] || d->st_wmask[1])));
-        if ((ds && R.rt_cont) || (dw_ && R.dread)) vka_rp_end();
-        else if (ds) R.dread = 1;
+        if ((ds_val && R.rt_cont) || (dw_ && R.dread)) { vka_rp_end(); ds_checked = 0; }
+        else if (ds_val) R.dread = 1;
     }
     uint64_t tstats = 0;   // DM_VK_TEX_STATS: this draw's fragment shader, its inputs' level 0 scanned and logged
     if (sh[1] && !d->rast_discard && ((vka_nan_on() >= 2 && vka_nan_probe(sh[1]->key)) || (vka_texstats_probe(sh[1]->key) && (tstats = sh[1]->key)))) {   // DM_VK_NANSCAN_FS: this draw's sampled textures, scanned before it
@@ -2487,7 +2498,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         vka_nan_inputs(g_cb, ims, bs, ts, m, tstats);
     }
     if (!rp_begin(rt, has_rt, sc, has_sc, d)) { g_skipped++; return; }
-    if ((R.df || R.sf) && !R.dread && depth_sampled(sh, d)) R.dread = 1;
+    if ((R.df || R.sf) && !R.dread && (ds_checked ? ds_val : depth_sampled(sh, d))) R.dread = 1;
     if (!R.swrite && draw_writes(sh, d)) R.swrite = 1;   // (a game barrier in this pass from now on ends it: vka_rp_game_barrier)
     d->b.samples = R.samples;
     vka_gkey k; memset(&k, 0, V.vin_dyn ? offsetof(vka_gkey, va) : sizeof k);   // (va, vb: only without vertex input dynamic state, vin_build; the pipeline lookup reads no further then)
@@ -2634,8 +2645,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         if (x1 <= x0 || y1 <= y0) { if (g_rtl_pass && rtl_room()) VLOG("rt log draw %u: fragment %016llx not drawn: empty scissor %d,%d %dx%d", g_rtl_d++, (unsigned long long)(sh[1] ? sh[1]->key : 0), sc->x, sc->y, sc->w, sc->h); return; }   // an empty scissor: nothing drawn
         scr = (VkRect2D){{(int32_t)x0, (int32_t)y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
     }
-    { int xs = VKA_ENV("DM_VK_XP_SCISSOR", 0);   // experiment (wrong picture): every draw's scissor cut to xs x xs pixels, to split a pass's GPU time into per-pixel and per-draw work
-      if (xs > 0) { if (scr.extent.width > (uint32_t)xs) scr.extent.width = (uint32_t)xs; if (scr.extent.height > (uint32_t)xs) scr.extent.height = (uint32_t)xs; } }
+    if (g_xp_scissor > 0) { if (scr.extent.width > (uint32_t)g_xp_scissor) scr.extent.width = (uint32_t)g_xp_scissor; if (scr.extent.height > (uint32_t)g_xp_scissor) scr.extent.height = (uint32_t)g_xp_scissor; }
     DY_SET(sc, scr, vk.vkCmdSetScissor(g_cb, 0, 1, &scr));
     // Rasterizer and depth / stencil
     DY_SET1(cull, (uint32_t)(d->poly.cull == NVN_FACE_FRONT ? VK_CULL_MODE_FRONT_BIT : d->poly.cull == NVN_FACE_BACK ? VK_CULL_MODE_BACK_BIT : d->poly.cull == NVN_FACE_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_NONE), vk.vkCmdSetCullMode(g_cb, DY.cull));
@@ -2828,7 +2838,7 @@ int vka_is_ndve_key(uint64_t k) {
 // From the walk (walk_all, just before); the base pipeline p when nothing is retyped or the module cannot be made; VK_NULL_HANDLE while the retyped pipeline is made in the
 // background (vka_pso_wait set: the caller skips the dispatch). DM_VK_IMG_RETYPE=0: never (the class twin views, as before)
 static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p) {
-    if (!VKA_ENV("DM_VK_IMG_RETYPE", 1)) return p;
+    if (!g_img_retype) return p;
     vka_res *r = g_wk.r[5]; uint64_t um = 0, sm = 0, fm = 0;
     for (int i = 0; i < g_wk.n[5]; i++) {
         int img = r[i].what == VKA_R_IMG && r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
