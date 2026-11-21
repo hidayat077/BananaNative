@@ -80,6 +80,123 @@ STAGE_FLAG_MAP = {
 BIND_STRUCT = struct.Struct('<BBHBBHhHBBhHHI')
 KEY_RE = re.compile(r'\b[0-9a-fA-F]{16}\b')
 
+PRESETS: dict[str, tuple[str, int]] = {
+    'auto': ('Auto-detect from recent Git changes', 0),
+    'compute': ('Compute / Particle / Sort fixes', F_CS | F_BF_RW),
+    'buffer_bindless': ('Texture / Buffer / Bindless fixes', F_BUF_COMBINED | F_TBUF | F_BINDLESS),
+    'geom_mesh': ('Geometry / Mesh / Vertex fixes', F_VS | F_GS | F_HS | F_DS | F_TS | F_MS),
+    'keys_only': ('Specific shaders from log only', 0),
+    'custom': ('Custom (manual checkboxes)', 0),
+}
+
+
+def classify_changed_files(files: list[str], diff_text: str = '') -> tuple[int, bool, str]:
+    """Map changed repo file paths to (filter_mask, recommend_full, human_summary)."""
+    if not files:
+        return 0, False, 'No changed files detected in git.'
+
+    full_triggers = (
+        'SpirvGenerator.cs',
+        'Translator.cs',
+        'TranslatorContext.cs',
+        'Declarations.cs',
+        'dmsh_abi.h',
+        'dmsh_abi_vk.h',
+        'Program.cs',
+    )
+    hit_full = [f for f in files if any(f.endswith(t) for t in full_triggers)]
+    if hit_full:
+        names = ', '.join(Path(f).name for f in hit_full[:3])
+        return 0, True, f'Core translator/ABI changed ({names}) — Full Build recommended.'
+
+    mask = 0
+    reasons: list[str] = []
+    for f in files:
+        bn = Path(f).name
+        if bn in ('AstOptimizer.cs', 'InstEmitSurface.cs', 'GeometryToCompute.cs'):
+            mask |= F_CS | F_BF_RW
+            reasons.append(f'{bn} -> Compute + BF_RW')
+        elif bn in ('BindlessElimination.cs', 'BindlessToArray.cs'):
+            mask |= F_BINDLESS
+            reasons.append(f'{bn} -> Bindless')
+        elif bn in ('InstEmitAmpereMesh.cs', 'MeshShaderInfo.cs', 'SpirvMeshEntry.cs'):
+            mask |= F_TS | F_MS
+            reasons.append(f'{bn} -> Task/Mesh')
+        elif bn == 'GlobalToStorage.cs':
+            mask |= F_GMEM_SBUF
+            reasons.append(f'{bn} -> Storage/GMEM')
+        elif bn in ('vk_android_spv.py', 'vk_android_build.py'):
+            if 'buffer_textures_split' in diff_text or 'DIM_BUFFER' in diff_text:
+                mask |= F_BUF_COMBINED | F_TBUF
+                reasons.append(f'{bn} -> Buffer+Combined / TexelBuffer')
+            else:
+                mask |= F_CS | F_BUF_COMBINED | F_BF_RW
+                reasons.append(f'{bn} -> Compute + Buffer+Combined + BF_RW')
+
+    if mask:
+        return mask, False, 'Detected: ' + '; '.join(dict.fromkeys(reasons))
+
+    chain_touched = any(f.startswith(('dm/gfx/tools/', 'dm/third_party/ryujinx/', 'dm/gfx/nvn/')) for f in files)
+    if not chain_touched:
+        return 0, False, 'Only host/UI/docs changed (no shader chain files) — shader rebuild likely unnecessary.'
+    return 0, True, 'Unknown shader chain change — Full Build recommended.'
+
+
+def detect_git_filter(since_vk_version: str | None = None) -> tuple[int, bool, str]:
+    """Inspect changes since the commit of since_vk_version (or latest commits/working tree) and suggest a filter mask."""
+    try:
+        base_ref = None
+        if since_vk_version:
+            lg = subprocess.run(
+                ['git', '-C', str(REPO), 'log', '-S', since_vk_version, '-n', '1', '--format=%H', '--', 'dm/gfx/nvn/dmsh_chain_vk.h'],
+                capture_output=True, text=True, timeout=5,
+            )
+            cand = lg.stdout.strip().splitlines()
+            if cand:
+                base_ref = cand[0]
+
+        if base_ref:
+            r = subprocess.run(['git', '-C', str(REPO), 'diff', '--name-only', base_ref], capture_output=True, text=True, timeout=5)
+            files = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+            d = subprocess.run(['git', '-C', str(REPO), 'diff', base_ref, '--', 'dm/gfx/tools/'], capture_output=True, text=True, timeout=5)
+            diff_text = d.stdout
+            mask, rec_full, note = classify_changed_files(list(dict.fromkeys(files)), diff_text)
+            if files:
+                return mask, rec_full, f'(Since v-{since_vk_version}) {note}'
+
+        r = subprocess.run(['git', '-C', str(REPO), 'diff', '--name-only', 'HEAD'], capture_output=True, text=True, timeout=5)
+        files = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+        if files:
+            d = subprocess.run(['git', '-C', str(REPO), 'diff', 'HEAD', '--', 'dm/gfx/tools/'], capture_output=True, text=True, timeout=5)
+            diff_text = d.stdout
+        else:
+            r2 = subprocess.run(['git', '-C', str(REPO), 'log', '-n', '2', '--name-only', '--pretty=format:'], capture_output=True, text=True, timeout=5)
+            files = [l.strip() for l in r2.stdout.splitlines() if l.strip()]
+            d2 = subprocess.run(['git', '-C', str(REPO), 'diff', 'HEAD~2..HEAD', '--', 'dm/gfx/tools/'], capture_output=True, text=True, timeout=5)
+            diff_text = d2.stdout
+        return classify_changed_files(list(dict.fromkeys(files)), diff_text)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 0, False, f'Git detection unavailable ({e}).'
+
+
+def load_ps_to_vs_pairs(title_id: str) -> dict[str, set[str]]:
+    """Load {ps_key: {vs_key, ...}} from the game profile's shader_pairs.tsv and pso_pairs.tsv."""
+    ps_to_vs: dict[str, set[str]] = {}
+    gdir = REPO / 'dm' / 'games' / title_id
+    for fname in ('shader_pairs.tsv', 'pso_pairs.tsv'):
+        p = gdir / fname
+        if not p.is_file():
+            continue
+        for line in p.read_text(encoding='utf-8', errors='replace').splitlines():
+            if not line or line.startswith('#') or '\t' not in line:
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 2:
+                vs, ps = parts[0].strip().lower(), parts[1].strip().lower()
+                if len(vs) == 16 and len(ps) == 16:
+                    ps_to_vs.setdefault(ps, set()).add(vs)
+    return ps_to_vs
+
 
 @dataclass
 class LibraryScan:
@@ -322,12 +439,24 @@ def parse_custom_keys(text: str) -> set[str]:
     return {m.lower() for m in KEY_RE.findall(text or '')}
 
 
-def select_rebuild_keys(scan: LibraryScan, filter_mask: int, custom_keys: set[str] | None = None, rebuild_all: bool = False) -> tuple[set[str], set[str]]:
-    """Return (rebuild_keys, keep_keys) based on a bitmask of F_* flags and/or explicit keys."""
+def select_rebuild_keys(
+    scan: LibraryScan,
+    filter_mask: int,
+    custom_keys: set[str] | None = None,
+    rebuild_all: bool = False,
+    ps_to_vs: dict[str, set[str]] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Return (rebuild_keys, keep_keys) based on a bitmask of F_* flags, explicit keys, and optional PS->VS pairs."""
     if rebuild_all:
         return set(scan.key_flags), set()
     extra = custom_keys or set()
     rebuild = {k for k, fl in scan.key_flags.items() if (fl & filter_mask) or (k in extra)}
+    if ps_to_vs:
+        paired_vs: set[str] = set()
+        for k in rebuild:
+            if scan.key_flags.get(k, 0) & F_PS:
+                paired_vs.update(vs for vs in ps_to_vs.get(k, ()) if vs in scan.key_flags)
+        rebuild.update(paired_vs)
     keep = set(scan.key_flags) - rebuild
     return rebuild, keep
 

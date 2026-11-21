@@ -192,6 +192,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         self.resize(980, 760)
         self.ctx: sfr.GameContext | None = None
         self.scan: sfr.LibraryScan | None = None
+        self.ps_to_vs: dict[str, set[str]] = {}
         self.worker: BuildWorker | None = None
 
         central = QtWidgets.QWidget()
@@ -261,10 +262,52 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         mode_lay.addWidget(self.full_opts)
         root.addWidget(mode_box)
 
-        # 3. Filter Checklist for Fast Mode
-        self.filter_box = QtWidgets.QGroupBox('3. Select Shader Categories to Rebuild (Fast Mode)')
+        # 3. Simplified Preset + Auto-detect + Collapsible Advanced Filters
+        self.filter_box = QtWidgets.QGroupBox('3. What Needs Rebuilding? (Fast Mode)')
         flt_lay = QtWidgets.QVBoxLayout(self.filter_box)
-        grid = QtWidgets.QGridLayout()
+
+        preset_row = QtWidgets.QHBoxLayout()
+        preset_row.addWidget(QtWidgets.QLabel('Preset:'))
+        self.preset_combo = QtWidgets.QComboBox()
+        for key, (label, _) in sfr.PRESETS.items():
+            self.preset_combo.addItem(label, key)
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        preset_row.addWidget(self.preset_combo, 1)
+        self.btn_rescan_git = QtWidgets.QPushButton('Re-scan Git')
+        self.btn_rescan_git.clicked.connect(self._apply_git_autodetect)
+        preset_row.addWidget(self.btn_rescan_git)
+        flt_lay.addLayout(preset_row)
+
+        self.preset_note_lbl = QtWidgets.QLabel('')
+        self.preset_note_lbl.setWordWrap(True)
+        flt_lay.addWidget(self.preset_note_lbl)
+
+        custom_row = QtWidgets.QHBoxLayout()
+        custom_row.addWidget(QtWidgets.QLabel('Paste error log or shader keys:'))
+        self.custom_edit = QtWidgets.QLineEdit()
+        self.custom_edit.setPlaceholderText('Paste [RED] log lines or 16-hex shader IDs (auto-extracted)...')
+        self.custom_edit.textChanged.connect(self._update_counts)
+        custom_row.addWidget(self.custom_edit, 1)
+        flt_lay.addLayout(custom_row)
+
+        self.chk_pair_vs = QtWidgets.QCheckBox('Also rebuild paired VS when PS is selected (keeps VS output padding in sync)')
+        self.chk_pair_vs.setToolTip('If a pixel shader changes its inputs, its paired vertex shaders need padding to match.')
+        self.chk_pair_vs.toggled.connect(self._update_counts)
+        flt_lay.addWidget(self.chk_pair_vs)
+
+        self.btn_adv = QtWidgets.QToolButton()
+        self.btn_adv.setText('Show Advanced Filters (9 manual checkboxes)')
+        self.btn_adv.setCheckable(True)
+        self.btn_adv.setChecked(False)
+        self.btn_adv.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        self.btn_adv.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_adv.toggled.connect(self._toggle_advanced)
+        flt_lay.addWidget(self.btn_adv)
+
+        self.adv_panel = QtWidgets.QWidget()
+        self.adv_panel.setVisible(False)
+        grid = QtWidgets.QGridLayout(self.adv_panel)
+        grid.setContentsMargins(0, 4, 0, 4)
         self.chk_cs = QtWidgets.QCheckBox('Compute shaders (cs)')
         self.chk_cs.setToolTip('Rebuild all compute shaders (e.g. after AstOptimizer / compute lowering fixes).')
         self.chk_buf_comb = QtWidgets.QCheckBox('Buffer + COMBINED_IMAGE_SAMPLER')
@@ -295,17 +338,9 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
             (self.chk_gs_ms, sfr.F_GS | sfr.F_HS | sfr.F_DS | sfr.F_TS | sfr.F_MS),
         ]
         for idx, (cb, _) in enumerate(self.filter_checks):
-            cb.toggled.connect(self._update_counts)
+            cb.toggled.connect(self._on_manual_checkbox)
             grid.addWidget(cb, idx // 3, idx % 3)
-        flt_lay.addLayout(grid)
-
-        custom_row = QtWidgets.QHBoxLayout()
-        custom_row.addWidget(QtWidgets.QLabel('Custom shader keys (16-hex IDs from log):'))
-        self.custom_edit = QtWidgets.QLineEdit()
-        self.custom_edit.setPlaceholderText('e.g. c254eaa40e0c4f1e 5854663e6002c250 ...')
-        self.custom_edit.textChanged.connect(self._update_counts)
-        custom_row.addWidget(self.custom_edit, 1)
-        flt_lay.addLayout(custom_row)
+        flt_lay.addWidget(self.adv_panel)
 
         self.preview_lbl = QtWidgets.QLabel('Select or scan an older dmsh_vk.lib to preview shader counts.')
         self.preview_lbl.setStyleSheet('font-weight: bold;')
@@ -370,6 +405,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         else:
             self.rb_full.setChecked(True)
             self._update_mode_ui()
+        self._on_preset_changed()
 
     def pick_nup(self):
         p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select .nup file', '', 'NUP (*.nup);;All Files (*)')
@@ -400,6 +436,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
             return
         self.ctx = ctx
         self.scan = None
+        self.ps_to_vs = sfr.load_ps_to_vs_pairs(ctx.title_id) if not ctx.profile_error else {}
         self.btn_open.setEnabled(ctx.pack_dir.is_dir())
 
         status_parts = [
@@ -447,7 +484,10 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self.scan = None
             self.preview_lbl.setText(f'Failed to scan library: {e}')
-        self._update_counts()
+        if self.preset_combo.currentData() == 'auto':
+            self._apply_git_autodetect()
+        else:
+            self._update_counts()
 
     def _selected_mask(self) -> int:
         mask = 0
@@ -456,12 +496,63 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
                 mask |= flag
         return mask
 
+    def _set_mask(self, mask: int):
+        for cb, flag in self.filter_checks:
+            cb.blockSignals(True)
+            cb.setChecked(bool(mask & flag))
+            cb.blockSignals(False)
+        self._update_counts()
+
+    def _toggle_advanced(self, show: bool):
+        self.adv_panel.setVisible(show)
+        self.btn_adv.setArrowType(QtCore.Qt.ArrowType.DownArrow if show else QtCore.Qt.ArrowType.RightArrow)
+        self.btn_adv.setText('Hide Advanced Filters' if show else 'Show Advanced Filters (9 manual checkboxes)')
+
+    def _on_manual_checkbox(self):
+        idx = self.preset_combo.findData('custom')
+        if idx >= 0 and self.preset_combo.currentData() != 'custom':
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(idx)
+            self.preset_combo.blockSignals(False)
+            self.preset_note_lbl.setText('Manual filter selection.')
+            self.preset_note_lbl.setStyleSheet('')
+        self._update_counts()
+
+    def _apply_git_autodetect(self):
+        idx = self.preset_combo.findData('auto')
+        if idx >= 0 and self.preset_combo.currentData() != 'auto':
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(idx)
+            self.preset_combo.blockSignals(False)
+        since_ver = self.scan.version if self.scan else None
+        mask, rec_full, note = sfr.detect_git_filter(since_ver)
+        self.preset_note_lbl.setText(note)
+        self.preset_note_lbl.setStyleSheet('color:#d07020; font-weight:bold;' if rec_full else 'color:#2a7f62;')
+        self._set_mask(mask)
+
+    def _on_preset_changed(self):
+        key = self.preset_combo.currentData()
+        if key == 'auto':
+            self._apply_git_autodetect()
+        elif key == 'custom':
+            if not self.btn_adv.isChecked():
+                self.btn_adv.setChecked(True)
+            self.preset_note_lbl.setText('Check any category below.')
+            self.preset_note_lbl.setStyleSheet('')
+            self._update_counts()
+        else:
+            _, mask = sfr.PRESETS.get(key, ('', 0))
+            self.preset_note_lbl.setText('' if key != 'keys_only' else 'Only shader keys pasted below will be rebuilt.')
+            self.preset_note_lbl.setStyleSheet('')
+            self._set_mask(mask)
+
     def _update_counts(self):
         if not self.scan:
             self.preview_lbl.setText('No older dmsh_vk.lib selected or found.')
             return
         ck = sfr.parse_custom_keys(self.custom_edit.text())
-        reb, keep = sfr.select_rebuild_keys(self.scan, self._selected_mask(), ck)
+        pairs = self.ps_to_vs if self.chk_pair_vs.isChecked() else None
+        reb, keep = sfr.select_rebuild_keys(self.scan, self._selected_mask(), ck, ps_to_vs=pairs)
         pct_save = 100.0 * len(keep) / max(1, self.scan.total)
         self.preview_lbl.setText(
             f'Library v-{self.scan.version} ({self.scan.total:,} shaders) -> '
@@ -502,7 +593,8 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.warning(self, 'Info', 'Select an older dmsh_vk.lib first (or switch to First-Time / Full Build).')
                 return
             ck = sfr.parse_custom_keys(self.custom_edit.text())
-            reb, keep = sfr.select_rebuild_keys(self.scan, self._selected_mask(), ck)
+            pairs = self.ps_to_vs if self.chk_pair_vs.isChecked() else None
+            reb, keep = sfr.select_rebuild_keys(self.scan, self._selected_mask(), ck, ps_to_vs=pairs)
             params['src_lib'] = self.scan.path
             params['rebuild_keys'] = reb
             params['keep_keys'] = keep
@@ -588,19 +680,17 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
           </li>
         </ul>
 
-        <h2>3. Select Shader Categories to Rebuild (Fast Mode)</h2>
-        <p>Check only the categories affected by your fix (you can combine multiple checkboxes):</p>
+        <h2>3. What Needs Rebuilding? (Fast Mode)</h2>
+        <p>Pick a simple preset instead of guessing individual flags:</p>
         <ul>
-          <li><b>Compute shaders (cs)</b>: Rebuilds all compute shaders (e.g. after <code>AstOptimizer</code>, barrier, or subgroup fixes).</li>
-          <li><b>Buffer + COMBINED_IMAGE_SAMPLER</b>: Rebuilds shaders reading buffer textures through combined sampler slots (e.g. <code>buffer_textures_split</code>).</li>
-          <li><b>Storage / Image Write (BF_RW)</b>: Rebuilds shaders that write to storage buffers or storage images.</li>
-          <li><b>Texel Buffer (tbuf)</b>: Rebuilds shaders using <code>UNIFORM_TEXEL_BUFFER</code> or <code>STORAGE_TEXEL_BUFFER</code>.</li>
-          <li><b>Bindless / Dynamic Slots (tex_dyn/pool)</b>: Rebuilds shaders using bindless texture/sampler pools or runtime-indexed slots.</li>
-          <li><b>Storage Buffer / GMEM map</b>: Rebuilds shaders reading raw global memory pools or storage buffers.</li>
-          <li><b>All Vertex (vs)</b> / <b>All Pixel (ps)</b> / <b>Geometry / Tess / Mesh</b>: Rebuilds every shader in those stages.</li>
-          <li><b>Custom shader keys</b>: Paste 16-hex-digit shader IDs from logs (e.g. <code>c254eaa40e0c4f1e</code>, separated by spaces or newlines) to rebuild specific shaders only.</li>
+          <li><b>Auto-detect from recent Git changes</b>: Scans the latest repository changes and automatically selects the affected shader categories (or warns you if a Full Build is safer).</li>
+          <li><b>Compute / Particle / Sort fixes</b>: Rebuilds compute shaders and writable storage/image shaders.</li>
+          <li><b>Texture / Buffer / Bindless fixes</b>: Rebuilds buffer-sampler, texel-buffer, and bindless shaders.</li>
+          <li><b>Geometry / Mesh / Vertex fixes</b>: Rebuilds vertex, geometry, tessellation, task, and mesh stages.</li>
+          <li><b>Specific shaders from log only</b>: Rebuilds only the 16-hex shader IDs pasted in the log box.</li>
+          <li><b>Show Advanced Filters</b>: Expands the 9 manual category checkboxes if you want fine-grained control.</li>
         </ul>
-        <p>The live preview line shows the exact count before starting: <code>Rebuild: X | Skip/Migrate: Y (Saves Z% translation time)</code>.</p>
+        <p>You can paste full <code>[RED]</code> log lines directly into <b>Paste error log or shader keys</b>; 16-hex IDs are extracted automatically. The live preview line shows <code>Rebuild: X | Skip/Migrate: Y</code> before you start.</p>
 
         <div class="tip">
           <b>Tip:</b> If you only edited C/host runtime files (such as <code>vka_tex.c</code> or <code>vka_draw.c</code>) and <code>DMSH_VK_CHAIN</code> did <b>not</b> change, you do <b>not</b> need to rebuild the shader pack at all—just rebuild the Android APK.

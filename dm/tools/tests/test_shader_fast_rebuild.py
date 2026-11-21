@@ -113,6 +113,34 @@ class ShaderFastRebuildTest(unittest.TestCase):
             self.assertEqual(hdr['reused'], 'f2b04744b54a')
             self.assertIn('lib', hdr['refl'])
 
+    def test_classify_changed_files(self):
+        m, full, _ = sfr.classify_changed_files([
+            'dm/third_party/ryujinx/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs',
+            'dm/gfx/tools/vk_android_spv.py',
+        ], 'buffer_textures_split')
+        self.assertFalse(full)
+        self.assertEqual(m, sfr.F_CS | sfr.F_BF_RW | sfr.F_BUF_COMBINED | sfr.F_TBUF)
+
+        _, full2, _ = sfr.classify_changed_files(['dm/third_party/ryujinx/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/SpirvGenerator.cs'])
+        self.assertTrue(full2)
+
+    def test_ps_to_vs_pair_expansion(self):
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / 'dmsh_vk.lib'
+            _make_fake_lib(
+                lib, 'f2b04744b54a', '2ddf71af58a7',
+                [
+                    (0x1111111111111111, delta.VK['STAGE_FS'], [(8, 1, 0, 1)]),
+                    (0x2222222222222222, delta.VK['STAGE_VS'], [(8, 1, 0, 1)]),
+                    (0x3333333333333333, delta.VK['STAGE_VS'], [(8, 1, 0, 1)]),
+                ],
+            )
+            scan = sfr.scan_library(lib)
+            pairs = {'1111111111111111': {'2222222222222222'}}
+            reb, keep = sfr.select_rebuild_keys(scan, 0, {'1111111111111111'}, ps_to_vs=pairs)
+            self.assertEqual(reb, {'1111111111111111', '2222222222222222'})
+            self.assertEqual(keep, {'3333333333333333'})
+
 
 if __name__ == '__main__':
     unittest.main()
