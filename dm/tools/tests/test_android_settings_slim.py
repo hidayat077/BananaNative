@@ -25,7 +25,7 @@ class Grouping(unittest.TestCase):
         # rows added to the group: only the defaults a game's page can override and that are not input
         in_group = set(re.findall(r'perf\.addView\(new Ui\.Setting\(this, "[^"]+", "([^"]+)"', b))
         in_group |= set(re.findall(r'perf\.addView\((\w+)Row\.view', b))
-        self.assertEqual(in_group, {'Use fast cores', 'res', 'cap', 'ups', 'sharp', 'drs'})
+        self.assertEqual(in_group, {'Use fast cores', 'Docked mode', 'res', 'cap', 'ups', 'sharp', 'drs'})
 
     def test_top_level_rows(self):
         b = settings_body()

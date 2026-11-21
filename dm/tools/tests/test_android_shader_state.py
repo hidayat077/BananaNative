@@ -65,9 +65,10 @@ class Wiring(unittest.TestCase):
 
     def test_prepare_is_a_ring_on_the_tile(self):   # the job shows as the tile's ring in every state, its details in the sheet; no wide card in the game list
         ma, od = read(MAIN / 'MainActivity.java'), read(J / 'ondevice/java/dev/nxnative/android/Ondevice.java')
-        for s in ('TILE_RUNNING', 'TILE_QUEUED', 'TILE_PAUSED', 'TILE_FAILED', 'TILE_DONE'): self.assertIn(s, od); self.assertIn(s, ma, s)
+        for s in ('TILE_RUNNING', 'TILE_QUEUED', 'TILE_PAUSED', 'TILE_FAILED', 'TILE_DONE'): self.assertIn(s, od)
         self.assertIn('static int tileState()', od); self.assertNotIn('static View cardView()', od)
-        self.assertIn('v -> Ondevice.sheet(this)', ma); self.assertIn('ti.ring.look(', ma)
+        self.assertIn('int state = Ondevice.tileState()', ma); self.assertIn('ti.ring.look(', ma)
+        self.assertIn('v -> Ondevice.sheet(this)', ma)
         self.assertNotIn('Ondevice.cardView()', ma)
         self.assertNotIn('sampleCard', ma)
 

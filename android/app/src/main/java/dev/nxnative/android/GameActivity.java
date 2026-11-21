@@ -514,6 +514,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         // mode that give that size (graphics_scale rows), as its profile says (Profile.resolutionEnv); nothing for a game with neither
         Profile prof = Profile.of(id);
         if (prof != null) env.addAll(prof.resolutionEnv(Prefs.startWindow(this, id)));   // a Resolution preset's window, else Game resolution's (Prefs.startWindow, ResPresets)
+        env.add("DM_OPMODE=" + (Prefs.dockedMode(this) ? 1 : 0));   // Settings › Defaults › Docked mode, after resolutionEnv so it wins over a graphics_scale choice's mode
         // Resolution, Upscaling quality and Graphics quality (a render_cfg row: Profile.renderCfg), kept as the setting this run starts with: the loader sizes the render target
         // pool for it, and the in-game panel compares a pick with it (Profile.renderRestartNote)
         if (prof != null && prof.renderCfg()) { startRender = Prefs.render(this, prof, id); env.addAll(Profile.renderEnv(startRender)); }

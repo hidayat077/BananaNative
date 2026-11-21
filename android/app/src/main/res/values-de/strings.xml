@@ -143,23 +143,20 @@
     <string name="home_shaders_missing">Shader fehlen</string>
     <string name="home_show_defaults_for_all_games">Standards für alle Spiele anzeigen</string>
     <string name="home_start_anyway">Trotzdem starten</string>
-    <string name="home_that_file_is_not_a">Diese Datei ist kein Bild, das die App lesen kann.</string>
-    <string name="home_that_sound_could_not_be">Dieser Sound konnte nicht gelesen werden (eine kurze Audiodatei, höchstens 2 MB).</string>
     <string name="home_the_app_needs_all_files">Die App braucht Zugriff auf alle Dateien, um deinen Spiel-Dump zu lesen. Erlaube ihn und komm dann zurück.</string>
     <string name="home_this_game_s_newest_log">Das neueste Log dieses Spiels</string>
     <string name="home_turn_on_and_play">Einschalten und spielen</string>
     <string name="home_without_them_the_game_draws">Ohne sie zeichnet das Spiel nichts.</string>
-    <string name="settings_a_tick_when_the_focus">Ein Tick, wenn der Fokus wechselt, und ein Zwitschern beim Tippen</string>
     <string name="settings_a_user_needs_a_name">Ein Nutzer braucht einen Namen</string>
     <string name="settings_adb_control_debug">ADB-Steuerung (Debug)</string>
     <string name="settings_add_user">Nutzer hinzufügen</string>
     <string name="settings_advanced">Erweitert</string>
     <string name="settings_allow_installs">Installationen erlauben</string>
-    <string name="settings_background">Hintergrund</string>
     <string name="settings_built_without_lsfg">" Ohne LSFG gebaut."</string>
     <string name="settings_can_this_phone_run_your">Kann dieses Handy deine Spiele ausführen?</string>
     <string name="settings_checking_for_updates">Suche nach Updates…</string>
     <string name="settings_controller_in_game_panel">Controller: Ingame-Panel</string>
+    <string name="settings_docked_mode">Docked-Modus</string>
     <string name="settings_each_game_s_page_can">Die Seite jedes Spiels kann diese überschreiben.</string>
     <string name="settings_frame_generation">Frame Generation</string>
     <string name="settings_games_start_with_this_user">Spiele starten mit diesem Nutzer</string>
@@ -172,7 +169,6 @@
     <string name="settings_later">Später</string>
     <string name="settings_lets_adb_commands_add_games">Erlaubt ADB-Befehlen, Spiele hinzuzufügen, Vorbereiten zu starten und GPU-Treiber zu installieren. Aus: nur du, in der App</string>
     <string name="settings_loading_picture">Bild wird geladen…</string>
-    <string name="settings_my_sound">Mein Sound</string>
     <string name="settings_name">Name</string>
     <string name="settings_needs_no_game">Braucht kein Spiel</string>
     <string name="settings_on_the_controller_or_the">Am Controller oder am Handy ohne Controller</string>
@@ -182,14 +178,12 @@
     <string name="settings_small_fix_updates_help">Kleine Fix-Versionen beim Start der App anbieten. Aus: Es werden nur große Updates angeboten; „Nach Updates suchen“ zeigt weiterhin die neueste. Das nächste große Update enthält jeden Fix.</string>
     <string name="settings_player_wiki">Spieler-Wiki</string>
     <string name="settings_remove_leftovers_and_old_files">Reste und alte Dateien entfernen; nie Spielstände</string>
-    <string name="settings_sample_games">Beispielspiele</string>
     <string name="settings_select_a_user">Nutzer auswählen</string>
     <string name="settings_show">Anzeigen</string>
     <string name="settings_show_hide_button">Ein-/Ausblenden-Taste</string>
     <string name="settings_showing_the_rows_made_for">Zeigt die Zeilen für Tests: Erweiterte Auflösung, Upscaler und Dynamische Auflösung</string>
     <string name="settings_starting">Wird gestartet…</string>
     <string name="settings_storage">Speicher</string>
-    <string name="settings_test_builds_shows_sample_tiles">Test-Builds: zeigt Beispielkacheln auf Home, um das Aussehen zu beurteilen</string>
     <string name="settings_tester_settings">Tester-Einstellungen</string>
     <string name="settings_the_launcher_did_not_accept">Der Launcher hat die Verknüpfung nicht akzeptiert.</string>
     <string name="settings_the_newest_log">Das neueste Log</string>
@@ -198,7 +192,6 @@
     <string name="settings_this_launcher_cannot_pin_shortcuts">Dieser Launcher kann keine Verknüpfungen anheften.</string>
     <string name="settings_this_release_has_no_notes">Diese Version hat keine Hinweise.</string>
     <string name="settings_to_install_the_update_allow">Um das Update zu installieren, erlaube Banana Native, Apps zu installieren („Unbekannte Apps installieren“), und komm dann zurück.</string>
-    <string name="settings_ui_sounds">UI-Sounds</string>
     <string name="settings_update">Update</string>
     <string name="settings_updates">Updates</string>
     <string name="settings_what_s_new">Neuigkeiten</string>
@@ -421,8 +414,6 @@
     <string name="game_join_pc_host">PC-Host beitreten</string>
     <string name="game_fixed">Fest</string>
     <string name="home_updates">Updates</string>
-    <string name="settings_pick_another_sound">Anderen Sound auswählen</string>
-    <string name="settings_use_the_built_in_sounds">Eingebaute Sounds verwenden</string>
     <string name="home_a_folder_with_base_and">Ein Ordner (mit base/ und ggf. updates/)</string>
     <string name="home_a_nup_file_or_an">Eine .nup-Datei oder eine NSP-Box-.nsp-Datei</string>
     <string name="home_a_nup_or_nsp_file">Eine .nup- oder .nsp-Datei (wird dort verwendet, wo sie liegt)</string>
@@ -657,11 +648,6 @@
         <item>Hell</item>
         <item>Dunkel</item>
     </string-array>
-    <string-array name="arr_background">
-        <item>Bananen</item>
-        <item>Einfarbig</item>
-        <item>Mein Bild</item>
-    </string-array>
     <string-array name="arr_xbox">
         <item>Aus</item>
         <item>Beschriftungen für X/Y und A/B tauschen</item>
@@ -754,7 +740,6 @@
     <string name="game_needs_prepare_again_patches_the">Muss erneut vorbereitet werden: patcht den Code des Spiels (Speicher › Erneut vorbereiten)</string>
     <string name="common_search_every_switch_each_starts">Alle Schalter durchsuchen; jeder startet bei Auto</string>
     <string name="game_needs_prepare_again_makes_this">Muss erneut vorbereitet werden: erstellt diese 3D-Szenengröße aus deinen Spieldateien (Speicher › Erneut vorbereiten)</string>
-    <string name="settings_your_sound">Dein Sound</string>
     <string name="home_release_app_only">" · nur Release-App"</string>
     <string name="home_not_in_this_build">Nicht in diesem Build</string>
     <string name="home_lossless_dll_missing">" · Lossless.dll fehlt"</string>

@@ -17,7 +17,6 @@ SETTING = re.compile(r'new Ui\.Setting\(\s*\w+\s*,\s*"[^"]*"\s*,\s*"([^"]+)"')
 # Titles of rows that are not settings a player changes (testers' knobs, dialogs, or shared with another row). Each needs a reason.
 UNDOCUMENTED = {
     'Extra environment': 'testers only (env lines)',
-    'Sample games': 'a test-build switch that shows made-up tiles',
     'ADB control (debug)': 'a debug switch for developers and testers, off for players',
 }
 BAD_CHARS = set('›⋯−✕')   # > as a single quote, midline ellipsis, minus sign, multiplication X: Forgejo flags them as ambiguous

@@ -156,25 +156,22 @@
     <string name="home_shaders_missing">Shaders missing</string>
     <string name="home_show_defaults_for_all_games">Show defaults for all games</string>
     <string name="home_start_anyway">Start anyway</string>
-    <string name="home_that_file_is_not_a">That file is not a picture this app can read.</string>
-    <string name="home_that_sound_could_not_be">That sound could not be read (a short audio file, 2 MB at most).</string>
     <string name="home_the_app_needs_all_files">The app needs All files access to read your game dump. Allow it, then come back.</string>
     <string name="home_this_game_s_newest_log">This game\'s newest log</string>
     <string name="home_turn_on_and_play">Turn on and play</string>
     <string name="home_without_them_the_game_draws">Without them the game draws nothing.</string>
 
     <!-- Settings, users, updates, the release page -->
-    <string name="settings_a_tick_when_the_focus">A tick when the focus moves and a chirp on a tap</string>
     <string name="settings_a_user_needs_a_name">A user needs a name</string>
     <string name="settings_adb_control_debug">ADB control (debug)</string>
     <string name="settings_add_user">Add user</string>
     <string name="settings_advanced">Advanced</string>
     <string name="settings_allow_installs">Allow installs</string>
-    <string name="settings_background">Background</string>
     <string name="settings_built_without_lsfg">" Built without LSFG."</string>
     <string name="settings_can_this_phone_run_your">Can this phone run your games?</string>
     <string name="settings_checking_for_updates">Checking for updates…</string>
     <string name="settings_controller_in_game_panel">Controller: in-game panel</string>
+    <string name="settings_docked_mode">Docked mode</string>
     <string name="settings_each_game_s_page_can">Each game\'s page can override these.</string>
     <string name="settings_frame_generation">Frame generation</string>
     <string name="settings_games_start_with_this_user">Games start with this user</string>
@@ -187,7 +184,6 @@
     <string name="settings_later">Later</string>
     <string name="settings_lets_adb_commands_add_games">Lets adb commands add games, start Prepare and install GPU drivers. Off: only you, in the app</string>
     <string name="settings_loading_picture">Loading picture…</string>
-    <string name="settings_my_sound">My sound</string>
     <string name="settings_name">Name</string>
     <string name="settings_needs_no_game">Needs no game</string>
     <string name="settings_on_the_controller_or_the">On the controller, or the phone without one</string>
@@ -197,14 +193,12 @@
     <string name="settings_small_fix_updates_help">Offer small fix releases when the app starts. Off: only big updates are offered; Check for updates still shows the newest. The next big update carries every fix.</string>
     <string name="settings_player_wiki">Player wiki</string>
     <string name="settings_remove_leftovers_and_old_files">Remove leftovers and old files; never saves</string>
-    <string name="settings_sample_games">Sample games</string>
     <string name="settings_select_a_user">Select a user</string>
     <string name="settings_show">Show</string>
     <string name="settings_show_hide_button">Show / hide button</string>
     <string name="settings_showing_the_rows_made_for">Showing the rows made for testing: Advanced resolution, Upscaler and Dynamic resolution</string>
     <string name="settings_starting">Starting…</string>
     <string name="settings_storage">Storage</string>
-    <string name="settings_test_builds_shows_sample_tiles">Test builds: shows sample tiles on Home to judge the look</string>
     <string name="settings_tester_settings">Tester settings</string>
     <string name="settings_the_launcher_did_not_accept">The launcher did not accept the shortcut.</string>
     <string name="settings_the_newest_log">The newest log</string>
@@ -213,7 +207,6 @@
     <string name="settings_this_launcher_cannot_pin_shortcuts">This launcher cannot pin shortcuts.</string>
     <string name="settings_this_release_has_no_notes">This release has no notes.</string>
     <string name="settings_to_install_the_update_allow">To install the update, allow Banana Native to install apps (\"Install unknown apps\"), then come back.</string>
-    <string name="settings_ui_sounds">UI sounds</string>
     <string name="settings_update">Update</string>
     <string name="settings_updates">Updates</string>
     <string name="settings_what_s_new">What\'s new</string>
@@ -446,8 +439,6 @@
     <string name="game_join_pc_host">Join PC host</string>
     <string name="game_fixed">Fixed</string>
     <string name="home_updates">Updates</string>
-    <string name="settings_pick_another_sound">Pick another sound</string>
-    <string name="settings_use_the_built_in_sounds">Use the built-in sounds</string>
     <string name="home_a_folder_with_base_and">A folder (with base/, and updates/ if any)</string>
     <string name="home_a_nup_file_or_an">A .nup file, or an NSP Box .nsp file</string>
     <string name="home_a_nup_or_nsp_file">A .nup or .nsp file (used where it is)</string>
@@ -704,11 +695,6 @@
         <item>Light</item>
         <item>Dark</item>
     </string-array>
-    <string-array name="arr_background">
-        <item>Bananas</item>
-        <item>Plain</item>
-        <item>My picture</item>
-    </string-array>
     <string-array name="arr_xbox">
         <item>Off</item>
         <item>Swap labels for X/Y and A/B</item>
@@ -805,7 +791,6 @@
     <string name="game_needs_prepare_again_patches_the">Needs Prepare again: patches the game\'s code (Storage › Prepare again)</string>
     <string name="common_search_every_switch_each_starts">Search every switch; each starts at Auto</string>
     <string name="game_needs_prepare_again_makes_this">Needs Prepare again: makes this 3D scene size from your game files (Storage › Prepare again)</string>
-    <string name="settings_your_sound">Your sound</string>
     <string name="home_release_app_only">" · release app only"</string>
     <string name="home_not_in_this_build">Not in this build</string>
     <string name="home_lossless_dll_missing">" · Lossless.dll missing"</string>

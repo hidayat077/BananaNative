@@ -143,23 +143,20 @@
     <string name="home_shaders_missing">缺少着色器</string>
     <string name="home_show_defaults_for_all_games">显示所有游戏的默认设置</string>
     <string name="home_start_anyway">仍然启动</string>
-    <string name="home_that_file_is_not_a">该文件不是本应用可读取的图片。</string>
-    <string name="home_that_sound_could_not_be">无法读取该声音（短音频文件，最大 2 MB）。</string>
     <string name="home_the_app_needs_all_files">应用需要“所有文件”访问权限才能读取你的游戏转储。请允许后再返回。</string>
     <string name="home_this_game_s_newest_log">此游戏的最新日志</string>
     <string name="home_turn_on_and_play">开启并游玩</string>
     <string name="home_without_them_the_game_draws">没有它们，游戏将不显示任何画面。</string>
-    <string name="settings_a_tick_when_the_focus">焦点移动时发出滴答声，点按时发出啁啾声</string>
     <string name="settings_a_user_needs_a_name">用户需要一个名称</string>
     <string name="settings_adb_control_debug">ADB 控制（调试）</string>
     <string name="settings_add_user">添加用户</string>
     <string name="settings_advanced">高级</string>
     <string name="settings_allow_installs">允许安装</string>
-    <string name="settings_background">背景</string>
     <string name="settings_built_without_lsfg">" 此版本未包含 LSFG。"</string>
     <string name="settings_can_this_phone_run_your">这部手机能运行你的游戏吗？</string>
     <string name="settings_checking_for_updates">正在检查更新…</string>
     <string name="settings_controller_in_game_panel">手柄：游戏内面板</string>
+    <string name="settings_docked_mode">底座模式</string>
     <string name="settings_each_game_s_page_can">每个游戏的页面可以覆盖这些设置。</string>
     <string name="settings_frame_generation">插帧</string>
     <string name="settings_games_start_with_this_user">游戏默认使用此用户启动</string>
@@ -172,7 +169,6 @@
     <string name="settings_later">稍后</string>
     <string name="settings_lets_adb_commands_add_games">允许 adb 命令添加游戏、开始准备并安装 GPU 驱动。关闭：只有你能在应用中操作</string>
     <string name="settings_loading_picture">正在加载图片…</string>
-    <string name="settings_my_sound">我的声音</string>
     <string name="settings_name">名称</string>
     <string name="settings_needs_no_game">无需游戏</string>
     <string name="settings_on_the_controller_or_the">使用手柄，或不带手柄时使用手机</string>
@@ -182,14 +178,12 @@
     <string name="settings_small_fix_updates_help">启动时提供小修复版本。关闭后只提供大更新；“检查更新”仍会显示最新版本。下一个大更新包含所有修复。</string>
     <string name="settings_player_wiki">玩家 Wiki</string>
     <string name="settings_remove_leftovers_and_old_files">清除残留和旧文件；绝不会删除存档</string>
-    <string name="settings_sample_games">示例游戏</string>
     <string name="settings_select_a_user">选择用户</string>
     <string name="settings_show">显示</string>
     <string name="settings_show_hide_button">显示/隐藏按钮</string>
     <string name="settings_showing_the_rows_made_for">正在显示为测试而设的选项：高级分辨率、放大器和动态分辨率</string>
     <string name="settings_starting">正在启动…</string>
     <string name="settings_storage">存储</string>
-    <string name="settings_test_builds_shows_sample_tiles">测试版：在主页显示示例磁贴以评估外观</string>
     <string name="settings_tester_settings">测试人员设置</string>
     <string name="settings_the_launcher_did_not_accept">启动器未接受该快捷方式。</string>
     <string name="settings_the_newest_log">最新日志</string>
@@ -198,7 +192,6 @@
     <string name="settings_this_launcher_cannot_pin_shortcuts">此启动器无法固定快捷方式。</string>
     <string name="settings_this_release_has_no_notes">此版本没有更新说明。</string>
     <string name="settings_to_install_the_update_allow">要安装更新，请允许 Banana Native 安装应用（“安装未知应用”），然后返回。</string>
-    <string name="settings_ui_sounds">界面声音</string>
     <string name="settings_update">更新</string>
     <string name="settings_updates">更新</string>
     <string name="settings_what_s_new">新内容</string>
@@ -421,8 +414,6 @@
     <string name="game_join_pc_host">加入 PC 主机</string>
     <string name="game_fixed">固定</string>
     <string name="home_updates">更新</string>
-    <string name="settings_pick_another_sound">选择其他声音</string>
-    <string name="settings_use_the_built_in_sounds">使用内置声音</string>
     <string name="home_a_folder_with_base_and">文件夹（包含 base/，如有 updates/ 也一并包含）</string>
     <string name="home_a_nup_file_or_an">一个 .nup 文件，或 NSP Box 的 .nsp 文件</string>
     <string name="home_a_nup_or_nsp_file">一个 .nup 或 .nsp 文件（在原位置使用）</string>
@@ -653,11 +644,6 @@
         <item>浅色</item>
         <item>深色</item>
     </string-array>
-    <string-array name="arr_background">
-        <item>香蕉</item>
-        <item>纯色</item>
-        <item>我的图片</item>
-    </string-array>
     <string-array name="arr_xbox">
         <item>关</item>
         <item>互换 X/Y 和 A/B 的标签</item>
@@ -749,7 +735,6 @@
     <string name="game_needs_prepare_again_patches_the">需要重新准备：会修改游戏代码（存储 › 重新准备）</string>
     <string name="common_search_every_switch_each_starts">搜索所有开关；每个开关默认为自动</string>
     <string name="game_needs_prepare_again_makes_this">需要重新准备：根据你的游戏文件生成此 3D 场景大小（存储 › 重新准备）</string>
-    <string name="settings_your_sound">你的声音</string>
     <string name="home_release_app_only">" · 仅限正式版应用"</string>
     <string name="home_not_in_this_build">此版本中没有</string>
     <string name="home_lossless_dll_missing">" · 缺少 Lossless.dll"</string>
