@@ -32,6 +32,27 @@ class Swap(unittest.TestCase):
             self.assertFalse(st.exists())
 
 
+class OozChecked(unittest.TestCase):
+    """A split made with the ooz worker is taken only when its shader keys are exactly the profile's"""
+
+    def test_only_the_profiles_keys_are_taken(self):
+        with tempfile.TemporaryDirectory() as d:
+            prof, tmp = Path(d) / 'profile', Path(d) / 'tmp'
+            prof.mkdir(); tmp.mkdir()
+            rows = 'vs_x.bin\t0\tvs\tKEY1\tpackage\nps_x.bin\t0\tps\tKEY2\tpackage\n'
+            (prof / 'shader_map.tsv').write_text(rows)
+            class G:
+                def __init__(self, d): self.dir = d
+                def get(self, k, fallback=''): return fallback
+            g = G(prof)
+            (tmp / 'shader_map.tsv').write_text(rows)
+            pack_android.ooz_split_checked('/w/unoodle', g, tmp)
+            (tmp / 'shader_map.tsv').write_text(rows.replace('KEY2', 'WRONG'))
+            with self.assertRaises(pack_android.Error) as c:
+                pack_android.ooz_split_checked('/w/unoodle', g, tmp)
+            self.assertIn('not the profile', str(c.exception))
+
+
 class Builds(unittest.TestCase):
     def test_every_build_row_counts(self):
         class G:   # a profile with an update's row and the base's, as dm/games/game.py builds() gives them

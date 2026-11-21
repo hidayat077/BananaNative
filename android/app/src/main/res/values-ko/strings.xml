@@ -141,23 +141,20 @@
     <string name="home_shaders_missing">셰이더 없음</string>
     <string name="home_show_defaults_for_all_games">모든 게임의 기본값 보기</string>
     <string name="home_start_anyway">그래도 시작</string>
-    <string name="home_that_file_is_not_a">이 앱에서 읽을 수 있는 그림 파일이 아니에요.</string>
-    <string name="home_that_sound_could_not_be">소리 파일을 읽지 못했어요(최대 2MB의 짧은 오디오 파일).</string>
     <string name="home_the_app_needs_all_files">게임 덤프를 읽으려면 모든 파일 액세스 권한이 필요해요. 허용한 뒤 다시 돌아와 주세요.</string>
     <string name="home_this_game_s_newest_log">이 게임의 최신 로그</string>
     <string name="home_turn_on_and_play">켜고 플레이</string>
     <string name="home_without_them_the_game_draws">셰이더가 없으면 게임 화면이 아무것도 그려지지 않아요.</string>
-    <string name="settings_a_tick_when_the_focus">포커스가 이동할 때 틱 소리, 탭할 때 짹 소리</string>
     <string name="settings_a_user_needs_a_name">사용자 이름이 필요해요</string>
     <string name="settings_adb_control_debug">ADB 제어(디버그)</string>
     <string name="settings_add_user">사용자 추가</string>
     <string name="settings_advanced">고급</string>
     <string name="settings_allow_installs">설치 허용</string>
-    <string name="settings_background">배경</string>
     <string name="settings_built_without_lsfg">" LSFG 없이 빌드됨."</string>
     <string name="settings_can_this_phone_run_your">이 휴대폰에서 게임을 실행할 수 있을까요?</string>
     <string name="settings_checking_for_updates">업데이트 확인 중…</string>
     <string name="settings_controller_in_game_panel">컨트롤러: 게임 내 패널</string>
+    <string name="settings_docked_mode">도킹 모드</string>
     <string name="settings_each_game_s_page_can">각 게임 페이지에서 이 값을 따로 바꿀 수 있어요.</string>
     <string name="settings_frame_generation">프레임 생성</string>
     <string name="settings_games_start_with_this_user">게임이 이 사용자로 시작돼요</string>
@@ -170,7 +167,6 @@
     <string name="settings_later">나중에</string>
     <string name="settings_lets_adb_commands_add_games">adb 명령으로 게임 추가, 준비 시작, GPU 드라이버 설치를 허용해요. 끄면 앱에서 직접만 할 수 있어요</string>
     <string name="settings_loading_picture">그림 불러오는 중…</string>
-    <string name="settings_my_sound">내 사운드</string>
     <string name="settings_name">이름</string>
     <string name="settings_needs_no_game">게임 없이 가능</string>
     <string name="settings_on_the_controller_or_the">컨트롤러에서, 컨트롤러가 없으면 휴대폰에서</string>
@@ -180,14 +176,12 @@
     <string name="settings_small_fix_updates_help">앱을 시작할 때 소규모 수정 릴리스를 알려줘요. 끄면 큰 업데이트만 알려주며, 업데이트 확인에서는 여전히 최신 버전이 보여요. 다음 큰 업데이트에는 모든 수정 사항이 포함돼요.</string>
     <string name="settings_player_wiki">플레이어 위키</string>
     <string name="settings_remove_leftovers_and_old_files">남은 파일과 오래된 파일을 삭제해요. 세이브는 절대 삭제하지 않아요</string>
-    <string name="settings_sample_games">샘플 게임</string>
     <string name="settings_select_a_user">사용자 선택</string>
     <string name="settings_show">표시</string>
     <string name="settings_show_hide_button">표시/숨기기 버튼</string>
     <string name="settings_showing_the_rows_made_for">테스트용 항목을 표시 중: 고급 해상도, 업스케일러, 동적 해상도</string>
     <string name="settings_starting">시작하는 중…</string>
     <string name="settings_storage">저장 공간</string>
-    <string name="settings_test_builds_shows_sample_tiles">테스트 빌드: 홈에 샘플 타일을 보여 줘서 디자인을 확인할 수 있어요</string>
     <string name="settings_tester_settings">테스터 설정</string>
     <string name="settings_the_launcher_did_not_accept">런처가 바로가기를 받아들이지 않았어요.</string>
     <string name="settings_the_newest_log">최신 로그</string>
@@ -196,7 +190,6 @@
     <string name="settings_this_launcher_cannot_pin_shortcuts">이 런처는 바로가기를 고정할 수 없어요.</string>
     <string name="settings_this_release_has_no_notes">이 릴리스에는 노트가 없어요.</string>
     <string name="settings_to_install_the_update_allow">업데이트를 설치하려면 Banana Native에 앱 설치 권한(\"출처를 알 수 없는 앱 설치\")을 허용한 뒤 다시 돌아와 주세요.</string>
-    <string name="settings_ui_sounds">UI 사운드</string>
     <string name="settings_update">업데이트</string>
     <string name="settings_updates">업데이트</string>
     <string name="settings_what_s_new">새로운 기능</string>
@@ -419,8 +412,6 @@
     <string name="game_join_pc_host">PC 호스트에 참가</string>
     <string name="game_fixed">고정</string>
     <string name="home_updates">업데이트</string>
-    <string name="settings_pick_another_sound">다른 사운드 선택</string>
-    <string name="settings_use_the_built_in_sounds">기본 사운드 사용</string>
     <string name="home_a_folder_with_base_and">폴더(base/, 있으면 updates/ 포함)</string>
     <string name="home_a_nup_file_or_an">.nup 파일 또는 NSP Box .nsp 파일</string>
     <string name="home_a_nup_or_nsp_file">.nup 또는 .nsp 파일(원래 위치에서 사용)</string>
@@ -652,11 +643,6 @@
         <item>라이트</item>
         <item>다크</item>
     </string-array>
-    <string-array name="arr_background">
-        <item>바나나</item>
-        <item>단색</item>
-        <item>내 그림</item>
-    </string-array>
     <string-array name="arr_xbox">
         <item>끔</item>
         <item>X/Y와 A/B 라벨 바꾸기</item>
@@ -740,7 +726,6 @@
     <string name="game_needs_prepare_again_patches_the">다시 준비 필요: 게임 코드를 패치해요(저장 공간 › 다시 준비)</string>
     <string name="common_search_every_switch_each_starts">모든 스위치를 탐색해요. 각 스위치는 자동에서 시작해요</string>
     <string name="game_needs_prepare_again_makes_this">다시 준비 필요: 게임 파일로 이 3D 장면 크기를 만들어요(저장 공간 › 다시 준비)</string>
-    <string name="settings_your_sound">내 사운드</string>
     <string name="home_release_app_only">" · 릴리스 앱 전용"</string>
     <string name="home_not_in_this_build">이 빌드에는 없음</string>
     <string name="home_lossless_dll_missing">" · Lossless.dll 없음"</string>

@@ -2294,9 +2294,12 @@ def oodle_ask(comp, n):
     if _OODLE is None:
         import tempfile
         host, mods = os.environ.get('DM_OODLE_HOST'), os.environ.get('DM_OODLE_MODULES')
-        if not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder')
+        ooz = os.environ.get('DM_OODLE_OOZ')   # a PC builder with no Mac host: the open-source ooz worker (dm/third_party/ooz), not the game's own decoder
+        if ooz: argv = [ooz]
+        elif not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder, or DM_OODLE_OOZ (the ooz worker)')
+        else: argv = [host, mods]
         err = tempfile.TemporaryFile()
-        _OODLE = (subprocess.Popen([host, mods], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
+        _OODLE = (subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
     p, err = _OODLE
     try:
         p.stdin.write(struct.pack('<QQ', len(comp), n)); p.stdin.write(comp); p.stdin.flush()
@@ -2383,6 +2386,17 @@ def ue3_shaders(d, label):
     return out
 
 UE_LEGACY, UE_IO = 'UE legacy pak', 'UE IoStore'
+def ue_modern_pack(path):
+    """Whether the file is an Unreal modern pak (version 11) or an IoStore container (.utoc / .ucas): a modern game keeps its shaders in the shader code archives the decode stage wrote
+    (ue_shaders), not in these, its biggest RomFS files (FINAL FANTASY RESONANCE: 8.9 GB) — reading them whole finds nothing and can kill a phone with no error. A legacy pak (version 4)
+    keeps its shaders inline and is left to the legacy path"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ('.ucas', '.utoc'): return True
+    if ext != '.pak': return False
+    try:
+        with open(path, 'rb') as f: return uepak.pak_version(f) == 11
+    except (OSError, ValueError, struct.error): return False
+
 def ue_legacy_jobs(files, parts=64, mains=()):
     """Unreal paks whose shaders are inline in the cooked packages (uepak.inline_shaders): legacy paks (version 4, DRAGON QUEST XI S: pakchunk0-Switch.pak and pakchunk1-Switch.pak, 13.8 GB,
     and the update's *_0_P.pak) and version 11 paks without shader code archives (OCTOPATH TRAVELER II: Majesty-Switch.pak, 3.3 GB). The engine mounts them all as one view, and a patch pak
@@ -3437,6 +3451,9 @@ def scan_file_in(args):
                 if '.fx' in entry[0] or '/shaders/' in entry[0] or entry[0].endswith(('.vs.bin', '.ps.bin', '.fs.bin')):
                     found += phyre_shaders(vbf.read(f, entry), f'/{rel}/{entry[0]}')
         return rel, uniq_keys(found), var_pairs(found), trees
+    if ue_modern_pack(path):   # an Unreal modern pak or an IoStore container: its shaders are in the shader code archives (ue_shaders), not in the file — reading 8.9 GB whole finds nothing and fills the device's memory
+        print(f'skipped /{rel}: {os.path.getsize(path):,} bytes, an Unreal modern pak or an IoStore container (the shaders are in the shader code archives)', flush=True)
+        return rel, {}, set(), {}
     # a file read whole: one of LARGE_FILE bytes or more is read by one worker at a time (LARGE_LOCK). Orbitals Deluxe Edition has a 6.4 GB IoStore container and
     # 0.1 to 0.9 GB videos; with every worker holding one, its full scan ran a 32 GB PC out of memory. Their shader markers occur in them by chance, so they are read
     large = head[:4] != ZSTD_MAGIC and LARGE_LOCK is not None and os.path.getsize(path) >= LARGE_FILE
@@ -3756,7 +3773,18 @@ def main():
         # Unreal Engine shader code archives decoded on the Mac (uepak.py): <version dir>/ue_shaders, or DM_UE_SHADERS; needed when the RomFS has Unreal paks
         ued = os.environ.get('DM_UE_SHADERS') or os.path.join(os.path.dirname(os.path.abspath(romfs)), 'ue_shaders')
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._')) if os.path.isdir(ued) else []   # AppleDouble metadata, not decoded shader archives
-        if not names and uepak.unreal_paks(romfs, inline=False, mains=[mainnso]): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
+        if not names:
+            # An IoStore title can hold a shader library beside a pak with no shaders, so test for the library too (a version 11 pak alone is not enough).
+            try: needs_archives = uepak.unreal_paks(romfs, inline=False, mains=[mainnso]) or uepak.io_shader_tocs(romfs)
+            except ImportError as e: red(f'Unreal paks whose index is encrypted need AES to read ({e}); set PYTHONPATH to the folder with the AES module')
+            if needs_archives and os.environ.get('DM_UE_DECODE'):
+                worker = os.environ.get('DM_OODLE_OOZ', '')
+                if not worker: red('Unreal shader archives need a decoder: set DM_OODLE_OOZ (the ooz worker, dm/third_party/ooz/build.sh) or DM_UE_SHADERS (archives decoded on a Mac)')
+                import ue_ondevice
+                ued = ue_ondevice.decode(romfs, mainnso, os.environ['DM_UE_DECODE'], worker)
+                names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._'))
+            if needs_archives and not names:
+                red(f'the RomFS has Unreal shader archives, but there are no decoded shader code archives in {ued}: set DM_UE_SHADERS to a folder decoded on a Mac, or DM_UE_DECODE with DM_OODLE_OOZ to decode them here')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
         results.append(('main', last_entries(found), var_pairs(found), {}))
     for romfs in dlc_v:

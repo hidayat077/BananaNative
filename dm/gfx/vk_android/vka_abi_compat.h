@@ -14,9 +14,9 @@
 
 // The host ABI the rows were checked against: when DMSH_VK_ABI moves, the table is not used (vka_abi_compat_of) until its rows are checked again against the new
 // headers and this line is raised (the unit test t_android_shlib fails meanwhile)
-#define VKA_ABI_COMPAT_FOR "4fbeb79f5ab7"
+#define VKA_ABI_COMPAT_FOR "ddd94eb8d4d3"
 // The rows' ABIs, space-separated, in the table's order: what the launcher reads (build.gradle NX_DMSH_VK_ABI_COMPAT, ShaderLibs.playable)
-#define DMSH_VK_ABI_COMPAT "228b73bd10f6 674db0a4ff79"
+#define DMSH_VK_ABI_COMPAT "228b73bd10f6 674db0a4ff79 4fbeb79f5ab7 1bdea87a8878"
 
 typedef struct { const char *abi; unsigned differs; } vka_abi_compat_row;
 static const vka_abi_compat_row vka_abi_compat[] = {
@@ -26,6 +26,10 @@ static const vka_abi_compat_row vka_abi_compat[] = {
     // Before a319e773 (2026-11-07; Vulkan chains up to d64f157175fd): a pool table of 4096 entries, searched in 12 steps, and the page-hash write log.
     // The table of 8192 entries is a superset (entries 0..4095 the same, the lookup hint in word 6 unread; entry 0's sink in words 6 and 7 still written); the log is not
     {"674db0a4ff79", VKA_ABI_LOG_PAGES},
+    // Before transform feedback capture (dde4117e, 2026-11-20; up to Vulkan chain 49f03d56a65e): the headers differ only in the added DMSH_VK_MOD_TF module, which no library of that ABI holds
+    {"4fbeb79f5ab7", 0},
+    // Before the dynamic texture / sampler slot arrays (dmsh_abi_vk.h DMSH_VK_KIND_TEX_DYN / SAMP_DYN): additive, an older library holds neither kind
+    {"1bdea87a8878", 0},
 };
 enum { VKA_ABI_COMPAT_N = sizeof vka_abi_compat / sizeof vka_abi_compat[0] };
 

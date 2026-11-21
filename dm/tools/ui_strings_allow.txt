@@ -184,9 +184,6 @@ main/java/dev/nxnative/android/Prefs.java	Stretch to screen
 main/java/dev/nxnative/android/Prefs.java	Dark
 main/java/dev/nxnative/android/Prefs.java	Follow the system
 main/java/dev/nxnative/android/Prefs.java	Light
-main/java/dev/nxnative/android/Prefs.java	Bananas
-main/java/dev/nxnative/android/Prefs.java	My picture
-main/java/dev/nxnative/android/Prefs.java	Plain
 main/java/dev/nxnative/android/TouchControls.java	ZL L −
 main/java/dev/nxnative/android/TouchControls.java	ZR R +
 main/java/dev/nxnative/android/TouchControls.java	left stick
@@ -239,13 +236,6 @@ main/java/dev/nxnative/android/GameActivity.java	 exists but cannot be read (
 main/java/dev/nxnative/android/GameActivity.java	): no switches from it this run; after writing it with adb, chmod 666 it
 main/java/dev/nxnative/android/GameSettings.java	DM_WATCH_STALL=25
 main/java/dev/nxnative/android/MainActivity.java	 ignored: ADB control is off (Settings › Help › ADB control)
-main/java/dev/nxnative/android/MainActivity.java	Donkey Kong Bananza
-main/java/dev/nxnative/android/MainActivity.java	Mario Kart World
-main/java/dev/nxnative/android/MainActivity.java	Zelda: Ocarina of Time
-main/java/dev/nxnative/android/MainActivity.java	Mario Tennis Fever
-main/java/dev/nxnative/android/MainActivity.java	Not in this app version
-main/java/dev/nxnative/android/MainActivity.java	Ready \u00b7 updating shaders
-main/java/dev/nxnative/android/MainActivity.java	Ready \u00b7 checking shaders
 main/java/dev/nxnative/android/MainActivity.java	 did not finish.
 main/java/dev/nxnative/android/MainActivity.java	.android.key is missing: the rewrite of 
 main/java/dev/nxnative/android/MainActivity.java	 taken over as v-

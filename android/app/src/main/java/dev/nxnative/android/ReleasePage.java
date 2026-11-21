@@ -41,7 +41,6 @@ final class ReleasePage {
         FrameLayout overlay = new FrameLayout(a);
         overlay.setClickable(true);   // the page under it gets no touches
         overlay.setBackgroundColor(Ui.col(a, R.color.bn_bg));
-        overlay.addView(new BananaBackgroundView(a), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         LinearLayout root = new LinearLayout(a);
         root.setOrientation(LinearLayout.VERTICAL);
         overlay.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));

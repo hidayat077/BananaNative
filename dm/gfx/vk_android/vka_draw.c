@@ -1221,7 +1221,7 @@ static void drv_memo_reset(void) { for (int st = 0; st < VKA_NSTAGE; st++) for (
 // default 1; 0: filled and compared every draw, as before). A c2 fill and compare is ~0.3 us a stage on the Mac (its 2.5 KB, 300 handle words)
 static void drv_key(const vka_dstate *d, int st, int bi_, int pool, uint64_t k[3]) {
     if (bi_ == 0) { k[0] = d->s_ssbo[st]; k[1] = d->b.base_instance; k[2] = d->b.samples; }
-    else if (bi_ == 1) { k[0] = d->s_tex[st]; k[1] = pool ? (uint64_t)(uint32_t)d->b.tex_base | (uint64_t)(uint32_t)d->b.samp_base << 32 : 0; k[2] = (uint64_t)(pool != 0); }
+    else if (bi_ == 1) { k[0] = d->s_tex[st]; k[1] = pool & VKA_POOL_READS ? (uint64_t)(uint32_t)d->b.tex_base | (uint64_t)(uint32_t)d->b.samp_base << 32 : 0; k[2] = (uint64_t)pool; }
     else { k[0] = d->s_push; k[1] = k[2] = 0; }
 }
 static int drv_seg(const vka_dstate *d, int st, int bank, int pool, VkDescriptorBufferInfo *bi, c0_at *c0) {
@@ -1587,7 +1587,7 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
         if (st == 1 && d->rast_discard) continue;   // no fragments: its stage's records are not read (the layout keeps them unwritten: partially bound is not needed for push descriptors)
         int n = g_wk.n[st];
         if (n < 0) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 16) VRED("shader %016llx: %s; skipped", (unsigned long long)s->key, g_wk.why[st]); return 0; }
-        any_pool |= g_wk.pool[st];
+        any_pool |= g_wk.pool[st] & VKA_POOL_READS;   // the dynamic handle arrays' bit does not read set 1
         if (!stage_writes(d, st, s, g_wk.r[st], n, g_wk.pool[st], st == 5 ? c0 : NULL)) return 0;
     }
     if (g_prof) g_ps[1] += cntvct() - t1_;
@@ -1652,7 +1652,7 @@ static int bar_hazard(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
     if (draw_writes(sh, d)) return 1;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
-        if (g_wk.pool[st] || g_wk.n[st] < 0) return 1;
+        if ((g_wk.pool[st] & VKA_POOL_READS) || g_wk.n[st] < 0) return 1;
         const vka_res *r = g_wk.r[st];
         for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid && vka_tex_id_in_pass_rec(r[i].tid, r[i].dim)) return 1;
     }
@@ -2826,7 +2826,10 @@ static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p
     for (int i = 0; i < g_wk.n[5]; i++) {
         int img = r[i].what == VKA_R_IMG && r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         int tex = r[i].what == VKA_R_TEX && (r[i].desc == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || r[i].desc == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);   // (a texture: its fetches and samples)
-        if (!(img || tex) || r[i].binding >= 64 || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
+        // A buffer texture bound as a texel buffer is an OpTypeImage of Dim Buffer too: Unreal's Niagara compute shaders build their particle index tables in
+        // R32UI / R32I buffer textures through a float declaration (FFR's haze and dust sprites), so they need the same integer retype as an image
+        int tbuf = r[i].what == VKA_R_TBUF && (r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER || r[i].desc == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER);
+        if (!(img || tex || tbuf) || r[i].binding >= 64 || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
         int c = r[i].tid ? vka_tex_id_class_rec(r[i].tid) : 0; uint64_t bit = 1ull << r[i].binding;
         if (r[i].elem) c = 0;   // (an array binding keeps its float type)
         if (c == 1) um |= bit; else if (c == 2) sm |= bit; else fm |= bit;
@@ -2835,7 +2838,7 @@ static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p
     if (!(um | sm)) return p;
     VkPipeline q = vka_cs_pipeline_img(cs, lay, um, sm);
     if (!q) return vka_pso_wait ? VK_NULL_HANDLE : p;   // being made in the background (DM_VK_CS_ASYNC): the dispatch skipped, not run with the base pipeline; cannot be made: the base one
-    for (int i = 0; i < g_wk.n[5]; i++) if ((r[i].what == VKA_R_IMG || r[i].what == VKA_R_TEX) && r[i].binding < 64 && ((um | sm) >> r[i].binding & 1)) r[i].dim |= um >> r[i].binding & 1 ? DMSH_VK_DIM_UINT : DMSH_VK_DIM_SINT;
+    for (int i = 0; i < g_wk.n[5]; i++) if ((r[i].what == VKA_R_IMG || r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].binding < 64 && ((um | sm) >> r[i].binding & 1)) r[i].dim |= um >> r[i].binding & 1 ? DMSH_VK_DIM_UINT : DMSH_VK_DIM_SINT;
     return q;
 }
 // ---------- FSR 1 in place of a game's neural upscaler (DM_VK_NDSR) ----------

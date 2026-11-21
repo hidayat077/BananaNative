@@ -143,23 +143,20 @@
     <string name="home_shaders_missing">Brak shaderów</string>
     <string name="home_show_defaults_for_all_games">Pokaż domyślne dla wszystkich gier</string>
     <string name="home_start_anyway">Uruchom mimo to</string>
-    <string name="home_that_file_is_not_a">Ten plik nie jest obrazem, który aplikacja potrafi odczytać.</string>
-    <string name="home_that_sound_could_not_be">Nie udało się odczytać tego dźwięku (krótki plik audio, maks. 2 MB).</string>
     <string name="home_the_app_needs_all_files">Aplikacja potrzebuje dostępu do wszystkich plików, aby odczytać zrzut gry. Zezwól i wróć.</string>
     <string name="home_this_game_s_newest_log">Najnowszy log tej gry</string>
     <string name="home_turn_on_and_play">Włącz i graj</string>
     <string name="home_without_them_the_game_draws">Bez nich gra nic nie rysuje.</string>
-    <string name="settings_a_tick_when_the_focus">Tyknięcie przy zmianie fokusu i ćwierknięcie przy dotknięciu</string>
     <string name="settings_a_user_needs_a_name">Użytkownik musi mieć nazwę</string>
     <string name="settings_adb_control_debug">Sterowanie ADB (debugowanie)</string>
     <string name="settings_add_user">Dodaj użytkownika</string>
     <string name="settings_advanced">Zaawansowane</string>
     <string name="settings_allow_installs">Zezwól na instalacje</string>
-    <string name="settings_background">Tło</string>
     <string name="settings_built_without_lsfg">" Zbudowano bez LSFG."</string>
     <string name="settings_can_this_phone_run_your">Czy ten telefon uruchomi twoje gry?</string>
     <string name="settings_checking_for_updates">Sprawdzanie aktualizacji…</string>
     <string name="settings_controller_in_game_panel">Kontroler: panel w grze</string>
+    <string name="settings_docked_mode">Tryb dokowania</string>
     <string name="settings_each_game_s_page_can">Strona każdej gry może je zastąpić.</string>
     <string name="settings_frame_generation">Generowanie klatek</string>
     <string name="settings_games_start_with_this_user">Gry startują z tym użytkownikiem</string>
@@ -172,7 +169,6 @@
     <string name="settings_later">Później</string>
     <string name="settings_lets_adb_commands_add_games">Pozwala poleceniom adb dodawać gry, uruchamiać Przygotuj i instalować sterowniki GPU. Wyłączone: tylko ty, w aplikacji</string>
     <string name="settings_loading_picture">Wczytywanie obrazu…</string>
-    <string name="settings_my_sound">Mój dźwięk</string>
     <string name="settings_name">Nazwa</string>
     <string name="settings_needs_no_game">Nie wymaga gry</string>
     <string name="settings_on_the_controller_or_the">Na kontrolerze lub na telefonie bez niego</string>
@@ -182,14 +178,12 @@
     <string name="settings_small_fix_updates_help">Proponuj wydania z drobnymi poprawkami przy uruchomieniu. Wyłączone: tylko duże aktualizacje; Sprawdź aktualizacje nadal pokazuje najnowszą. Następna duża aktualizacja zawiera wszystkie poprawki.</string>
     <string name="settings_player_wiki">Wiki dla graczy</string>
     <string name="settings_remove_leftovers_and_old_files">Usuwa pozostałości i stare pliki; nigdy zapisów</string>
-    <string name="settings_sample_games">Przykładowe gry</string>
     <string name="settings_select_a_user">Wybierz użytkownika</string>
     <string name="settings_show">Pokaż</string>
     <string name="settings_show_hide_button">Przycisk pokaż / ukryj</string>
     <string name="settings_showing_the_rows_made_for">Pokazano wiersze przeznaczone do testów: Zaawansowana rozdzielczość, Skaler i Rozdzielczość dynamiczna</string>
     <string name="settings_starting">Uruchamianie…</string>
     <string name="settings_storage">Pamięć</string>
-    <string name="settings_test_builds_shows_sample_tiles">Wersje testowe: pokazuje przykładowe kafelki na ekranie głównym, by ocenić wygląd</string>
     <string name="settings_tester_settings">Ustawienia testera</string>
     <string name="settings_the_launcher_did_not_accept">Launcher nie przyjął skrótu.</string>
     <string name="settings_the_newest_log">Najnowszy log</string>
@@ -198,7 +192,6 @@
     <string name="settings_this_launcher_cannot_pin_shortcuts">Ten launcher nie potrafi przypinać skrótów.</string>
     <string name="settings_this_release_has_no_notes">To wydanie nie ma notatek.</string>
     <string name="settings_to_install_the_update_allow">Aby zainstalować aktualizację, zezwól Banana Native na instalowanie aplikacji („Instaluj nieznane aplikacje”), a potem wróć.</string>
-    <string name="settings_ui_sounds">Dźwięki interfejsu</string>
     <string name="settings_update">Aktualizuj</string>
     <string name="settings_updates">Aktualizacje</string>
     <string name="settings_what_s_new">Co nowego</string>
@@ -421,8 +414,6 @@
     <string name="game_join_pc_host">Dołącz do hosta na komputerze</string>
     <string name="game_fixed">Stałe</string>
     <string name="home_updates">Aktualizacje</string>
-    <string name="settings_pick_another_sound">Wybierz inny dźwięk</string>
-    <string name="settings_use_the_built_in_sounds">Użyj wbudowanych dźwięków</string>
     <string name="home_a_folder_with_base_and">Folder (z base/ oraz updates/, jeśli jest)</string>
     <string name="home_a_nup_file_or_an">Plik .nup lub plik .nsp z NSP Box</string>
     <string name="home_a_nup_or_nsp_file">Plik .nup lub .nsp (używany tam, gdzie leży)</string>
@@ -662,11 +653,6 @@
         <item>Jasny</item>
         <item>Ciemny</item>
     </string-array>
-    <string-array name="arr_background">
-        <item>Banany</item>
-        <item>Jednolite</item>
-        <item>Mój obraz</item>
-    </string-array>
     <string-array name="arr_xbox">
         <item>Wyłączone</item>
         <item>Zamień etykiety X/Y i A/B</item>
@@ -761,7 +747,6 @@
     <string name="game_needs_prepare_again_patches_the">Wymaga ponownego przygotowania: łata kod gry (Pamięć › Przygotuj ponownie)</string>
     <string name="common_search_every_switch_each_starts">Szukaj we wszystkich przełącznikach; każdy zaczyna od Auto</string>
     <string name="game_needs_prepare_again_makes_this">Wymaga ponownego przygotowania: tworzy ten rozmiar sceny 3D z plików gry (Pamięć › Przygotuj ponownie)</string>
-    <string name="settings_your_sound">Twój dźwięk</string>
     <string name="home_release_app_only">" · tylko aplikacja wydaniowa"</string>
     <string name="home_not_in_this_build">Nie ma w tej wersji</string>
     <string name="home_lossless_dll_missing">" · brak Lossless.dll"</string>
