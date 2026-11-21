@@ -7,6 +7,8 @@ The Android port of the host: one launcher APK (`android/app`) that holds the ho
 | `android/host` | CMake build of `libnxhost.so` for arm64-v8a, API 33+ (`GAME=<title ID>` picks the profile; `NX_GAMES=<id>,<id>,…` builds `libnxhost_<id>.so` for each, as the APK does) |
 | `android/app` | the launcher: Gradle + CMake, Java, `dev.nxnative.android`, named "Banana Native test" (`-PnxPlay=true`: `dev.nxnative.android.play`, "Banana Native") |
 | `scripts/pack_android.py` | the packer (the Mac's, and the app's own: the same tools run in the app, ONDEVICE.md) |
+| `scripts/shader_fast_rebuild.py` | CLI helper for first-time shader builds or fast incremental rebuilds (migrates unaffected shaders from an older `dmsh_vk.lib` / `results/` and re-translates only selected categories) |
+| `scripts/shader_rebuild_gui.py` | PySide6 GUI (*Shader Rebuild Studio*) wrapping `shader_fast_rebuild.py` and `pack_android.py`, with live category counts and an embedded User Guide tab |
 | `android/ondevice` | the app's packer, native side: embedded CPython (`libnxpack.so`), and `build.sh`, which makes the stage the APK takes |
 
 **License.** nxnative is MIT. The Android build includes Lossless Scaling frame generation ported from Eden ([`dm/gfx/vk_android/lsfg`](../dm/gfx/vk_android/lsfg/LICENSE.md)), which is GPL-3.0-or-later: **an APK built with it (the default) is GPL-3.0-or-later as a whole**; `-PnxLsfg=false` builds one without it. See [NOTICE.md](NOTICE.md). `Lossless.dll` is never in the repository or the APK.
