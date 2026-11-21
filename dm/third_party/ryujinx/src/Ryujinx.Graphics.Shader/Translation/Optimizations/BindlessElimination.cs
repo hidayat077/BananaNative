@@ -115,7 +115,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
         {
             Operand handle = texOp.GetSource(0);
 
-            if (handle.AsgOp is not PhiNode || IsBindlessHandleAllowed(handle))
+            // nxnative: a top-level BitwiseOr (R = word; R |= other word) is a handle too, not only one that reaches the read through a phi (nx2android #243)
+            if (handle.AsgOp is not PhiNode and not Operation { Inst: Instruction.BitwiseOr } || IsBindlessHandleAllowed(handle))
             {
                 return TableHandle.None;   // GenerateBindlessAccess takes it, as before (a choice among c[2] words: the dynamic handle arrays of tex_dyn_slots)
             }
@@ -143,7 +144,9 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                         {
                             (Operand t, Operand sm) = IsSamplerWord(texture) && !IsSamplerWord(sampler) ? (sampler, texture) : (texture, sampler);   // either order, as TryConvertBindless
 
-                            if (IsTableWord(t) && (IsC2Word(sm) || (sm.Type == OperandType.Constant && (sm.Value & 0xfffff) == 0)))
+                            // nxnative: the texture word may come from any constant buffer bank, not just c[2], when ORed with a sampler word of the same bank or a constant
+                            // sampler (nx2android #243; Unreal Engine 5.4 keeps its handles in c[3]). A word of a game's own uniform buffer is no handle on its own (above)
+                            if (t.Type == OperandType.ConstantBuffer && !IsSamplerWord(t) && (IsSameBankWord(sm, t) || (sm.Type == OperandType.Constant && (sm.Value & 0xfffff) == 0)))
                             {
                                 AddCandidate(found, t, sm);
                             }
@@ -155,6 +158,10 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     return TableHandle.None;   // a handle loaded from memory or an input is a real bindless access (GenerateBindlessAccess)
                 }
             }
+
+            // nxnative: a word alone that an ORed candidate also takes is that handle on its way (R = word; R |= other word), not a handle of its own (nx2android #243)
+            found = found.FindAll(candidate => candidate.Sampler != null || !found.Exists(other => other.Sampler != null &&
+                (other.Texture.Value == candidate.Texture.Value || other.Sampler.Value == candidate.Texture.Value && other.Sampler.Type == OperandType.ConstantBuffer)));
 
             if (found.Count > 1)
             {
@@ -168,7 +175,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                     return TableHandle.Deferred;
                 }
 
-                found = found.FindAll(candidate => resourceManager.GetTextureTypes(NvnTextureBufferIndex, candidate.Texture.GetCbufOffset(), texOp.Inst.IsImage())
+                found = found.FindAll(candidate => resourceManager.GetTextureTypes(candidate.Texture.GetCbufSlot(), candidate.Texture.GetCbufOffset(), texOp.Inst.IsImage())
                     .TrueForAll(type => SameShape(type, texOp.Type)));
             }
 
@@ -233,8 +240,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             }
 
             gpuAccessor.Log(found.Count == 1
-                ? "Bindless handle taken from the one c[2] handle among its phi inputs."
-                : $"Bindless handle chosen at run time among {found.Count} c[2] handles of its phi inputs.");
+                ? "Bindless handle taken from the one constant buffer handle among its phi inputs."
+                : $"Bindless handle chosen at run time among {found.Count} constant buffer handles of its phi inputs.");
 
             if (Environment.GetEnvironmentVariable("DMSH_BINDLESS_TRACE") != null)   // nxnative: what the handle was made of, for a diagnosis (dmsh_xlate on one job)
             {
@@ -277,9 +284,9 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
             return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == NvnTextureBufferIndex && !IsSamplerWord(operand);
         }
 
-        private static bool IsC2Word(Operand operand)
+        private static bool IsSameBankWord(Operand operand, Operand word)   // nxnative: a sampler word of the texture word's bank, whatever that bank is (nx2android #243)
         {
-            return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == NvnTextureBufferIndex;
+            return operand.Type == OperandType.ConstantBuffer && operand.GetCbufSlot() == word.GetCbufSlot();
         }
 
         private static bool IsSamplerWord(Operand operand)

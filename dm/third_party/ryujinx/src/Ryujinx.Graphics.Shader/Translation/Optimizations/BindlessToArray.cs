@@ -8,6 +8,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
     static class BindlessToArray
     {
         private const int NvnTextureBufferIndex = 2;
+        private const int NvnSlotArrayLength = 32;      // nxnative: as BindlessElimination's (nx2android #243)
         private const int HardcodedArrayLengthOgl = 4;
 
         // 1 and 0 elements are not considered arrays anymore.
@@ -214,6 +215,13 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
                 }
 
                 int length = Math.Max(MinimumArrayLength, gpuAccessor.QueryTextureArrayLengthFromBuffer(src0CbufSlot));
+
+                // nxnative: images and buffer textures keep 32 elements at most (the host binds those slots one by one); c[2]'s texture table keeps the length the query answers.
+                // An image or buffer-texture handle in another bank (nx2android #243) is such a slot array, not a pool array
+                if (src0CbufSlot != NvnTextureBufferIndex && (texOp.Inst.IsImage() || (texOp.Type & SamplerType.Mask) == SamplerType.TextureBuffer))
+                {
+                    length = Math.Min(length, NvnSlotArrayLength);
+                }
 
                 // nxnative: handles at a computed index past a constant base, the base beyond the array's length: every read would clamp to its last element, which is no handle. Fire Emblem Fortune's
                 // Weave's character shaders read their cube maps as c[14][8 i + 0x340] (LDC after a shift of 3). The array starts at the base instead (the host fills element k from base + 8k), so
