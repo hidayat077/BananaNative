@@ -26,8 +26,9 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
                         bool isWorthPropagating = propVar.Uses.Count == 1 || IsWorthPropagating(assignment.Source);
 
                         // Banana Native: a source with side effects is never propagated: its assignment stays (below), so a copy at the use ran it twice
-                        // (nx2android c6b211c: Pokémon Legends: Z-A's culling compute shaders did each warp's atomic add twice, and the GPU time grew every frame)
-                        if (propVar.Defs.Count == 1 && isWorthPropagating && !HasSideEffects(assignment.Source))
+                        // (nx2android c6b211c: Pokémon Legends: Z-A's culling compute shaders did each warp's atomic add twice, and the GPU time grew every frame);
+                        // likewise loads from writable memory, so stores between def and use cannot overwrite the read before propagation (FFR radix sort)
+                        if (propVar.Defs.Count == 1 && isWorthPropagating && !HasSideEffects(assignment.Source) && !ReadsWritableMemory(assignment.Source))
                         {
                             PropagateExpression(propVar, assignment.Source);
                         }
@@ -45,6 +46,25 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
             }
 
             RemoveEmptyBlocks(mainBlock, targetLanguage);
+        }
+
+        private static bool ReadsWritableMemory(IAstNode source)
+        {
+            if (source is not AstOperation operation)
+            {
+                return false;
+            }
+
+            Instruction inst = operation.Inst & Instruction.Mask;
+
+            if (inst == Instruction.ImageLoad)
+            {
+                return true;
+            }
+
+            return inst == Instruction.Load && operation.StorageKind is StorageKind.LocalMemory or StorageKind.SharedMemory or StorageKind.SharedMemory8 or
+                StorageKind.SharedMemory16 or StorageKind.StorageBuffer or StorageKind.GlobalMemory or StorageKind.GlobalMemoryS8 or StorageKind.GlobalMemoryS16 or
+                StorageKind.GlobalMemoryU8 or StorageKind.GlobalMemoryU16;
         }
 
         private static bool HasSideEffects(IAstNode source)

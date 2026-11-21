@@ -714,6 +714,35 @@ def alpha_test(m, spec_id):
     return n > 0
 
 
+OP_SAMPLED_IMAGE, OP_IMAGE = 86, 100
+
+
+def buffer_textures_split(m):
+    """Rewrite OpTypeSampledImage(OpTypeImage Buffer) to plain OpTypeImage Buffer (UNIFORM_TEXEL_BUFFER) when loads are only unpacked via OpImage."""
+    imgs = {i for i, x in m.types.items() if x[0] & 0xffff == OP_TYPE_IMAGE and x[3] == DIM_BUFFER and x[7] == 1}
+    si = {i: x[2] for i, x in m.types.items() if x[0] & 0xffff == OP_TYPE_SAMPLED_IMAGE and x[2] in imgs}
+    if not si: return 0
+    loaded = {x[2] for x in m.ins if x[0] & 0xffff in (OP_LOAD, OP_SAMPLED_IMAGE) and x[1] in si}
+    body = False
+    for x in m.ins:
+        op = x[0] & 0xffff
+        body = body or op == OP_FUNCTION
+        if not body or op == OP_LOAD or op == OP_SAMPLED_IMAGE and x[1] in si or op == OP_IMAGE and x[3] in loaded and len(x) == 4: continue
+        if any(w in loaded for w in x[3:]) and op not in (OP_STORE, OP_ACCESS_CHAIN, OP_IN_BOUNDS_ACCESS_CHAIN) or op == OP_STORE and x[2] in loaded: return 0
+    for x in m.ins:
+        op = x[0] & 0xffff
+        if op in (OP_TYPE_POINTER, OP_TYPE_ARRAY, OP_TYPE_RUNTIME_ARRAY):
+            k = 3 if op == OP_TYPE_POINTER else 2
+            x[k] = si.get(x[k], x[k])
+        elif op == OP_LOAD and x[1] in si: x[1] = si[x[1]]
+        elif op == OP_SAMPLED_IMAGE and x[1] in si: x[:] = [4 << 16 | OP_COPY_OBJECT, si[x[1]], x[2], x[3]]
+        elif op == OP_IMAGE and x[3] in loaded: x[0] = 4 << 16 | OP_COPY_OBJECT
+    used = {w for x in m.ins if x[0] & 0xffff not in (OP_NAME, OP_DECORATE) for w in x[2 if 19 <= x[0] & 0xffff <= 39 else 1:]}   # drop orphaned sampled-image Buffer type (invalid in SPIR-V 1.6)
+    m.ins = [x for x in m.ins if not (x[0] & 0xffff == OP_TYPE_SAMPLED_IMAGE and x[1] in si and x[1] not in used)]
+    m.index()
+    return len(si)
+
+
 OP_FUNCTION_PARAMETER, OP_FUNCTION_CALL = 55, 57
 OP_IADD, OP_ISUB, OP_IMUL, OP_SHR_LOGICAL, OP_SHR_ARITH, OP_SHL_LOGICAL, OP_BITWISE_OR, OP_BITWISE_XOR, OP_BITWISE_AND = 128, 130, 132, 194, 195, 196, 197, 198, 199
 OP_CONTROL_BARRIER, OP_GROUP_NON_UNIFORM_SHUFFLE = 224, 345

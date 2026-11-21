@@ -2954,6 +2954,10 @@ VkFormat vka_tex_id_vkfmt(int id) {
     pthread_mutex_unlock(&g_tmu);
     return r;
 }
+// The numeric class of a format: 1 uint (including stencil, which OpImageFetch reads as unsigned integer), 2 sint, 0 float / normalized / depth / none.
+static int tex_fmt_class(vka_fmt f, int stencil) {
+    return f.kind == 1 || f.kind == 4 || (f.kind == 5 && stencil) ? 1 : f.kind == 2 ? 2 : 0;
+}
 // The numeric class of the format texture ID id is viewed in (its texture view's, else its own): 1 uint, 2 sint, 0 float / normalized / depth / none. A compute shader's float
 // storage image bound to an integer one is retyped (vka_draw.c img_masks, vka_shader_img_module) instead of reading it through a float view of the same size (class_twin)
 int vka_tex_id_class(int id) {
@@ -2961,7 +2965,8 @@ int vka_tex_id_class(int id) {
     int r = 0;
     if (id > 0 && id < g_ntreg && g_treg[id].t.serial) {
         const treg_ent *e = &g_treg[id]; vka_fmt f;
-        if (vka_fmt_of(e->has_v && e->v.set_format ? e->v.format : e->t.d.format, &f)) r = f.kind == 1 ? 1 : f.kind == 2 ? 2 : 0;
+        if (vka_fmt_of(e->has_v && e->v.set_format ? e->v.format : e->t.d.format, &f))
+            r = tex_fmt_class(f, e->t.stencil || (e->has_v && e->v.set_dsmode && e->v.dsmode));
     }
     pthread_mutex_unlock(&g_tmu);
     return r;
@@ -3001,7 +3006,7 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
     // another format of the same texel size (Ocarina of Time binds RGBA8, R11G11B10 and RGB9E5 targets as r32ui shader images). Judged by the image's format, an RGBA8
     // target's r32ui binding was given an RGBA8_UINT view (no atomics, not the shader's declared format) and an RGB9E5 one nothing
     vka_fmt vf = view_fmt(&e, im);
-    int want = dim & DMSH_VK_DIM_SINT ? 2 : dim & DMSH_VK_DIM_UINT ? 1 : 0, have = vf.kind == 1 ? 1 : vf.kind == 2 ? 2 : 0;
+    int want = dim & DMSH_VK_DIM_SINT ? 2 : dim & DMSH_VK_DIM_UINT ? 1 : 0, have = tex_fmt_class(vf, e.t.stencil || (e.has_v && e.v.set_dsmode && e.v.dsmode));
     VkFormat ovr = VK_FORMAT_UNDEFINED;
     if (force) {   // (vka_tex_id_view_bits: a colour format of 4-byte texels)
         if (vf.bw != 1 || vf.bh != 1 || vf.bpb != 4 || im->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { pthread_mutex_lock(&g_tmu); im_unhold_locked(im); pthread_mutex_unlock(&g_tmu); return VK_NULL_HANDLE; }

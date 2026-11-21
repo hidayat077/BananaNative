@@ -610,6 +610,7 @@ def finish(key, w, job, c1):
     # returns a load of the Function variable its parameter was stored to, not the parameter, and the pass matched none (Pokopia's af8f64d9f5542ef2: 0 calls replaced, 5,224 after)
     spv.scale_identity(m)
     if not hmma: spv.loop_pool_search(m)   # the raw helpers' pool table search one loop of one step (vk_android_spv.py loop_pool_search)
+    spv.buffer_textures_split(m)
     binds = [classify(stage, r, res, m) for r in m.resources()]
     storage_slots(stage, binds, res)
     try: place(stage, binds, m)
