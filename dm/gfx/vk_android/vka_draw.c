@@ -2826,7 +2826,10 @@ static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p
     for (int i = 0; i < g_wk.n[5]; i++) {
         int img = r[i].what == VKA_R_IMG && r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         int tex = r[i].what == VKA_R_TEX && (r[i].desc == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || r[i].desc == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);   // (a texture: its fetches and samples)
-        if (!(img || tex) || r[i].binding >= 64 || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
+        // A buffer texture bound as a texel buffer is an OpTypeImage of Dim Buffer too: Unreal's Niagara compute shaders build their particle index tables in
+        // R32UI / R32I buffer textures through a float declaration (FFR's haze and dust sprites), so they need the same integer retype as an image
+        int tbuf = r[i].what == VKA_R_TBUF && (r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER || r[i].desc == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER);
+        if (!(img || tex || tbuf) || r[i].binding >= 64 || (r[i].dim & (DMSH_VK_DIM_SINT | DMSH_VK_DIM_UINT))) continue;
         int c = r[i].tid ? vka_tex_id_class_rec(r[i].tid) : 0; uint64_t bit = 1ull << r[i].binding;
         if (r[i].elem) c = 0;   // (an array binding keeps its float type)
         if (c == 1) um |= bit; else if (c == 2) sm |= bit; else fm |= bit;
@@ -2835,7 +2838,7 @@ static VkPipeline img_retype(vka_shader *cs, const vka_layout *lay, VkPipeline p
     if (!(um | sm)) return p;
     VkPipeline q = vka_cs_pipeline_img(cs, lay, um, sm);
     if (!q) return vka_pso_wait ? VK_NULL_HANDLE : p;   // being made in the background (DM_VK_CS_ASYNC): the dispatch skipped, not run with the base pipeline; cannot be made: the base one
-    for (int i = 0; i < g_wk.n[5]; i++) if ((r[i].what == VKA_R_IMG || r[i].what == VKA_R_TEX) && r[i].binding < 64 && ((um | sm) >> r[i].binding & 1)) r[i].dim |= um >> r[i].binding & 1 ? DMSH_VK_DIM_UINT : DMSH_VK_DIM_SINT;
+    for (int i = 0; i < g_wk.n[5]; i++) if ((r[i].what == VKA_R_IMG || r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].binding < 64 && ((um | sm) >> r[i].binding & 1)) r[i].dim |= um >> r[i].binding & 1 ? DMSH_VK_DIM_UINT : DMSH_VK_DIM_SINT;
     return q;
 }
 // ---------- FSR 1 in place of a game's neural upscaler (DM_VK_NDSR) ----------

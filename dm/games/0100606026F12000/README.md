@@ -73,6 +73,7 @@ General host changes first needed here; each applies to every game:
 - **Unreal shader archives decoded on a PC with the open-source ooz worker** (`ue_ondevice.py`, `dm/third_party/ooz`, `DM_OODLE_OOZ` / `DM_UE_DECODE`, `pack_android.py ooz_split_checked`): [Unreal shader archives decoded by ooz on a PC builder](../../../docs/reference/shaders.md#unreal-shader-archives-decoded-by-ooz-on-a-pc-builder).
 - **Vulkan dynamic texture / sampler slot arrays for `tex_dyn_slots`** (`vk_android_build.py`, `vka_bind.c`, `vka_drv_fill`): [Texture slots picked at run time on Android](../../../docs/reference/shaders.md#texture-slots-picked-at-run-time-on-android).
 - **Unaligned buffer textures copied into aligned scratch for texel buffer views** (`vka_tbuf.c`, `vka_dev.c`): [Unaligned buffer textures as texel buffers on Android](../../../docs/reference/rendering.md#unaligned-buffer-textures-as-texel-buffers-on-android).
+- **Integer retype extended to buffer textures bound as texel buffers** (`vka_draw.c` `img_retype`): [Float storage images bound to integer textures on the Vulkan replay](../../../docs/reference/shaders.md#float-storage-images-bound-to-integer-textures-on-the-vulkan-replay).
 
 ## Open
 
