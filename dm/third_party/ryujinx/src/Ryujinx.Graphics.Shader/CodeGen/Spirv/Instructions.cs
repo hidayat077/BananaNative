@@ -607,9 +607,9 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             return OperationResult.Invalid;
         }
 
-        private static void MarkNonUniform(CodeGenContext context, SpvInstruction inst)
+        private static void MarkNonUniform(CodeGenContext context, SpvInstruction inst, bool always = false)
         {
-            if (context.HostCapabilities.SupportsShaderNonUniformIndexing)
+            if (always || context.HostCapabilities.SupportsShaderNonUniformIndexing)
             {
                 if (!context.WasNonUniformAccessDeclared)
                 {
@@ -1337,6 +1337,39 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             return new OperationResult(AggregateType.FP32, result);
         }
 
+        // The Switch's texture unit weighs sub-texel coordinates with 8 bits. Maxwell rounds a sample's coordinate to
+        // 1/256 of a texel, so a coordinate meant to land on a texel centre stays there; Adreno's finer weights blend in
+        // a trace of the neighbour. TOTK's terrain tiles read their shared-edge heights that way and the two tiles'
+        // edges differed, leaving dotted dark cracks on the ground that blinked as the camera moved. A gather takes the
+        // 2x2 around its coordinate: at a texel centre which 2x2 it picks hangs on the last bit, and Adreno picked the
+        // previous pixel's, shading rows of dark dots (BOTW's half-size AO). Round to 1/256, with a +1/1024 nudge for
+        // gathers so the centre stays the 2x2's top-left texel. As in TOTKDroid 8adbc5c / c02a43f.
+        private static SpvInstruction SnapTextureCoords(
+            CodeGenContext context, SpvInstruction image, SpvInstruction pCoords,
+            SpvInstruction lod, int pCount, float nudge)
+        {
+            SpvInstruction fp32 = context.TypeFP32();
+            SpvInstruction si32 = context.TypeS32();
+            SpvInstruction vecF = context.TypeVector(fp32, pCount);
+            SpvInstruction size = context.ImageQuerySizeLod(context.TypeVector(si32, pCount), image, lod);
+            SpvInstruction sizeF = context.ConvertSToF(vecF, size);
+            SpvInstruction c256 = context.Constant(fp32, 256f);
+            SpvInstruction[] elems = new SpvInstruction[pCount];
+
+            for (int i = 0; i < pCount; i++)
+            {
+                SpvInstruction coord = context.CompositeExtract(fp32, pCoords, i);
+                if (i >= 2) { elems[i] = coord; continue; }   // an array layer passes through unchanged
+                SpvInstruction scale = context.FMul(fp32, context.CompositeExtract(fp32, sizeF, i), c256);
+                SpvInstruction rounded = context.Delegates.GlslFloor(
+                    fp32, context.FAdd(fp32, context.FMul(fp32, coord, scale), context.Constant(fp32, 0.5f)));
+                SpvInstruction numerator = nudge != 0 ? context.FAdd(fp32, rounded, context.Constant(fp32, nudge)) : rounded;
+                elems[i] = context.FDiv(fp32, numerator, scale);
+            }
+
+            return context.CompositeConstruct(vecF, elems);
+        }
+
         private static OperationResult GenerateTextureSample(CodeGenContext context, AstOperation operation)
         {
             AstTextureOperation texOp = (AstTextureOperation)operation;
@@ -1457,6 +1490,18 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
             if (isShadow)
             {
                 dRef = Src(AggregateType.FP32);
+
+                // Maxwell rounds a shadow reference to the depth texture's precision before comparing. TOTK's shadow
+                // cascades are D16 arrays: compared in full float, a lit surface narrowly failed its own compare and
+                // showed black squares in a grid on the Great Sky Island's grass. TOTKDroid ebf93f7.
+                if (isArray)
+                {
+                    SpvInstruction fp32 = context.TypeFP32();
+                    SpvInstruction c65535 = context.Constant(fp32, 65535f);
+                    SpvInstruction rounded = context.Delegates.GlslFloor(
+                        fp32, context.FAdd(fp32, context.FMul(fp32, dRef, c65535), context.Constant(fp32, 0.5f)));
+                    dRef = context.FDiv(fp32, rounded, c65535);
+                }
             }
 
             SpvInstruction[] derivatives = null;
@@ -1556,6 +1601,21 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 lodBias = null;
                 hasLodBias = false;
                 hasLodLevel = true;
+            }
+
+            if (!intCoords && (texOp.Type & SamplerType.Mask) == SamplerType.Texture2D)
+            {
+                // A query needs the image, not the sampled image (GenerateTextureQuerySize does the same).
+                SpvInstruction snapImage = context.Image(declaration.ImageType, image);
+                if (isGather)
+                {
+                    pCoords = SnapTextureCoords(context, snapImage, pCoords, context.Constant(context.TypeS32(), 0), pCount, 0.25f);
+                }
+                else if (context.Definitions.Stage == ShaderStage.Vertex && !isShadow && !isMultisample)
+                {
+                    SpvInstruction queryLod = lod != null ? context.ConvertFToS(context.TypeS32(), lod) : context.Constant(context.TypeS32(), 0);
+                    pCoords = SnapTextureCoords(context, snapImage, pCoords, queryLod, pCount, 0f);
+                }
             }
 
             SpvInstruction compIdx = null;
@@ -2457,7 +2517,7 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 SpvInstruction textureIndex = context.Get(AggregateType.S32, texOp.GetSource(srcIndex++));
 
                 image = context.AccessChain(declaration.SampledImagePointerType, image, textureIndex);
-                MarkNonUniform(context, image);
+                MarkNonUniform(context, image, declaration.IsShaderIndexed);
             }
 
             if (texOp.IsSeparate)
@@ -2465,7 +2525,7 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 image = context.Load(declaration.ImageType, image);
                 if (imageIndexed)
                 {
-                    MarkNonUniform(context, image);
+                    MarkNonUniform(context, image, declaration.IsShaderIndexed);
                 }
 
                 SamplerDeclaration samplerDeclaration = context.Samplers[texOp.GetSamplerSetAndBinding()];
@@ -2478,19 +2538,19 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                     SpvInstruction samplerIndex = context.Get(AggregateType.S32, texOp.GetSource(srcIndex++));
 
                     sampler = context.AccessChain(samplerDeclaration.SampledImagePointerType, sampler, samplerIndex);
-                    MarkNonUniform(context, sampler);
+                    MarkNonUniform(context, sampler, samplerDeclaration.IsShaderIndexed);
                 }
 
                 sampler = context.Load(samplerDeclaration.ImageType, sampler);
                 if (samplerIndexed)
                 {
-                    MarkNonUniform(context, sampler);
+                    MarkNonUniform(context, sampler, samplerDeclaration.IsShaderIndexed);
                 }
 
                 image = context.SampledImage(declaration.SampledImageType, image, sampler);
                 if (imageIndexed || samplerIndexed)
                 {
-                    MarkNonUniform(context, image);
+                    MarkNonUniform(context, image, declaration.IsShaderIndexed || samplerDeclaration.IsShaderIndexed);
                 }
             }
             else
@@ -2498,7 +2558,7 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 image = context.Load(declaration.SampledImageType, image);
                 if (imageIndexed)
                 {
-                    MarkNonUniform(context, image);
+                    MarkNonUniform(context, image, declaration.IsShaderIndexed);
                 }
             }
 
