@@ -126,10 +126,16 @@ def classify_changed_files(files: list[str], diff_text: str = '') -> tuple[int, 
             mask |= F_GMEM_SBUF
             reasons.append(f'{bn} -> Storage/GMEM')
         elif bn in ('vk_android_spv.py', 'vk_android_build.py'):
+            matched = False
+            if 'tf_capture' in diff_text or 'MOD_TF' in diff_text or 'DMSH_VK_F_TF' in diff_text:
+                mask |= F_VS
+                reasons.append(f'{bn} -> Vertex (Transform Feedback)')
+                matched = True
             if 'buffer_textures_split' in diff_text or 'DIM_BUFFER' in diff_text:
                 mask |= F_BUF_COMBINED | F_TBUF
                 reasons.append(f'{bn} -> Buffer+Combined / TexelBuffer')
-            else:
+                matched = True
+            if not matched:
                 mask |= F_CS | F_BUF_COMBINED | F_BF_RW
                 reasons.append(f'{bn} -> Compute + Buffer+Combined + BF_RW')
 
@@ -344,12 +350,13 @@ def inspect_source(path_str: str | Path) -> GameContext:
     seen_res: set[Path] = set()
     ash = work / 'android-shaders'
     if ash.is_dir():
-        for res in list(ash.glob('lib/v-*/results')) + list(ash.glob('*/results')):
-            if res.is_dir():
-                rp = res.resolve()
-                if rp not in seen_res:
-                    seen_res.add(rp)
-                    old_results.append(res)
+        cands = [r for r in list(ash.glob('lib/v-*/results')) + list(ash.glob('*/results')) if r.is_dir()]
+        cands.sort(key=lambda x: -x.stat().st_mtime)
+        for res in cands:
+            rp = res.resolve()
+            if rp not in seen_res:
+                seen_res.add(rp)
+                old_results.append(res)
 
     return GameContext(
         input_path=p,
@@ -461,8 +468,8 @@ def select_rebuild_keys(
     return rebuild, keep
 
 
-def _try_copy_r(src: Path, dst: Path, target_vk: str, target_inputs: str, val_id: str) -> bool:
-    """Fast-path: reuse a matching .r file by updating only its 'vk' stamp field."""
+def _try_copy_r(src: Path, dst: Path, target_vk: str, target_inputs: str, val_id: str, expected_vk: str | None = None) -> bool:
+    """Fast-path: reuse a matching .r file by updating only its 'vk' (and 'reused') stamp fields."""
     try:
         with open(src, 'rb') as f:
             hdr = f.read(12)
@@ -476,12 +483,16 @@ def _try_copy_r(src: Path, dst: Path, target_vk: str, target_inputs: str, val_id
             body = f.read()
         if (h.get('inputs'), h.get('raw'), h.get('val'), h.get('st')) != (target_inputs, False, val_id, 'ok'):
             return False
+        if expected_vk is not None and h.get('vk') != expected_vk:
+            return False
         if sum(m[2] for m in h['modules']) != len(body):
             return False
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
     h['vk'] = target_vk
+    if expected_vk is not None and expected_vk != target_vk:
+        h['reused'] = expected_vk
     new_j = json.dumps(h, separators=(',', ':')).encode()
     tmp = dst.with_name(dst.name + f'.{os.getpid()}.tmp')
     with open(tmp, 'wb') as f:
@@ -490,7 +501,7 @@ def _try_copy_r(src: Path, dst: Path, target_vk: str, target_inputs: str, val_id
     return True
 
 
-def _is_valid_target_r(path: Path, target_vk: str, target_inputs: str, val_id: str) -> bool:
+def _is_valid_target_r(path: Path, target_vk: str, target_inputs: str, val_id: str, expected_reused: str | None = None) -> bool:
     try:
         with open(path, 'rb') as f:
             hdr = f.read(12)
@@ -499,6 +510,8 @@ def _is_valid_target_r(path: Path, target_vk: str, target_inputs: str, val_id: s
             n = struct.unpack('<I', hdr[8:])[0]
             h = json.loads(f.read(n))
             size = os.fstat(f.fileno()).st_size
+        if expected_reused is not None and h.get('reused') != expected_reused:
+            return False
         return (
             (h.get('vk'), h.get('inputs'), h.get('raw'), h.get('val'), h.get('key'))
             == (target_vk, target_inputs, False, val_id, path.stem)
@@ -521,19 +534,28 @@ def migrate_to_results(
 ) -> dict[str, int]:
     """Populate <res_dir>/<key>.r for every key in keep_keys without re-translating.
 
-    Reuses matching .r files from results_dirs when compatible, otherwise extracts the
-    already-compressed entry directly from dmsh_vk.lib using vk_android_delta's reused format.
+    Reuses matching .r files from lib_path's own version when compatible, otherwise extracts
+    the already-compressed entry directly from dmsh_vk.lib using vk_android_delta's reused format.
     """
+    lib_p = Path(lib_path)
     res_p = Path(res_dir)
     res_p.mkdir(parents=True, exist_ok=True)
-    res_dirs = [Path(d) for d in results_dirs if Path(d).is_dir()]
+    res_dirs: list[Path] = []
+    seen_res: set[Path] = set()
+    for d in [lib_p.parent / 'results', *(Path(x) for x in results_dirs)]:
+        if d.is_dir():
+            rp = d.resolve()
+            if rp not in seen_res:
+                seen_res.add(rp)
+                res_dirs.append(d)
 
-    L = delta.Library(str(lib_path))
+    L = delta.Library(str(lib_p))
     stats = {'already': 0, 'from_r': 0, 'from_lib': 0, 'total': len(keep_keys)}
     done = 0
     last_cb = 0.0
     try:
         old_ver = L.version
+        expected_reused = None if old_ver == target_vk else old_ver
         for ks in sorted(keep_keys):
             if stop_flag and stop_flag():
                 raise InterruptedError('Migration cancelled by user')
@@ -541,14 +563,14 @@ def migrate_to_results(
             if idx is None:
                 continue
             dst = res_p / f'{ks}.r'
-            if dst.is_file() and _is_valid_target_r(dst, target_vk, target_inputs, val_id):
+            if dst.is_file() and _is_valid_target_r(dst, target_vk, target_inputs, val_id, expected_reused=expected_reused):
                 stats['already'] += 1
             else:
                 copied = False
                 for rd in res_dirs:
                     src_r = rd / f'{ks}.r'
                     if src_r.is_file() and src_r.resolve() != dst.resolve():
-                        if _try_copy_r(src_r, dst, target_vk, target_inputs, val_id):
+                        if _try_copy_r(src_r, dst, target_vk, target_inputs, val_id, expected_vk=old_ver):
                             copied = True
                             stats['from_r'] += 1
                             break

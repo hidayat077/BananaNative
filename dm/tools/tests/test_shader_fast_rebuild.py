@@ -141,6 +141,37 @@ class ShaderFastRebuildTest(unittest.TestCase):
             self.assertEqual(reb, {'1111111111111111', '2222222222222222'})
             self.assertEqual(keep, {'3333333333333333'})
 
+    def test_migrate_ignores_stale_other_version_results_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            lib = d / 'v-f2b04744b54a' / 'dmsh_vk.lib'
+            lib.parent.mkdir(parents=True)
+            _make_fake_lib(lib, 'f2b04744b54a', '2ddf71af58a7', [(0x1111111111111111, delta.VK['STAGE_VS'], [(8, 1, 0, 1)])])
+
+            older_res = d / 'v-000000000000' / 'results'
+            older_res.mkdir(parents=True)
+            stale_hdr = json.dumps({
+                'vk': '000000000000', 'inputs': '2ddf71af58a7', 'raw': False, 'val': 'val1',
+                'key': '1111111111111111', 'stage': 'vs', 'st': 'ok', 'err': '', 'modules': [[0, 4, 4, 0]],
+            }, separators=(',', ':')).encode()
+            (older_res / '1111111111111111.r').write_bytes(sfr.RESULT_MAGIC + struct.pack('<I', len(stale_hdr)) + stale_hdr + b'OLD!')
+
+            res_dir = d / 'v-520bbb51fb3c' / 'results'
+            res_dir.mkdir(parents=True)
+            prev_bad_hdr = json.dumps({
+                'vk': '520bbb51fb3c', 'inputs': '2ddf71af58a7', 'raw': False, 'val': 'val1',
+                'key': '1111111111111111', 'stage': 'vs', 'st': 'ok', 'err': '', 'modules': [[0, 4, 4, 0]],
+            }, separators=(',', ':')).encode()
+            (res_dir / '1111111111111111.r').write_bytes(sfr.RESULT_MAGIC + struct.pack('<I', len(prev_bad_hdr)) + prev_bad_hdr + b'BAD!')
+
+            st = sfr.migrate_to_results(lib, res_dir, '520bbb51fb3c', '2ddf71af58a7', 'val1', {'1111111111111111'}, results_dirs=[older_res])
+            self.assertEqual((st['from_lib'], st['from_r'], st['already']), (1, 0, 0))
+            with open(res_dir / '1111111111111111.r', 'rb') as f:
+                assert f.read(8) == sfr.RESULT_MAGIC
+                n = struct.unpack('<I', f.read(4))[0]
+                hdr = json.loads(f.read(n))
+            self.assertEqual(hdr['reused'], 'f2b04744b54a')
+
 
 if __name__ == '__main__':
     unittest.main()
