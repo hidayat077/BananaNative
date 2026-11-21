@@ -1375,7 +1375,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         super.onResume();
         if (Build.VERSION.SDK_INT >= 33) {
             GameManager gm = getSystemService(GameManager.class);
-            if (gm != null) gm.setGameState(new GameState(false, GameState.MODE_GAMEPLAY_UNINTERRUPTED));
+            if (gm != null) gm.setGameState(new GameState(false, GameState.MODE_GAMEPLAY_UNINTERRUPTIBLE));
         }
         resumedNow = true;   // also before the start: start() can come after the first onResume (the readiness check), and hostSetup() then starts the sensors
         if (!started) return;
