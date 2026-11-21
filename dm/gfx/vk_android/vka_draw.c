@@ -26,6 +26,7 @@ static VkCommandBuffer g_cb; static unsigned g_slot; static int g_prof, g_dyn_fi
 static int g_prof_all, g_prof_every;   // DM_VK_PROF: every draw timed; the pace line's sample (DM_VK_PACE_PROF): one draw in g_prof_every
 static int g_vin_skip = 1;             // DM_VK_VIN_SKIP (vin_build_kept)
 static int g_inst_on;   // DM_VK_INSTANCE (the instanced runs below)
+static int g_push_dedup = 1, g_push_delta = 1, g_tex_retype = 1, g_fout_retype = 1, g_shader_stats;
 // The instanced runs' per-instance table is vertex input location INST_LOC at binding INST_BIND (below): valid only on a device whose maxVertexInputAttributes and
 // maxVertexInputBindings are above them (Vulkan guarantees 16; Turnip and Qualcomm's driver report 32). Past a limit the driver's behaviour is undefined: DM_VK_INSTANCE
 // on a Mali (PanVK) and a PowerVR phone stopped the game with SIGSEGV at the first instanced draw (#59, #228, #321: sig=11 addr=0x40c, the same place in each)
@@ -163,10 +164,17 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     g_cb = cb; g_slot = slot % NSLOT; vka_dyn_invalidate();
     rp_miss_reset();
     { void vka_mem_rec_thread(void); vka_mem_rec_thread(); }   // the address lookups' cache outside TLS for the recording thread (vka_mem.c)
+    { void vka_tex_sub_begin(void); vka_tex_sub_begin(); }
     drv_memo_reset();   // the last submission's scratch spans go with its fence
     g_prof_all = VKA_ENV("DM_VK_PROF", 0) != 0; g_prof = g_prof_all; g_prof_every = VKA_ENV("DM_VK_PACE_LOG", 5000) > 0 ? VKA_ENV("DM_VK_PACE_PROF", 16) : 0; g_dyn_filter = VKA_ENV("DM_VK_DYN_FILTER", 1); g_pass_keep = VKA_ENV("DM_VK_PASS_KEEP", 1); g_vb_filter = VKA_ENV("DM_VK_VB_FILTER", 1); g_inst_on = VKA_ENV("DM_VK_INSTANCE", 0) && inst_device_ok();   // live: from this submission
     g_vin_skip = VKA_ENV("DM_VK_VIN_SKIP", 1);
     g_vattr_clear = VKA_ENV("DM_VK_VATTR_CLEAR", 1);
+    g_push_dedup = VKA_ENV("DM_VK_PUSH_DEDUP", 1);
+    g_push_delta = VKA_ENV("DM_VK_PUSH_DELTA", 1);
+    g_tex_retype = VKA_ENV("DM_VK_TEX_RETYPE", 1);
+    g_fout_retype = VKA_ENV("DM_VK_FOUT_RETYPE", 1);
+    g_shader_stats = VKA_ENV("DM_VK_SHADER_STATS", 0);
+    vka_texu_elem = VKA_ENV("DM_VK_TEXU_ELEM", 1);   // see vka_bind.h (live, A/B)
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
     g_cur_dp[g_slot] = 0;
     vka_pso_save(0);
@@ -1343,11 +1351,11 @@ static writes_t g_w;
 // (the first 64), with the texture. Such a binding is read through a view of the shader's class of the same texel size (vka_tex.c class_twin) unless its module is retyped
 static void class_note(const vka_shader *sh, int st, const vka_res *r, int tid, int storage) {
     static uint64_t seen[4096]; static int nlog;
+    if (nlog >= 64) return;
     int want = r->dim & DMSH_VK_DIM_SINT ? 2 : r->dim & DMSH_VK_DIM_UINT ? 1 : 0;
     uint64_t h = (sh->key ^ (uint64_t)st << 56 ^ (uint64_t)r->binding << 40 ^ (uint64_t)want << 38) | 1;
     uint32_t s = (uint32_t)(h * 0x9e3779b97f4a7c15ull >> 52);
     for (uint32_t n = 0; n < 4096; n++, s = (s + 1) & 4095) { if (seen[s] == h) return; if (!seen[s]) break; }
-    if (nlog >= 64) return;
     seen[s] = h;
     int have = vka_tex_id_class_rec(tid);
     if (have == want) return;
@@ -1446,7 +1454,6 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
 static struct { int n[VKA_NSTAGE], pool[VKA_NSTAGE]; char why[VKA_NSTAGE][200]; vka_res r[VKA_NSTAGE][512]; } g_wk;
 static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
     uint64_t t0_ = g_prof ? cntvct() : 0;
-    vka_texu_elem = VKA_ENV("DM_VK_TEXU_ELEM", 1);   // see vka_bind.h (live, A/B)
     for (int st = 0; st < VKA_NSTAGE; st++) {
         vka_shader *s = sh[st]; g_wk.n[st] = 0; g_wk.pool[st] = 0; if (!s) continue;
         g_wk.n[st] = vka_walk(&d->b, st, s->e, s->b, s->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, g_wk.r[st], 512, &g_wk.pool[st], g_wk.why[st], sizeof g_wk.why[st]);
@@ -1459,7 +1466,7 @@ static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
 // retyped (vka_shader_tex_module, vka_pso.c pstate_fill) and their records ask for views of the integer class. From the walk (walk_all, just before); a stage whose module
 // the rewrite refuses keeps the class twins. DM_VK_TEX_RETYPE=0 (live): never, as before
 static void tex_masks(vka_shader *const sh[VKA_NSTAGE], uint64_t tu[5], uint64_t ts[5]) {
-    if (!VKA_ENV("DM_VK_TEX_RETYPE", 1)) return;
+    if (!g_tex_retype) return;
     static const int st_of[] = {0, 1, 2, 3, 4, 6, 7};
     for (size_t j = 0; j < sizeof st_of / sizeof *st_of; j++) {
         int st = st_of[j]; vka_shader *s = sh[st]; if (!s) continue;
@@ -1502,36 +1509,35 @@ void vka_drv_memo_stats(char *b, size_t n) {
 }
 static VkWriteDescriptorSet g_dw[512]; static uint32_t g_dwn;   // the writes that changed (push_same returns 2)
 static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout) {
-    static uint64_t *buf; static size_t cap;
-    size_t need = 2 + (size_t)g_w.n * 5, k = 0;
-    if (need > cap) { cap = need * 2; buf = realloc(buf, cap * sizeof *buf); if (!buf) { cap = 0; return 0; } }
-    buf[k++] = (uint64_t)layout; buf[k++] = g_w.n;
+    int c = bp == VK_PIPELINE_BIND_POINT_COMPUTE;
+    if (!g_push_dedup && !g_push_delta) { g_pd[c].n = 0; g_pd_push++; g_pd_push_all++; return 0; }
+    size_t need = 2 + (size_t)g_w.n * 4;
+    int match = g_pd[c].n == need && g_pd[c].w[0] == (uint64_t)layout && g_pd[c].w[1] == g_w.n;
+    if (!match) {
+        if (need > g_pd[c].cap) { size_t cap = need * 2; uint64_t *nw = realloc(g_pd[c].w, cap * sizeof *nw); if (!nw) { free(g_pd[c].w); g_pd[c].w = NULL; g_pd[c].cap = g_pd[c].n = 0; return 0; } g_pd[c].w = nw; g_pd[c].cap = cap; }
+        g_pd[c].w[0] = (uint64_t)layout; g_pd[c].w[1] = g_w.n;
+    }
+    int changed = !match, delta_ok = match && g_push_delta;
+    g_dwn = 0;
     for (uint32_t i = 0; i < g_w.n; i++) {
         const VkWriteDescriptorSet *w = &g_w.w[i];
-        buf[k++] = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
-        if (w->descriptorCount != 1) return (g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0), 0;   // (the walk writes one descriptor per write)
-        if (w->pBufferInfo) { buf[k++] = (uint64_t)w->pBufferInfo->buffer; buf[k++] = w->pBufferInfo->offset; buf[k++] = w->pBufferInfo->range; }
-        else if (w->pImageInfo) { buf[k++] = (uint64_t)w->pImageInfo->sampler; buf[k++] = (uint64_t)w->pImageInfo->imageView; buf[k++] = w->pImageInfo->imageLayout; }
-        else if (w->pTexelBufferView) { buf[k++] = (uint64_t)*w->pTexelBufferView; buf[k++] = 0; buf[k++] = 0; }
-        else { buf[k++] = 1; buf[k++] = 1; buf[k++] = 1; }
+        if (w->descriptorCount != 1) return (g_pd[c].n = 0), 0;   // (the walk writes one descriptor per write)
+        uint64_t h = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
+        uint64_t x0, x1, x2;
+        if (w->pBufferInfo) { x0 = (uint64_t)w->pBufferInfo->buffer; x1 = w->pBufferInfo->offset; x2 = w->pBufferInfo->range; }
+        else if (w->pImageInfo) { x0 = (uint64_t)w->pImageInfo->sampler; x1 = (uint64_t)w->pImageInfo->imageView; x2 = w->pImageInfo->imageLayout; }
+        else if (w->pTexelBufferView) { x0 = (uint64_t)*w->pTexelBufferView; x1 = 0; x2 = 0; }
+        else { x0 = 1; x1 = 1; x2 = 1; }
+        uint64_t *p = g_pd[c].w + 2 + 4 * (size_t)i;
+        if (!match) { p[0] = h; p[1] = x0; p[2] = x1; p[3] = x2; }
+        else if (p[0] != h) { changed = 1; delta_ok = 0; g_dwn = 0; p[0] = h; p[1] = x0; p[2] = x1; p[3] = x2; }
+        else if (p[1] != x0 || p[2] != x1 || p[3] != x2) { changed = 1; p[1] = x0; p[2] = x1; p[3] = x2; if (delta_ok) g_dw[g_dwn++] = *w; }
     }
-    int c = bp == VK_PIPELINE_BIND_POINT_COMPUTE;
-    if (VKA_ENV("DM_VK_PUSH_DEDUP", 1) && g_pd[c].n == k && !memcmp(g_pd[c].w, buf, k * sizeof *buf)) { g_pd_skip++; g_pd_skip_all++; return 1; }
-    // DM_VK_PUSH_DELTA=1 (live, default 0 until phone-checked): the same layout and the same writes in the same order as the last push, some of them with other descriptors:
-    // only those are pushed. Vulkan lets push descriptors be updated incrementally; the others stay as the last push left them (until the set is disturbed: a new command
-    // buffer or part, a set bound in its place, which forget g_pd)
-    g_dwn = 0;
-    if (VKA_ENV("DM_VK_PUSH_DELTA", 0) && g_pd[c].n == k && g_pd[c].w[0] == buf[0] && g_pd[c].w[1] == buf[1]) {
-        int ok = 1;
-        for (uint32_t i = 0; i < g_w.n && ok; i++) {
-            const uint64_t *a = g_pd[c].w + 2 + 4 * (size_t)i, *b = buf + 2 + 4 * (size_t)i;
-            if (a[0] != b[0]) ok = 0; else if (memcmp(a + 1, b + 1, 3 * sizeof *a)) g_dw[g_dwn++] = g_w.w[i];
-        }
-        if (!ok) g_dwn = 0;
-    }
-    if (k > g_pd[c].cap) { g_pd[c].cap = k * 2; g_pd[c].w = realloc(g_pd[c].w, g_pd[c].cap * sizeof *buf); if (!g_pd[c].w) { g_pd[c].cap = g_pd[c].n = 0; return 0; } }
-    memcpy(g_pd[c].w, buf, k * sizeof *buf); g_pd[c].n = k; g_pd_push++; g_pd_push_all++;
-    if (g_dwn) { g_pd_delta_w += g_dwn; g_pd_delta_all += g_w.n; return 2; }
+    g_pd[c].n = need;
+    if (g_push_dedup && !changed) { g_pd_skip++; g_pd_skip_all++; return 1; }
+    g_pd_push++; g_pd_push_all++;
+    // DM_VK_PUSH_DELTA=1 (live): only changed writes in the same layout/order are pushed; Vulkan keeps the rest until the set is disturbed
+    if (delta_ok && g_dwn) { g_pd_delta_w += g_dwn; g_pd_delta_all += g_w.n; return 2; }
     return 0;
 }
 static int g_sets_dry, g_dry_pool;   // DM_VK_INSTANCE: bind_sets only builds the writes (g_w) when g_sets_dry is set, and sets_push binds them later
@@ -2312,7 +2318,7 @@ static void rd_run(const vka_dstate *d) {
 static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_scissor *sc, int has_sc, const p_draw *dw, const p_draw_idx *di) {
     if (!g_cb || !draws_on() || !statics()) { g_skipped++; return; }
     if (RUN.open && RUN.fast && di && !dw && g_inst_on && inst_fast(d, rt, has_rt, sc, has_sc, di)) {   // DM_VK_INSTANCE: the run's next object, no walk
-        if (VKA_ENV("DM_VK_SHADER_STATS", 0) && g_ss_last >= 0) { ss_ent *e = &g_ss[g_ss_last]; e->draws++; e->joined++; e->inst++; e->verts += di->count > 0 ? di->count : 0; ss_tick(); }
+        if (g_shader_stats && g_ss_last >= 0) { ss_ent *e = &g_ss[g_ss_last]; e->draws++; e->joined++; e->inst++; e->verts += di->count > 0 ? di->count : 0; ss_tick(); }
         return;
     }
     if (!d->inited) vka_dstate_reset(d);
@@ -2433,7 +2439,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     if (expand && ind) SKIP("an indirect draw of quads or a line loop is not on Vulkan yet: skipped");
     if (!mesh && sh[1] && skip_fs(sh[1]->key)) { g_skipped++; return; }
     if (bisect_drop(sh)) { g_skipped++; return; }
-    if (!mesh && VKA_ENV("DM_VK_SHADER_STATS", 0)) {
+    if (!mesh && g_shader_stats) {
         int slot = ss_slot(sh[0]->key, sh[1] ? sh[1]->key : 1, sh[2] ? sh[2]->key : 0); g_ss_last = slot;
         if (slot >= 0) { ss_ent *e = &g_ss[slot]; int32_t c = dw ? dw->count : di->count; int inst = dw ? dw->instances : di->instances; if (inst < 1) inst = 1;
                          e->draws++; e->inst += inst; if (ind) e->ind++; else e->verts += (double)(c > 0 ? c : 0) * inst; }
@@ -2514,7 +2520,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     // with those outputs retyped as the integer vectors of their bits (VKA_FS_RETYPE, vka_spv_fout_retype), which is what the hardware writes. DM_VK_FOUT_RETYPE=0: not written, as before
     // Only a module that was rewritten is used (one the rewrite refuses falls back to the base module, whose float outputs those targets then do not take: written = 0 below).
     // MOD_UINT_MIXED / MOD_DUAL pipelines keep their variant; a float output there into another integer target stays unwritten (open)
-    if (fs && !g_fs_sub && variant == DMSH_VK_MOD_BASE && VKA_ENV("DM_VK_FOUT_RETYPE", 1)) {
+    if (fs && !g_fs_sub && variant == DMSH_VK_MOD_BASE && g_fout_retype) {
         uint32_t fu = 0, fsm = 0;
         for (uint32_t i = 0; i < R.ncolor; i++) if (R.cf[i] && (R.ckind[i] == 1 || R.ckind[i] == 2) && (fs->e->fout_mask >> i & 1) && (fs->e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (R.ckind[i] == 1) fu |= 1u << i; else fsm |= 1u << i; }
         if ((fu | fsm) && vka_shader_fout_retyped((vka_shader *)fs, fu, fsm)) variant = VKA_FS_RETYPE;

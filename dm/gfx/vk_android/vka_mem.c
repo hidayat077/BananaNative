@@ -270,6 +270,29 @@ static int maps_line(FILE *f, char *ln, int n, int *err) {
     if (!strchr(ln, '\n')) { int c; while ((c = getc(f)) != EOF && c != '\n') {} if (ferror(f)) { *err = 1; return 0; } }
     return 1;
 }
+static inline int parse_maps_line(const char *s, unsigned long *lo, unsigned long *hi, int *prot) {
+    unsigned long a = 0, b = 0; int da = 0, db = 0;
+    for (unsigned char c; (c = (unsigned char)*s); s++) {
+        unsigned d = c - '0' < 10 ? c - '0' : (c | 32) - 'a' < 6 ? ((c | 32) - 'a' + 10) : 16;
+        if (d >= 16) break;
+        a = (a << 4) | d; da = 1;
+    }
+    if (!da || *s++ != '-') return 0;
+    for (unsigned char c; (c = (unsigned char)*s); s++) {
+        unsigned d = c - '0' < 10 ? c - '0' : (c | 32) - 'a' < 6 ? ((c | 32) - 'a' + 10) : 16;
+        if (d >= 16) break;
+        b = (b << 4) | d; db = 1;
+    }
+    if (!db || (*s != ' ' && *s != '\t')) return 0;
+    while (*s == ' ' || *s == '\t') s++;
+    if (!*s) return 0;
+    int p = 0;
+    for (int i = 0; i < 4 && *s && *s != ' ' && *s != '\t' && *s != '\n'; i++, s++) {
+        if (*s == 'r') p |= PROT_READ; else if (*s == 'w') p |= PROT_WRITE; else if (*s == 'x') p |= PROT_EXEC;
+    }
+    *lo = a; *hi = b; *prot = p;
+    return 1;
+}
 static int snap_read(void) {   // the guest block's runs from the text; caller holds g_snapmu. 0 = no snapshot (none is used until a read succeeds)
     g_snap.ok = 0;
     if (!atomic_load(&g_pblk)) {
@@ -284,10 +307,9 @@ static int snap_read(void) {   // the guest block's runs from the text; caller h
     FILE *f = fopen("/proc/self/maps", "re"); if (!f) { atomic_fetch_add(&g_snap_reads, 1); return 0; }
     char ln[512]; int err = 0, ok = 1; g_snap.n = 0;
     while (maps_line(f, ln, sizeof ln, &err)) {
-        unsigned long a, b; char pm[8];
-        if (sscanf(ln, "%lx-%lx %7s", &a, &b, pm) != 3 || b <= g_pg_lo) continue;
+        unsigned long a, b; int p;
+        if (!parse_maps_line(ln, &a, &b, &p) || b <= g_pg_lo) continue;
         if (a >= g_pg_hi) break;
-        int p = (pm[0] == 'r' ? PROT_READ : 0) | (pm[1] == 'w' ? PROT_WRITE : 0) | (pm[2] == 'x' ? PROT_EXEC : 0);
         if (g_snap.n && g_snap.r[g_snap.n - 1].prot == p && g_snap.r[g_snap.n - 1].hi == a) { g_snap.r[g_snap.n - 1].hi = b; continue; }
         if (g_snap.n == g_snap.cap) { int nc = g_snap.cap ? 2 * g_snap.cap : 4096; prun *nr = realloc(g_snap.r, (size_t)nc * sizeof *nr); if (!nr) { ok = 0; break; } g_snap.r = nr; g_snap.cap = nc; }
         g_snap.r[g_snap.n++] = (prun){a, b, p};
@@ -364,11 +386,10 @@ static int prot_runs_text(uintptr_t lo, uintptr_t hi, prun *out, int max) {
     char ln[512]; int n = 0, err = 0; uintptr_t at = lo;
     while (at < hi && maps_line(f, ln, sizeof ln, &err)) {
         g_maps_lines++;
-        unsigned long a, b; char pm[8];
-        if (sscanf(ln, "%lx-%lx %7s", &a, &b, pm) != 3 || b <= at) continue;
+        unsigned long a, b; int p;
+        if (!parse_maps_line(ln, &a, &b, &p) || b <= at) continue;
         if (a >= hi) break;
         if (a > at) { if (n == max) break; out[n++] = (prun){at, a, -1}; at = a; }
-        int p = (pm[0] == 'r' ? PROT_READ : 0) | (pm[1] == 'w' ? PROT_WRITE : 0) | (pm[2] == 'x' ? PROT_EXEC : 0);
         uintptr_t e = b < hi ? b : hi;
         if (n && out[n - 1].prot == p && out[n - 1].hi == at) out[n - 1].hi = e; else { if (n == max) break; out[n++] = (prun){at, e, p}; }
         at = e;

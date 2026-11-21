@@ -2,6 +2,8 @@ package dev.nxnative.android;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.GameManager;
+import android.app.GameState;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
@@ -271,16 +273,27 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (handle != null) handle.setVisibility(!clean && controlsVisible ? View.VISIBLE : View.GONE);
     }
 
-    /** Thread placement (Native.pinThreads): every 5 s, for threads the game and the replay start later; stops when the phone reports no clocks */
+    /** Thread placement (Native.pinThreads): every 5 s, for threads the game and the replay start later; stops when the phone reports no clocks.
+     *  When Use fast cores is off, checks ADPF once the replay starts and falls back to thread placement automatically if the platform refused ADPF. */
+    private boolean autoPinFallback, autoPinNoted;
+    private int autoPinChecks;
     private final Runnable pinRun = this::pinTick;
     private void pinTick() {
+        if (!Prefs.pinThreads(this, titleId()) && !autoPinFallback) {
+            int st = Native.adpfState();
+            if (st > 0 || (st == 0 && ++autoPinChecks >= 4)) return;   // ADPF active (or intentionally off): leave the scheduler alone
+            if (st == 0) { ui.postDelayed(pinRun, 3000); return; }
+            autoPinFallback = true;
+            if (!autoPinNoted) { autoPinNoted = true; Native.note("ADPF session unavailable; pinning replay and game threads to fast cores"); }
+        }
         if (Native.pinThreads() < 0) return;
         ui.postDelayed(pinRun, 5000);
     }
     /** At the start and when a recreated screen attaches to the running game (attach: the old screen's loops were stopped); one loop, never two */
     private void pinStart() {
         ui.removeCallbacks(pinRun);
-        if (Prefs.pinThreads(this, titleId())) ui.postDelayed(pinRun, 2000);
+        autoPinChecks = 0;
+        ui.postDelayed(pinRun, Prefs.pinThreads(this, titleId()) ? 2000 : 3000);
     }
 
     /**
@@ -1360,6 +1373,10 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onResume() {
         super.onResume();
+        if (Build.VERSION.SDK_INT >= 33) {
+            GameManager gm = getSystemService(GameManager.class);
+            if (gm != null) gm.setGameState(new GameState(false, GameState.MODE_GAMEPLAY_UNINTERRUPTED));
+        }
         resumedNow = true;   // also before the start: start() can come after the first onResume (the readiness check), and hostSetup() then starts the sensors
         if (!started) return;
         Native.lifecycle(3);

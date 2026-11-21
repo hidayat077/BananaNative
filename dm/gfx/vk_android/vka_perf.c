@@ -37,22 +37,30 @@ static struct {
 } H;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static APerformanceHintSession *g_s; static int g_state;   // 0 not tried, 1 usable, -1 not available / off
+static _Atomic int g_adpf_refused;
 enum { MAXT = 16 };
 static int32_t g_tid[MAXT]; static int g_nt, g_dirty;
 static int64_t g_target = 16666667;
+
+// 1 = active ADPF session, -1 = ADPF unavailable or refused by the platform (not DM_VK_ADPF=0), 0 = disabled or not tried yet
+__attribute__((visibility("default"))) int nxhost_adpf_state(void) {
+    if (atomic_load_explicit(&g_adpf_refused, memory_order_relaxed)) return -1;
+    pthread_mutex_lock(&g_mu); int ok = g_s != NULL; pthread_mutex_unlock(&g_mu);
+    return ok ? 1 : 0;
+}
 
 static int avail(void) {
     if (g_state) return g_state > 0;
     g_state = -1;
     const char *e = getenv("DM_VK_ADPF"); if (e && !atoi(e)) { VLOG("DM_VK_ADPF=0: no performance hint session"); return 0; }
     void *h = dlopen("libandroid.so", RTLD_NOW);
-    if (!h) return 0;
+    if (!h) { atomic_store_explicit(&g_adpf_refused, 1, memory_order_relaxed); return 0; }
     H.get = dlsym(h, "APerformanceHint_getManager"); H.create = dlsym(h, "APerformanceHint_createSession"); H.target = dlsym(h, "APerformanceHint_updateTargetWorkDuration");
     H.report = dlsym(h, "APerformanceHint_reportActualWorkDuration"); H.threads = dlsym(h, "APerformanceHint_setThreads"); H.close = dlsym(h, "APerformanceHint_closeSession");
     H.wd_create = dlsym(h, "AWorkDuration_create"); H.wd_release = dlsym(h, "AWorkDuration_release"); H.wd_start = dlsym(h, "AWorkDuration_setWorkPeriodStartTimestampNanos");
     H.wd_total = dlsym(h, "AWorkDuration_setActualTotalDurationNanos"); H.wd_cpu = dlsym(h, "AWorkDuration_setActualCpuDurationNanos");
     H.wd_gpu = dlsym(h, "AWorkDuration_setActualGpuDurationNanos"); H.report2 = dlsym(h, "APerformanceHint_reportActualWorkDuration2");
-    if (!H.get || !H.create || !H.target || !H.report || !H.get()) { VRED("no ADPF performance hint manager: the frame's threads run on the default governor"); return 0; }
+    if (!H.get || !H.create || !H.target || !H.report || !H.get()) { VRED("no ADPF performance hint manager: the frame's threads run on the default governor"); atomic_store_explicit(&g_adpf_refused, 1, memory_order_relaxed); return 0; }
     H.cfg_create = dlsym(h, "ASessionCreationConfig_create"); H.cfg_release = dlsym(h, "ASessionCreationConfig_release"); H.cfg_tids = dlsym(h, "ASessionCreationConfig_setTids");
     H.cfg_target = dlsym(h, "ASessionCreationConfig_setTargetWorkDurationNanos"); H.cfg_pipeline = dlsym(h, "ASessionCreationConfig_setGraphicsPipeline");
     H.create_cfg = dlsym(h, "APerformanceHint_createSessionUsingConfig"); H.feature = dlsym(h, "APerformanceHint_isFeatureSupported");
@@ -79,6 +87,7 @@ static void session_update(void) {   // g_mu held
                  if (H.cfg_release) H.cfg_release(c); }
     }
     if (!g_s) g_s = H.create(H.get(), g_tid, (size_t)g_nt, g_target);
+    atomic_store_explicit(&g_adpf_refused, g_s ? 0 : 1, memory_order_relaxed);
     if (!g_s) { static int n; if (n++ < 2) VRED("ADPF session of %d threads not made", g_nt); }
     else VLOG("ADPF session%s: %d threads, target %.2f ms", pipe ? " (graphics pipeline)" : "", g_nt, g_target / 1e6);
 }

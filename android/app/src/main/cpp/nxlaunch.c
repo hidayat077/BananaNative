@@ -549,6 +549,11 @@ static long cpu_max_khz(int c) {
     FILE *f = fopen(path, "r"); long v = 0; if (f) { if (fscanf(f, "%ld", &v) != 1) v = 0; fclose(f); }
     return v;
 }
+#pragma weak nxhost_adpf_state
+int nxhost_adpf_state(void);
+JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_adpfState(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; return nxhost_adpf_state ? nxhost_adpf_state() : 0;
+}
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_pinThreads(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
     static cpu_set_t fast, mid; static int ready;

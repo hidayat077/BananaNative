@@ -632,10 +632,10 @@ static void sh_save(unsigned slot) {   // the slot's last use is done: its segme
     for (int i = 0; i < nq && i < SEGQ; i++) { uint64_t t = 0; if (g_sq_get(V.dev, g_sqp, (uint32_t)(slot * SEGQ + (unsigned)i), 1, 8, &t, 8, VK_QUERY_RESULT_64_BIT)) t = 0; g_sh[slot][j][i] = t; }
     atomic_store(&g_sh_use[slot][j], use); g_slot_nq[slot] = 0;
 }
-static int g_sub_cont;
+static int g_sub_cont, g_sub_tail;
 void vka_rp_sub_cont(int on) { g_sub_cont = on != 0; }
 void vka_rp_sub_begin(void) {
-    int cont = g_sub_cont; g_sub_cont = 0;
+    int cont = g_sub_cont; g_sub_cont = 0; g_sub_tail = 0;
     uint64_t tb0 = now_ns();
     vka_perf_thread(0); vka_ctl_sub();
     atomic_store_explicit(&g_rec_tid, gettid(), memory_order_relaxed); replay_nice();
@@ -754,6 +754,7 @@ static void chunk(void) {
         VLOG("part %u of the submission of frame %llu ended at %.3f s: %llu draws%s", part, (unsigned long long)g_frame, now_ns() / 1e9, (unsigned long long)(g_stat_draws - g_chunk_d0), zb); }
     vka_gbar_settle(g_cb);   // a game barrier left pending (vka_gbar.c), in this part: it covers the parts after it
     vka_up_flush(); vka_up_throttle();   // the upload batch goes first: the part may use what it made (vka_dev.c "Upload batches")
+    if (!g_sub_tail && g_stat_draws > g_sub_draws0) { int vka_floor_tail_add(void); g_sub_tail = vka_floor_tail_add(); vka_floor_commit(g_sub_tail); }
     // With the encoder the part's end, its submit and the next part's reset and begin are made on its thread, in order with the calls before: the replay thread goes on
     if (vka_enc_call(part_submit, &pe, sizeof pe)) { vka_enc_call(part_begin, &pb, sizeof pb); vka_enc_switch(next); }
     else { part_submit(&pe); part_begin(&pb); }
@@ -826,8 +827,8 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     if (!has_sig) signal = fence;
     if (g_rc_rec) { g_rc_subf[g_n_sub % 64].sub = g_n_sub; g_rc_subf[g_n_sub % 64].fence = fence; g_rc_rec = 0; }   // (rc_sub_done)
     vka_draw_peek_commit(fence);   // DM_VK_SB_PEEK: this submission's storage buffers, read again once it has completed
-    int tail = 0;   // counted for the tail floor (DM_VK_GPU_FLOOR_AUTO=2): given back by the span op when it completes
-    if (g_cb && g_stat_draws > g_sub_draws0) { int vka_floor_tail_add(void); tail = vka_floor_tail_add(); post((pop){3, 0, (uint32_t)tail, 0, g_job_frame_set ? g_job_frame : g_frame}); }   // the frame's span at the end of this submission with draws (post_run)
+    int tail = g_sub_tail; g_sub_tail = 0;   // counted for the tail floor (DM_VK_GPU_FLOOR_AUTO=2): given back by the span op when it completes
+    if (g_cb && g_stat_draws > g_sub_draws0) { int vka_floor_tail_add(void); if (!tail) tail = vka_floor_tail_add(); post((pop){3, 0, (uint32_t)tail, 0, g_job_frame_set ? g_job_frame : g_frame}); }   // the frame's span at the end of this submission with draws (post_run)
     if (g_cb) {   // when its completion is processed: for the tick's measure (tick_sample) and DM_VK_TSCAL
         unsigned kc = (g_slot_i - 1) % NSLOT; post((pop){7, 0, 0, 0, 0, kc + 1});
         if (tscal()) { g_cal_on[kc] = 1; g_cal_draws[kc] = (uint32_t)(g_stat_draws - g_sub_draws0); g_cal_sig[kc] = signal; }

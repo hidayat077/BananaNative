@@ -149,6 +149,8 @@ final class Native {
     /** Whether a player has a vibrator: the host sends that player's vibration only while it has one. */
     static native void rumbleRoute(int player, boolean on);
 
+    /** 1 = ADPF session active, -1 = ADPF refused/unavailable (not DM_VK_ADPF=0), 0 = disabled or not tried yet (vka_perf.c nxhost_adpf_state). */
+    static native int adpfState();
     /** Places the replay thread on the phone's fastest cores and the encoder and the game's threads off the small ones (nxlaunch.c); the number placed by this call, -1 when the phone reports no clocks */
     static native int pinThreads();
     /** The frame limit while the game runs (games whose speed follows the measured rate: Prefs.paced); 0 = none */

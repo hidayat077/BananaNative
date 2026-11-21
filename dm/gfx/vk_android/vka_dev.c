@@ -1115,7 +1115,8 @@ _Atomic int64_t vka_period_min_ns;   // the shortest present period the game ask
 int64_t vka_floor_period_ns(void) {
     double ms = VKA_ENVF("DM_VK_GPU_FLOOR_PERIOD", 0.0);
     if (ms >= 4 && ms <= 200) return (int64_t)(ms * 1e6);
-    int64_t m = atomic_load_explicit(&vka_period_min_ns, memory_order_relaxed), v = 16666667;
+    int cap = VKA_ENV("DM_FPS_TARGET", 0);
+    int64_t m = atomic_load_explicit(&vka_period_min_ns, memory_order_relaxed), v = cap >= 15 && cap <= 30 ? 1000000000ll / cap : 16666667;
     return m >= 4000000 && m < v ? m : v;
 }
 void vka_floor_span(uint64_t frame, uint64_t ns) {           // the completion thread: a submission of frame ended ns after the frame began
@@ -1344,7 +1345,8 @@ static void floor_set_(int s, int tail, int again) {   // again: send it even if
 // every such submission handed over has completed. A submission is counted when its span op is posted (vka_floor_tail_add) and the count is given back by that op on
 // completion, so the two always pair: before 2026-11-03 every completed submission with draws took one off, also those committed before a live switch to mode 2 or whose
 // end failed, and the floor could drop with a counted submission still on the GPU
-static int floor_mode(void) { return V.perf_hint || g_kg_n ? VKA_ENV("DM_VK_GPU_FLOOR_AUTO", 0) : -1; }
+// On host-DCVS GPUs (where KGSL takes only "highest" and not a scaled floor) default to mode 2 so the clock constraint is held while GPU work runs rather than across idle gaps
+static int floor_mode(void) { return V.perf_hint || g_kg_n ? VKA_ENV("DM_VK_GPU_FLOOR_AUTO", g_kg_host ? 2 : 0) : -1; }
 static int floor_top(void) { int s = VKA_ENV("DM_VK_GPU_FLOOR", 100); return s < 0 ? 0 : s > 100 ? 100 : s; }
 // The floor without VK_QCOM_queue_perf_hint and without the KGSL constraint above (a driver that is not on KGSL, or DM_VK_GPU_FLOOR_KGSL=0): the ADPF session (vka_perf.c) reports each frame's span (recording start to the GPU end of
 // its last submission) with its GPU time against the shortest period, so the system raises the clocks the frame's work runs on when the frame takes longer than the period
