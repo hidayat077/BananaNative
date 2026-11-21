@@ -70,6 +70,7 @@ General host changes first needed here; each applies to every game:
 - **Bindless reads through a phi that also carries non-handle values** (the vendored translator's `TryTableHandle`): [Bindless reads whose handle phi also carries other values](../../../docs/reference/shaders.md#bindless-reads-whose-handle-phi-also-carries-other-values).
 - **Buffer texture views below the 16-byte alignment read through an aligned copy** (`tbuf_shadow`): [Buffer textures at offsets below 16 bytes](../../../docs/reference/rendering.md#buffer-textures-at-offsets-below-16-bytes).
 - **Android build memory: modern Unreal paks and IoStore containers skipped by the split, shader archives decoded a record at a time** (`shader_split.py ue_modern_pack`, `uepak.py write_decoded_archive`): [Unreal modern paks and IoStore containers in the split](../../../docs/reference/shaders.md#unreal-modern-paks-and-iostore-containers-in-the-split), [A decoded Unreal archive larger than the device's memory](../../../docs/reference/shaders.md#a-decoded-unreal-archive-larger-than-the-devices-memory).
+- **Unreal shader archives decoded on a PC with the open-source ooz worker** (`ue_ondevice.py`, `dm/third_party/ooz`, `DM_OODLE_OOZ` / `DM_UE_DECODE`, `pack_android.py ooz_split_checked`): [Unreal shader archives decoded by ooz on a PC builder](../../../docs/reference/shaders.md#unreal-shader-archives-decoded-by-ooz-on-a-pc-builder).
 
 ## Open
 

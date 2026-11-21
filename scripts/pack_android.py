@@ -30,6 +30,9 @@
 # unfinished: the launcher refuses it, the next run rewrites it). Libraries of other versions in the pack's shaders/ are kept.
 # --no-shaders makes a pack without a library, a valid one (no pack.tsv shaders row); --optional-shaders takes a current library from the cache when there is one and packs without
 # otherwise. --code-only rewrites the modules and stops (pack.tsv, game.tsv and the shaders untouched); --keep-code packs without rewriting (the phone's two steps).
+# Unreal games keep their shaders in paks or IoStore containers, decoded before the split: on a Mac the NSP script writes <version dir>/ue_shaders (point DM_UE_SHADERS at
+# that folder); a PC with no Mac host can build dm/third_party/ooz/build.sh, set DM_OODLE_OOZ to the worker and decode here into DM_UE_DECODE. The ooz decoder is not the
+# game's own, so its split is taken only when its shader keys are the profile's.
 # Usage: pack_android.py <game folder | .nup file> [--version N] [--out DIR] [-j N] [--shader-cache DIR] [--shader-pkg DIR] [--shader-python PY] [-J N] [--no-shaders | --optional-shaders] [--code-only | --keep-code] [--in-process]   (exit 1 on error)
 import argparse, hashlib, os, runpy, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -694,6 +697,20 @@ def require_shaders(g):
                     f'--no-shaders packs the code alone')
 
 
+def ooz_split_checked(ooz, g, tmp, ver=None):
+    """An Oodle stream carries no checksum and ooz is not the game's own decoder: a shader's key (the hash of its bytes) is the only check. Take a split made with
+    DM_OODLE_OOZ only when its keys are exactly the profile's (less the ones shader_optional.tsv gives to another build); one missing or extra stops the pack."""
+    want, have = map_keys(g.dir / 'shader_map.tsv'), map_keys(tmp / 'shader_map.tsv')
+    lost, more = sorted((want - have) - may_lack(g, ver)), sorted(have - want)
+    if lost or more:
+        eg = lambda ks: f' (e.g. {", ".join(ks[:3])})' if ks else ''
+        raise Error(f'the shaders decoded with the ooz Oodle decoder ({ooz}, DM_OODLE_OOZ) are not the profile\'s: {len(lost)} of the {len(want)} keys in its shader_map.tsv '
+                    f'are missing{eg(lost)} and {len(more)} are not in it{eg(more)}. Either the game files are of another version than the profile\'s, or ooz decoded a stream '
+                    f'wrongly; its output is not used. Decode with the game\'s own Oodle on a Mac (DM_UE_SHADERS) or on the device (the split is in {tmp})')
+    print(f'shaders: decoded with the ooz worker ({ooz}); checked: the split has all {len(want & have):,} of the profile\'s shader keys'
+          + (f' it can have ({len(want - have)} belong to another build)' if want - have else '') + ' and no other', flush=True)
+
+
 def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: the version's (romfs, exefs) when they are not vdir's own (pack_dump.version_part); aoc: add-on RomFS roots to split too; nros: collected_nros
     """The Switch shader package from the dump, as the phone's split step makes it (the version's romfs and main, android/app PackService "split"): shader_split.py into
     <pkg> (written beside it, then renamed, so a stopped split leaves no half package). Its tables go beside the package. The library is the profile's (its shader_map.tsv
@@ -703,12 +720,18 @@ def split_shaders(a, g, vdir, pkg, parts=None, aoc=(), nros=None):   # parts: th
     py = shader_python(a.shader_python, split=True)
     tmp = pkg.with_name(pkg.name + '.tmp'); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
     print(f'shaders: splitting the shaders out of {rd} into {pkg} with {py} (a few minutes)', flush=True)
-    env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1', **({'DM_NRO_DIR': str(nros)} if nros else {}))   # as the phone: only the files the profile's map names, when the build is the profile's and the tables come out the same
+    ooz = os.environ.get('DM_OODLE_OOZ', '')
+    if ooz and not (g.dir / 'shader_map.tsv').is_file():
+        raise Error(f'DM_OODLE_OOZ is set ({ooz}), and the profile {g.id} has no shader_map.tsv to check the ooz decoder\'s output against: this game\'s shaders are not decoded with it')
+    # DM_UE_DECODE makes shader_split.py decode Unreal archives on this PC with the ooz worker (dm/third_party/ooz); the folders are beside the other shader work
+    env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1', **({'DM_NRO_DIR': str(nros)} if nros else {}),
+                    **({'DM_UE_DECODE': str(pkg.parent / 'ue_shaders')} if ooz else {}))
     # a program n > 0 keeps its shaders in the application's add-ons (pack_dump.split_addons): a Switch 2 Edition's NVN2 archives are in its add-on (Wonder's 010015100B515001)
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),
                         *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')], *([LIST_SEP.join(map(str, aoc))] if aoc else [])], env=env)   # LIST_SEP: shader_split.py's path_list (a path may hold a comma)
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
     if not map_keys(tmp / 'shader_map.tsv') and not no_nvn_shaders(g): raise Error(empty_split(g, rd, tmp))   # no shader read is a failure, not an empty library
+    if ooz: ooz_split_checked(ooz, g, tmp, getattr(a, 'pack_ver', None))
     if (g.dir / 'shader_map.tsv').is_file():
         want, have = map_keys(g.dir / 'shader_map.tsv'), map_keys(tmp / 'shader_map.tsv')
         missing = sorted(want - have)

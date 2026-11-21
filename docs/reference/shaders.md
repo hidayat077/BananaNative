@@ -420,6 +420,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Check:** `dm/tools/tests/test_ue_build_memory.py`.
 - **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md).
 
+### Unreal shader archives decoded by ooz on a PC builder
+
+- **Symptom:** `pack_android.py` on Linux stops with `[RED] the RomFS has Unreal paks, but there are no decoded shader code archives in <nup>:base/ue_shaders (the NSP script writes them)`. The path is a virtual node inside the `.nup` selector, and no decoded archive exists.
+- **Cause:** the Android packer has no NSP decode stage. FFR's shaders are IoStore shader libraries in `.ucas`, decoded with the game's own Oodle in the Mac host (`OodleHost`); this repo has no Linux host and no Oodle module. `shader_split.py` also derived the default folder from the RomFS path, which for a `.nup` is a path it cannot write to.
+- **Fix:** `dm/third_party/ooz` (pinned powzix/ooz at `05038060`, GPL-3.0-or-later, kept as its own program with a documented version bump) builds `unoodle`, which answers the same decode protocol. `ue_ondevice.py` runs it (`DM_OODLE_OOZ`) into `DM_UE_DECODE`; `shader_split.py` calls it when a RomFS has Unreal paks *or* IoStore shader libraries, and `oodle_ask` uses the worker for Oodle streams in other archives too. `pack_android.py` passes `DM_UE_DECODE` and `ooz_split_checked` takes the decoded split only when its shader keys are exactly the profile's: Oodle streams carry no checksum, and this is not the game's own decoder. A Mac-produced `ue_shaders` folder (`DM_UE_SHADERS`) stays the primary path.
+- **Check:** `dm/tools/tests/test_unoodle.py` builds the pinned worker and checks stored/quantum streams and fail-closed paths; `dm/tools/tests/test_pack_android.py` `OozChecked` checks the key gate.
+- **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md): 5,919 Mermaid streams and all 73,496 shaders decode on x86-64 Linux in the peanuts builder, with the profile's shader-map keys as the check.
+
 ### Images whose handle is in the game's uniform buffer
 
 - **Symptom:** the Android library build fails compute shaders with `NotSupportedException: SUATOM handle in bank 3` (and `SURED handle in bank 3`), and its summary counts many more under `shaders with a binding whose slot was not decoded`, as `IMG cp_i_cb3_0_`, `cp_i_cb3_2_` … (`fp_i_cb3_…` in pixel shaders): images the replay would bind as null.

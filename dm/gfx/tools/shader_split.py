@@ -2294,9 +2294,12 @@ def oodle_ask(comp, n):
     if _OODLE is None:
         import tempfile
         host, mods = os.environ.get('DM_OODLE_HOST'), os.environ.get('DM_OODLE_MODULES')
-        if not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder')
+        ooz = os.environ.get('DM_OODLE_OOZ')   # a PC builder with no Mac host: the open-source ooz worker (dm/third_party/ooz), not the game's own decoder
+        if ooz: argv = [ooz]
+        elif not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder, or DM_OODLE_OOZ (the ooz worker)')
+        else: argv = [host, mods]
         err = tempfile.TemporaryFile()
-        _OODLE = (subprocess.Popen([host, mods], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
+        _OODLE = (subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
     p, err = _OODLE
     try:
         p.stdin.write(struct.pack('<QQ', len(comp), n)); p.stdin.write(comp); p.stdin.flush()
@@ -3770,7 +3773,18 @@ def main():
         # Unreal Engine shader code archives decoded on the Mac (uepak.py): <version dir>/ue_shaders, or DM_UE_SHADERS; needed when the RomFS has Unreal paks
         ued = os.environ.get('DM_UE_SHADERS') or os.path.join(os.path.dirname(os.path.abspath(romfs)), 'ue_shaders')
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._')) if os.path.isdir(ued) else []   # AppleDouble metadata, not decoded shader archives
-        if not names and uepak.unreal_paks(romfs, inline=False, mains=[mainnso]): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
+        if not names:
+            # An IoStore title can hold a shader library beside a pak with no shaders, so test for the library too (a version 11 pak alone is not enough).
+            try: needs_archives = uepak.unreal_paks(romfs, inline=False, mains=[mainnso]) or uepak.io_shader_tocs(romfs)
+            except ImportError as e: red(f'Unreal paks whose index is encrypted need AES to read ({e}); set PYTHONPATH to the folder with the AES module')
+            if needs_archives and os.environ.get('DM_UE_DECODE'):
+                worker = os.environ.get('DM_OODLE_OOZ', '')
+                if not worker: red('Unreal shader archives need a decoder: set DM_OODLE_OOZ (the ooz worker, dm/third_party/ooz/build.sh) or DM_UE_SHADERS (archives decoded on a Mac)')
+                import ue_ondevice
+                ued = ue_ondevice.decode(romfs, mainnso, os.environ['DM_UE_DECODE'], worker)
+                names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._'))
+            if needs_archives and not names:
+                red(f'the RomFS has Unreal shader archives, but there are no decoded shader code archives in {ued}: set DM_UE_SHADERS to a folder decoded on a Mac, or DM_UE_DECODE with DM_OODLE_OOZ to decode them here')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
         results.append(('main', last_entries(found), var_pairs(found), {}))
     for romfs in dlc_v:
