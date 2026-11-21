@@ -176,8 +176,7 @@ class BuildWorker(QtCore.QThread):
                     if pk_rc != 0:
                         self.finished_ok.emit(False, f'Pack update failed (exit code {pk_rc}).')
                         return
-                else:
-                    sfr.sync_to_pack_manual(ctx.work_dir, ctx.pack_dir, ctx.title_id, ctx.target_vk)
+                sfr.sync_to_pack_manual(ctx.work_dir, ctx.pack_dir, ctx.title_id, ctx.target_vk)
 
             self.finished_ok.emit(True, f'Fast rebuild complete! Output: {ctx.pack_dir / "shaders" / f"v-{ctx.target_vk}"}')
         except Exception as e:

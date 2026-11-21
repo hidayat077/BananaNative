@@ -77,6 +77,7 @@ final class Ondevice {
      * (a game added with another pack, e.g. the play app's beside the dump), never a whole job, never a job for another pack folder
      */
     static void autoUpdate(MainActivity a, File dump, File packDir, String titleId) {
+        if (Prefs.shaderLocked(a, titleId)) return;
         if (panel == null || panel.a != a || panel.alive()) return;
         if (sampledKeep(a, dump, packDir, titleId)) return;   // the quick check first (below): the older library may stand as this version's; a difference goes on to the update as before
         if (deltaShaders(packDir, titleId) < 0 || !autoTried.add(dump.getPath())) return;
@@ -164,6 +165,7 @@ final class Ondevice {
      * verdict), false when there is none to make (done, skipped, or given up)
      */
     static boolean sampledKeep(Context c, File dump, File packDir, String titleId) {
+        if (Prefs.shaderLocked(c, titleId)) return false;
         Profile p = Profile.of(titleId);
         if (p == null || !isDump(dump)) return false;
         if (new File(packDir, "shaders/" + ShaderLibs.KNOWN_DIR + BuildConfig.NX_DMSH_VK_CHAIN).isDirectory())   // a known-transition move a crash left half done: finished, or put back

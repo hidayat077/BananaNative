@@ -540,21 +540,15 @@ def migrate_to_results(
     lib_p = Path(lib_path)
     res_p = Path(res_dir)
     res_p.mkdir(parents=True, exist_ok=True)
-    res_dirs: list[Path] = []
-    seen_res: set[Path] = set()
-    for d in [lib_p.parent / 'results', *(Path(x) for x in results_dirs)]:
-        if d.is_dir():
-            rp = d.resolve()
-            if rp not in seen_res:
-                seen_res.add(rp)
-                res_dirs.append(d)
-
     L = delta.Library(str(lib_p))
     stats = {'already': 0, 'from_r': 0, 'from_lib': 0, 'total': len(keep_keys)}
     done = 0
     last_cb = 0.0
     try:
         old_ver = L.version
+        # Only trust cached .r files belonging strictly to lib_p's own directory (never sibling .stale-backup or other v-* dirs)
+        own_res = lib_p.parent / 'results'
+        res_dirs = [own_res] if own_res.is_dir() else []
         expected_reused = None if old_ver == target_vk else old_ver
         for ks in sorted(keep_keys):
             if stop_flag and stop_flag():
@@ -782,8 +776,7 @@ def _cli():
         if ctx.game_source and (ctx.pack_dir / 'main.android.key').is_file():
             pk_cmd, pk_env = build_pack_command(ctx, args.threads, keep_code=True)
             subprocess.run(pk_cmd, env=pk_env, check=True)
-        else:
-            sync_to_pack_manual(ctx.work_dir, ctx.pack_dir, ctx.title_id, ctx.target_vk)
+        sync_to_pack_manual(ctx.work_dir, ctx.pack_dir, ctx.title_id, ctx.target_vk)
         print(f'Pack diperbarui: {ctx.pack_dir / "shaders" / f"v-{ctx.target_vk}"}')
 
 

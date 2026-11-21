@@ -565,6 +565,10 @@ final class Prefs {
     /** The folded row opened again (GameSettings: a tap on "Shaders: built while playing") */
     static void undismissShaderUpdate(Context c, String titleId) { put(c, gameKey("shader_update_dismissed", titleId), null); }
 
+    /** Game page › Lock shader version: keep the game's current playable shader library across compatible APK updates instead of auto-updating or prompting for shader updates. */
+    static boolean shaderLocked(Context c, String titleId) { return of(c).getBoolean(gameKey("shader_lock", titleId), false); }
+    static void shaderLocked(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("shader_lock", titleId), on).commit(); }
+
     static String gameEnv(Context c, String titleId) { return of(c).getString(gameKey("env", titleId), ""); }
 
     /**

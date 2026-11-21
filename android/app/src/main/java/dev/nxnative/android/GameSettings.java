@@ -62,6 +62,7 @@ final class GameSettings {
         if (shadersNeeded(new File(g.packDir), g.titleId)) { shadersNeededRow(a, content, g, again); return; }
         // an older library the layer fills: nothing is "old" to the player, the game plays and builds what it lacks; the same row as a game with no library (Build all, the switch)
         if (Pack.shaderLayerFills(new File(g.packDir), g.titleId, Prefs.layerEnv(a, g.titleId))) { shadersOnDemandRow(a, content, g, again); return; }
+        if (Prefs.shaderLocked(a, g.titleId) && Pack.playableLibrary(new File(g.packDir), g.titleId) != null) return;
         if (!Pack.isDump(new File(g.gameDir))) { olderShadersRow(a, content, g, again); return; }   // the update is made on the phone from a dump only
         if (!Pack.shaderUpdateAvailable(new File(g.packDir), g.titleId)) return;
         if (Pack.isDump(new File(g.gameDir)) && Ondevice.sampleSkipHolds(new File(g.packDir)) && Pack.sampledKeepCandidate(new File(g.packDir), g.titleId, Prefs.layerEnv(a, g.titleId)) != null) shaderCheckSkippedRow(a, content, g, again);

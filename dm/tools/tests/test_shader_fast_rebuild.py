@@ -148,10 +148,10 @@ class ShaderFastRebuildTest(unittest.TestCase):
             lib.parent.mkdir(parents=True)
             _make_fake_lib(lib, 'f2b04744b54a', '2ddf71af58a7', [(0x1111111111111111, delta.VK['STAGE_VS'], [(8, 1, 0, 1)])])
 
-            older_res = d / 'v-000000000000' / 'results'
+            older_res = d / 'v-572ecc282406.stale-backup' / 'results'
             older_res.mkdir(parents=True)
             stale_hdr = json.dumps({
-                'vk': '000000000000', 'inputs': '2ddf71af58a7', 'raw': False, 'val': 'val1',
+                'vk': 'f2b04744b54a', 'inputs': '2ddf71af58a7', 'raw': False, 'val': 'val1',
                 'key': '1111111111111111', 'stage': 'vs', 'st': 'ok', 'err': '', 'modules': [[0, 4, 4, 0]],
             }, separators=(',', ':')).encode()
             (older_res / '1111111111111111.r').write_bytes(sfr.RESULT_MAGIC + struct.pack('<I', len(stale_hdr)) + stale_hdr + b'OLD!')

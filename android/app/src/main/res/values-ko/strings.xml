@@ -1336,4 +1336,8 @@
         <item>SGSR 1</item>
         <item>기기(절전)</item>
     </string-array>
+    <string name="home_ready_locked">Ready · locked</string>
+    <string name="home_lock_shaders">Lock shader version</string>
+    <string name="home_lock_shaders_on">Keep current shaders across app updates (skips automatic updates)</string>
+    <string name="home_lock_shaders_off">Updates shaders automatically when compatible improvements ship</string>
 </resources>

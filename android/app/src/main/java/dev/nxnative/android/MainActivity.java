@@ -1477,12 +1477,14 @@ public final class MainActivity extends Activity {
             if (problem == null || problem.onDemand) try { ok = PackCheck.code(this, Pack.read(new File(g.packDir)), new File(g.gameDir)); } catch (IOException e) { ok = null; }
             Boolean code = ok;
             boolean own = Boolean.FALSE.equals(ok) && Ondevice.ownPack(new File(g.gameDir), new File(g.packDir), g.titleId);   // the app's own pack, its code from older tools
+            boolean locked = Prefs.shaderLocked(this, g.titleId);
             runOnUiThread(() -> {
                 if (info.getParent() == null) return;
                 // An APK update's new shaders: made in the background with no question when the pack's older library is one the delta manifest knows (Ondevice.autoUpdate)
-                if (problem != null && problem.shadersOnly && problem.prepare) Ondevice.autoUpdate(this, new File(g.gameDir), new File(g.packDir), g.titleId);
+                if (problem != null && problem.shadersOnly && problem.prepare && !locked) Ondevice.autoUpdate(this, new File(g.gameDir), new File(g.packDir), g.titleId);
                 if (problem == null) state(st, Tx.s(R.string.home_ready), R.color.bn_leaf, ST_HIDDEN);
                 else if (problem.onDemand) state(st, problem.label, R.color.bn_leaf, ST_HIDDEN);   // Play starts it; the layer builds the shaders as it runs
+                else if (problem.playable && locked) state(st, Tx.s(R.string.home_ready_locked), R.color.bn_leaf, ST_SOFT);
                 else if (problem.playable && !problem.prepare) state(st, PrepareText.READY_OLDER(), R.color.bn_leaf, ST_SOFT);   // not a dump: nothing is updated on the phone (the page says where new ones come from)
                 else if (problem.playable && Ondevice.sampling(new File(g.packDir))) { state(st, PrepareText.CHECKING_SHADERS(), R.color.bn_leaf, ST_SOFT | ST_WORKING); updating.put(st, g); updateTick(); updateUi.removeCallbacks(sampleRun); updateUi.postDelayed(sampleRun, 2000); }   // the quick check of the older library (Ondevice.sampledKeep): the card follows it
                 else if (problem.playable && Pack.shaderLayerFills(new File(g.packDir), g.titleId, Prefs.layerEnv(this, g.titleId))) state(st, Tx.s(R.string.home_ready), R.color.bn_leaf, ST_HIDDEN);   // the layer builds what the older library lacks: no "update" to nag about
@@ -1604,6 +1606,9 @@ public final class MainActivity extends Activity {
         if (Ondevice.shows(g))   // its card is the progress card: the job's own Manage (Forget, the deletes)
             pack.addView(new Ui.Setting(this, "⏳", Tx.s(R.string.common_preparing), v -> { page(false); Ondevice.manageJob(this); }).value(Tx.s(R.string.home_forget_the_job_or_delete)).chevron(this).view);
         pack.addView(new Ui.Setting(this, "📦", Tx.s(R.string.home_export_pack), v -> PackUi.exportPick(this, g)).value(Tx.s(R.string.home_one_zip_into_a_folder)).chevron(this).view);
+        pack.addView(new Ui.Setting(this, "🔒", Tx.s(R.string.home_lock_shaders), null)
+                .toggle(this, Prefs.shaderLocked(this, g.titleId), (b, on) -> { Prefs.shaderLocked(this, g.titleId, on); refresh(); })
+                .says(Tx.s(R.string.home_lock_shaders_on), Tx.s(R.string.home_lock_shaders_off)).view);
         if (noProfile == null)
             pack.addView(new Ui.Setting(this, "📲", Tx.s(R.string.common_import_pack), v -> PackUi.importPick(this, g)).value(Tx.s(R.string.home_a_zip_or_a_pack)).chevron(this).view);
         pack.addView(new Ui.Setting(this, "📁", Tx.s(R.string.common_folders), v -> Folders.dialog(this, g)).value(Tx.s(R.string.common_game_pack_and_save_folders)).chevron(this).view);
@@ -2137,12 +2142,12 @@ public final class MainActivity extends Activity {
             return;
         }
         if (lp != null && Pack.playableLibrary(new File(g.packDir), g.titleId) != null) {   // the older library plays while the update makes this version's (vka_shader.c lib_load)
-            if (dump) Ondevice.autoUpdate(this, gd, new File(g.packDir), g.titleId);
+            if (dump && !Prefs.shaderLocked(this, g.titleId)) Ondevice.autoUpdate(this, gd, new File(g.packDir), g.titleId);
             start(g);
             return;
         }
         if (lp != null && Pack.legacyLibrary(new File(g.packDir), g.titleId) != null) {   // made before versioned updates: never blocks Play, says so (the host warns in its log too)
-            if (dump) Ondevice.autoUpdate(this, gd, new File(g.packDir), g.titleId);
+            if (dump && !Prefs.shaderLocked(this, g.titleId)) Ondevice.autoUpdate(this, gd, new File(g.packDir), g.titleId);
             Toast.makeText(this, ShaderLibs.legacyWarning(dump), Toast.LENGTH_LONG).show();
             start(g);
             return;
