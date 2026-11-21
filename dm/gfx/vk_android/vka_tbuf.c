@@ -10,6 +10,7 @@
 // Unreal Engine 5 reads its per-object data in vertex shaders this way (Orbitals: the title screen's one plane read zeros and was never drawn, the background stayed black).
 // Not done: a buffer texture bound as a storage image (its writes would have to go back to the memory); it reads and writes nothing (logged)
 #include "vka.h"
+#include "vka_tbuf_align.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -50,18 +51,30 @@ VkBufferView vka_tbuf_view(int id, int writes) {
     if (n < t.elems) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("buffer texture ID %d: %u elements, the device's texel buffers hold %llu: the rest reads as zero", id, t.elems, (unsigned long long)max); }
     VkDeviceSize range = (VkDeviceSize)n * t.f.bpb, off = 0; VkBuffer buf = VK_NULL_HANDLE;
     if (vka_addr_run(t.addr, range, &buf, &off) < range) { not_placed(&t, "texel buffer"); return VK_NULL_HANDLE; }
-    VkDeviceSize al = V.props.limits.minTexelBufferOffsetAlignment;
-    if (al > 1 && off % al) {
-        static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
-            VRED("buffer texture ID %d at %#llx: offset %#llx in its segment is not a multiple of the device's texel buffer alignment %llu: not bound", id, (unsigned long long)t.addr, (unsigned long long)off, (unsigned long long)al);
-        return VK_NULL_HANDLE;
-    }
     VkFormat fmt = t.f.vk;   // (an sRGB format's raw twin: a texel buffer has no sRGB decode)
     VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);
     VkFormatFeatureFlags need = writes ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
     if (!(fp.bufferFeatures & need)) {
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
             VRED("buffer texture ID %d: VkFormat %d is not a %s texel buffer format on this device: not bound", id, fmt, writes ? "storage" : "uniform");
+        return VK_NULL_HANDLE;
+    }
+    VkDeviceSize al = V.props.limits.minTexelBufferOffsetAlignment;
+    if (al > 1 && off % al) {
+        // A view must start at a multiple of the device's alignment, which NVN does not require of a buffer texture's pool offset. A read-only one small enough to
+        // snapshot is copied into aligned scratch (host visible and coherent, so no copy is recorded and this works with a render pass open); its bytes are those the
+        // CPU wrote before this draw, as with the Metal tbuf_shadow. A write through a copied view could not go back to guest memory, so it stays unbound.
+        if (vka_tbuf_copy(writes, range, off, (uint32_t)al)) {
+            vka_span sp;
+            if (vka_scratch(range, al > 16 ? al : 16, &sp) &&
+                (vka_tex_gw_read(t.addr, range, sp.ptr) || vka_cpu_read(t.addr, sp.ptr, (size_t)range))) {
+                VkBufferViewCreateInfo si = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .buffer = sp.buf, .format = fmt, .offset = sp.off, .range = range};
+                VkBufferView cv = VK_NULL_HANDLE;
+                if (!vk.vkCreateBufferView(V.dev, &si, NULL, &cv)) { vka_after(vka_fence_last() + 1, destroy_view, (void *)(uintptr_t)cv); return cv; }
+            }
+        }
+        static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
+            VRED("buffer texture ID %d at %#llx: offset %#llx in its segment is not a multiple of the device's texel buffer alignment %llu: not bound", id, (unsigned long long)t.addr, (unsigned long long)off, (unsigned long long)al);
         return VK_NULL_HANDLE;
     }
     if (writes) vka_tex_gw_opaque(t.addr, range);   // the shader may store into the memory: images over it are uploaded again (vka_tex.c)

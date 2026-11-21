@@ -72,6 +72,7 @@ General host changes first needed here; each applies to every game:
 - **Android build memory: modern Unreal paks and IoStore containers skipped by the split, shader archives decoded a record at a time** (`shader_split.py ue_modern_pack`, `uepak.py write_decoded_archive`): [Unreal modern paks and IoStore containers in the split](../../../docs/reference/shaders.md#unreal-modern-paks-and-iostore-containers-in-the-split), [A decoded Unreal archive larger than the device's memory](../../../docs/reference/shaders.md#a-decoded-unreal-archive-larger-than-the-devices-memory).
 - **Unreal shader archives decoded on a PC with the open-source ooz worker** (`ue_ondevice.py`, `dm/third_party/ooz`, `DM_OODLE_OOZ` / `DM_UE_DECODE`, `pack_android.py ooz_split_checked`): [Unreal shader archives decoded by ooz on a PC builder](../../../docs/reference/shaders.md#unreal-shader-archives-decoded-by-ooz-on-a-pc-builder).
 - **Vulkan dynamic texture / sampler slot arrays for `tex_dyn_slots`** (`vk_android_build.py`, `vka_bind.c`, `vka_drv_fill`): [Texture slots picked at run time on Android](../../../docs/reference/shaders.md#texture-slots-picked-at-run-time-on-android).
+- **Unaligned buffer textures copied into aligned scratch for texel buffer views** (`vka_tbuf.c`, `vka_dev.c`): [Unaligned buffer textures as texel buffers on Android](../../../docs/reference/rendering.md#unaligned-buffer-textures-as-texel-buffers-on-android).
 
 ## Open
 

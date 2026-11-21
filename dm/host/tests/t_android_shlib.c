@@ -4,6 +4,7 @@
 // android-shaders/lib/v-<DMSH_VK_CHAIN>/dmsh_vk.lib); without it that part is skipped. DM_VK_SHLIB_ALL=1 decompresses every module (about 1.7 GB of SPIR-V) instead of a sample
 #include "../../gfx/vk_android/vka_shlib.h"
 #include "../../gfx/vk_android/vka_bind.h"
+#include "../../gfx/vk_android/vka_tbuf_align.h"
 #include "../../gfx/vk_android/vka_abi_compat.h"
 #include "../../gfx/vk_android/vka_gml.h"
 #include "../../gfx/nvn/dmsh_chain.h"
@@ -469,7 +470,19 @@ static void test_gml(void) {
     CHECK(full && s.np == filled && filled <= 1 << VKA_GML_PAGES_LOG2, "the full page set: overflow %d, %d pages read, %d slots filled", full, s.np, filled);
 }
 
+// A read-only buffer texture at an offset the device cannot view is copied into aligned scratch; a write or one too large is not (vka_tbuf_align.h)
+static void test_tbuf_align(void) {
+    CHECK(vka_tbuf_copy(0, 512, 0x34c, 64), "FFR particle buffer at 0x34c is copied");
+    CHECK(vka_tbuf_copy(0, 16, 0xa2c, 64), "a small buffer at 0xa2c is copied");
+    CHECK(!vka_tbuf_copy(1, 512, 0x34c, 64), "a write cannot be copied back to guest memory");
+    CHECK(!vka_tbuf_copy(0, 512, 0x340, 64), "an aligned offset is viewed in place");
+    CHECK(!vka_tbuf_copy(0, 512, 0x34c, 1), "an alignment of 1 needs no copy");
+    CHECK(!vka_tbuf_copy(0, (1u << 20) + 1, 0x34c, 64), "a buffer past the snapshot limit is not copied");
+    CHECK(!vka_tbuf_copy(0, 0, 0x34c, 64), "an empty buffer is not copied");
+}
+
 int main(void) {
+    test_tbuf_align();
     test_made();
     test_entry_hash(); test_extract();
     test_compat();
