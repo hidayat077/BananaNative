@@ -46,6 +46,29 @@ class SnowdropTests(unittest.TestCase):
         self.assertEqual([s for _, s, _, _ in found], ['cs', 'ps'])
         self.assertEqual(found[0][2:], (bytes(ctl), bytes(code)))
 
+    def test_d4_zlib_asset_framing(self):
+        # South Park's SDF slices wrap a whole asset in zlib; the inflated object starts with 0xabcd00d4.
+        raw = struct.pack('<5I', 0xabcd00d4, 0, 0, 0, 0) + b''.join(shader('vs')) + b''.join(shader('ps'))
+        found = split.snowdrop_shaders(archive(zlib.compress(raw)), '/sdf-d4')
+        self.assertEqual([s for _, s, _, _ in found], ['vs', 'ps'])
+        for f in found: self.assertIn('#SDFZLIB@', f[0])
+        # A bare zlib stream of the same shader without the object magic is not a d4 asset.
+        self.assertEqual(split.snowdrop_shaders(archive(zlib.compress(b''.join(shader('ps')))), '/bare'), [])
+
+    def test_d4_multichunk_64k_zlib_asset(self):
+        # Assets larger than 64 KB are split into consecutive 64 KB zlib chunks; a shader straddling
+        # the boundary and one entirely in the second chunk must both be recovered.
+        vs, ps = b''.join(shader('vs')), b''.join(shader('ps'))
+        pad1 = bytes(0x10000 - 20 - 0x400)   # puts vs straddling the 0x10000 chunk boundary
+        pad2 = bytes(0x2000)                 # puts ps well inside the second chunk
+        payload = pad1 + vs + pad2 + ps
+        raw = struct.pack('<5I', 0xabcd00d4, 0, 0, len(payload), len(payload)) + payload
+        chunks = b''.join(zlib.compress(raw[i:i + 0x10000]) for i in range(0, len(raw), 0x10000))
+        found = split.snowdrop_shaders(archive(chunks), '/sdf-d4-multi')
+        self.assertEqual([s for _, s, _, _ in found], ['vs', 'ps'])
+        self.assertEqual(found[0][2:], shader('vs'))
+        self.assertEqual(found[1][2:], shader('ps'))
+
     def test_zlib_cache_records_inside_zstd_archive_chunks(self):
         raw = record(b''.join(shader('ps')), legacy=True)
         data = archive(split.zstd_mod().compress(raw), record(b''.join(shader('vs'))))

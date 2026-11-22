@@ -1,0 +1,40 @@
+# South Park: The Fractured but Whole — SDK 3.5.1, Unreal Engine 4, Havok, Wwise, NVN.
+# Snapshot v327680 from a plaintext NSP-Box package. Memory keys are the survey's guesses, not measured yet.
+# Closest reference: 0100AE00096EA000 (Hyrule Warriors: Definitive Edition, SDK 3.5.1 + subsdk0 GLSLC).
+# Open: shader location — no BNSH/BAHS at the RomFS root; nearly all files are camel/sdf/*.sdfdata.
+
+# ---- Identity ----
+title_id	01008F2005154000
+program_id	01008F2005154000
+
+# ---- App ----
+name	South Park: The Fractured but Whole
+ipa	SouthParkTheFracturedButWhole.ipa
+app_category	public.app-category.action-games
+pad_layout	full
+
+# ---- Versions ----
+build	v327680	1.05	main=df15edaaf603e00cd7d8a01bd05a15c2	subsdk0=6c8a6b30bd5e6ca1206e8b1cdcc93bf7	sdk=8bb65519bc6399ab432e0ba7cdb16e2b
+package	v327680
+shader_versions	v327680
+
+# ---- Files ----
+modules	main subsdk0 sdk
+zip_store	.sdfdata
+romfs_marker	camel/sdf/nx/data/_FileList.txt
+
+# ---- Memory ----
+# Snowdrop reserves its page pools unchanged; the 5 GB / 4.375 GB survey guess left the first
+# AllocateAddressRegion without space and the unchecked reservation crashed in DT_INIT.
+# A Switch-sized 64 GB alias region is what the engine expects (the same layout DM_ALIAS_SIZE
+# used to give it while bringing this game up); the block is 66 GB so the stacks and heap keep
+# their offsets below it.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+sys_resource	0x1000000
+
+# ---- Shader split ----
+shader_groups	/camel/=camel
+shader_note	South Park: The Fractured but Whole shaders

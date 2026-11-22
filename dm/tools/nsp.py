@@ -186,7 +186,7 @@ class Nsp:
             try: rec = cnmt.parse(cbytes, cname)
             except cnmt.Error as e: raise Error(str(e)) from None
             need(rec.type in (APPLICATION, ADDON), f'{cname}: a {cnmt.TYPES.get(rec.type, hex(rec.type))} record; only a game snapshot or a DLC is read (a patch or delta needs the console\'s own formats)')
-            need(hashlib.sha256(cbytes[:-32]).digest() == cbytes[-32:], f'{cname}: its digest does not match')
+            # The trailing 32-byte CNMT digest is an opaque authoring digest (not SHA-256 of the preceding bytes; Nsp.java and cnmt.py do not check it either); the metadata NCA's own hash covers the .cnmt when verify=True.
             files = {}
             exs = struct.unpack_from('<H', cbytes, 0x0E)[0]
             for i in range(struct.unpack_from('<H', cbytes, 0x10)[0]):
