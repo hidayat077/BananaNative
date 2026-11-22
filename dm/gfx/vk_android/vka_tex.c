@@ -2278,7 +2278,7 @@ enum { BLWB_SLOTS = 24, BLWB_SLOT = 512u << 10 };
 typedef struct { vka_img *im; uint32_t lv, l0, nl, lw, lh, bpb; } blwb_req;
 typedef struct { tex_t t; uint64_t pgen, fence; uint32_t lv, l0, nl, lw, lh, bpb; int busy; } blwb_slot;
 static blwb_req *g_blq; static int g_nblq, g_blqcap;
-static blwb_slot g_bl[BLWB_SLOTS]; static vka_buf g_blbuf; static int g_blbuf_init;
+static blwb_slot g_bl[BLWB_SLOTS]; static vka_span g_blbuf; static int g_blbuf_init;
 static pthread_mutex_t g_blmu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int g_bl_busy;
 static uint64_t g_bl_done_cnt, g_bl_drop_cnt;
