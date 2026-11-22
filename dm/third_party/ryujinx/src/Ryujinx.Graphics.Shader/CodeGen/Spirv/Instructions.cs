@@ -1361,10 +1361,17 @@ namespace Ryujinx.Graphics.Shader.CodeGen.Spirv
                 SpvInstruction coord = context.CompositeExtract(fp32, pCoords, i);
                 if (i >= 2) { elems[i] = coord; continue; }   // an array layer passes through unchanged
                 SpvInstruction scale = context.FMul(fp32, context.CompositeExtract(fp32, sizeF, i), c256);
-                SpvInstruction rounded = context.Delegates.GlslFloor(
-                    fp32, context.FAdd(fp32, context.FMul(fp32, coord, scale), context.Constant(fp32, 0.5f)));
+                SpvInstruction scaled = context.FMul(fp32, coord, scale);
+                SpvInstruction biased = context.FAdd(fp32, scaled, context.Constant(fp32, 0.5f));
+                SpvInstruction rounded = context.Delegates.GlslFloor(fp32, biased);
                 SpvInstruction numerator = nudge != 0 ? context.FAdd(fp32, rounded, context.Constant(fp32, nudge)) : rounded;
-                elems[i] = context.FDiv(fp32, numerator, scale);
+                SpvInstruction div = context.FDiv(fp32, numerator, scale);
+                context.Decorate(scale, Decoration.NoContraction);
+                context.Decorate(scaled, Decoration.NoContraction);
+                context.Decorate(biased, Decoration.NoContraction);
+                if (nudge != 0) context.Decorate(numerator, Decoration.NoContraction);
+                context.Decorate(div, Decoration.NoContraction);
+                elems[i] = div;
             }
 
             return context.CompositeConstruct(vecF, elems);

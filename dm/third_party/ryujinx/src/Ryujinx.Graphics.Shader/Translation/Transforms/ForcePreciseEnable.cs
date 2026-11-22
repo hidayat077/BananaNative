@@ -7,7 +7,11 @@ namespace Ryujinx.Graphics.Shader.Translation.Transforms
     {
         public static bool IsEnabled(IGpuAccessor gpuAccessor, ShaderStage stage, TargetLanguage targetLanguage, FeatureFlags usedFeatures)
         {
-            return stage == ShaderStage.Fragment && gpuAccessor.QueryHostReducedPrecision();
+            return gpuAccessor.QueryHostReducedPrecision() &&
+                   (stage == ShaderStage.Fragment ||
+                    stage == ShaderStage.Vertex ||
+                    stage == ShaderStage.TessellationEvaluation ||
+                    stage == ShaderStage.Geometry);
         }
 
         public static LinkedListNode<INode> RunPass(TransformContext context, LinkedListNode<INode> node)
@@ -20,7 +24,8 @@ namespace Ryujinx.Graphics.Shader.Translation.Transforms
 
             Operation operation = (Operation)node.Value;
 
-            if (operation.Inst == (Instruction.FP32 | Instruction.Divide) &&
+            if (context.Stage == ShaderStage.Fragment &&
+                operation.Inst == (Instruction.FP32 | Instruction.Divide) &&
                 operation.GetSource(0).Type == OperandType.Constant &&
                 operation.GetSource(0).AsFloat() == 1f &&
                 operation.GetSource(1).AsgOp is Operation addOp &&
@@ -30,14 +35,18 @@ namespace Ryujinx.Graphics.Shader.Translation.Transforms
                 addOp.ForcePrecise = true;
             }
 
-            // nxnative: the depth a fragment shader writes stays exact too. Tears of the Kingdom's light classifier writes a material id as D16 depth and each
-            // lighting pass draws a quad at that depth with an EQUAL test: Turnip reassociated the classifier's arithmetic (an ulp apart) and the water's class never
-            // met its lighting pass, so lakes were black (TOTKDroid 1ff1c7b4b found the same in its own translator; Qualcomm's driver kept the order)
+            // nxnative: the depth a fragment shader writes and the position a vertex/geometry/tessellation shader writes
+            // stay exact (NoContraction) under reduced precision. Tears of the Kingdom's light classifier writes a material
+            // id as D16 depth for an EQUAL test, and its terrain depth pre-pass + G-buffer pass compare EQUAL on
+            // gl_Position: without NoContraction on Position's defining arithmetic, Turnip fuses FMul+FAdd into FMA
+            // differently between the pre-pass VS and G-buffer VS, leaving stale G-buffer specks along diagonal triangle
+            // seams (matches TOTKDroid's "invariant gl_Position; precise gl_Position;").
             if (operation.Inst == Instruction.Store &&
                 operation.StorageKind == StorageKind.Output &&
                 operation.SourcesCount >= 2 &&
                 operation.GetSource(0).Type == OperandType.Constant &&
-                operation.GetSource(0).Value == (int)IoVariable.FragmentOutputDepth)
+                (operation.GetSource(0).Value == (int)IoVariable.FragmentOutputDepth ||
+                 operation.GetSource(0).Value == (int)IoVariable.Position))
             {
                 MarkPrecise(operation.GetSource(operation.SourcesCount - 1));
             }
