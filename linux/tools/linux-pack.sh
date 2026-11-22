@@ -6,7 +6,7 @@
 #   linux/tools/linux-pack.sh <game.nup or dump folder> [pack_android.py options]
 #                                                       the pack goes to <title ID>-work/android-pack beside the game file (the launcher's
 #                                                       picker finds it under ~/Games); shaders take minutes (Mario Kart World: 11,603)
-# NX_PACK_ENV: the environment folder (default ~/.local/share/banananative/packer). Needs python3 (3.12+; 3.14 builds the shader library without
+# NX_PACK_ENV: the environment folder (default ~/.local/share/polar/packer). Needs python3 (3.12+; 3.14 builds the shader library without
 # backports.zstd), curl, spirv-val on PATH (Ubuntu/Debian: spirv-tools) and a checkout of this repository (this script's own).
 # The pins setup downloads, each checked against its hash before use (bump: the version and the hash from pypi.org/pypi/pip/<version>/json, the same tag
 # of github.com/pypa/get-pip, and the runtime's linux tar.gz in builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json). The Python
@@ -22,7 +22,7 @@ DOTNET_ARM64_SHA512=e2e8b907d9eb6c239cccf5c1fe67fd9a72c56fddccedca9ba41c8a53ff03
 DOTNET_X64_SHA512=a90177d75bc891f71aa814dde3bcf76a356f5a506824669f1891754457954a3d13b72f3ca04c98fa0fe588514a5a781f8a87b17930ee802105c14f9edb28318a
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-ENV=${NX_PACK_ENV:-${XDG_DATA_HOME:-$HOME/.local/share}/banananative/packer}
+ENV=${NX_PACK_ENV:-${XDG_DATA_HOME:-$HOME/.local/share}/polar/packer}
 XBIN="$ROOT/dm/gfx/tools/dmsh_xlate_bin"
 WRAP="$XBIN/dmsh_xlate-linux"   # (beside the dlls: vk_android_build.py checks the dlls next to the translator it is given)
 

@@ -32,7 +32,7 @@ jobs:
     # Issues only (a pull request's comments come as issue_comment too), and never the job's own comment
     if: >-
       ${{ !github.event.issue.pull_request &&
-          (github.event_name != 'issue_comment' || !contains(github.event.comment.body, 'bananative-issue-digest')) }}
+          (github.event_name != 'issue_comment' || !contains(github.event.comment.body, 'polar-issue-digest')) }}
     runs-on: docker
     container:
       image: node:20-bookworm   # python3 is in the image; the tools need nothing outside its standard library
@@ -54,12 +54,12 @@ jobs:
       - name: Digest the issue's logs and comment
         env:
           FORGEJO_TOKEN: ${{ secrets.ISSUE_DIGEST_TOKEN || github.token }}
-          BN_FORGEJO: ${{ github.server_url }}
-          BN_FORGEJO_REPO: ${{ github.repository }}
+          POLAR_FORGEJO: ${{ github.server_url }}
+          POLAR_FORGEJO_REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
           ISSUES: ${{ inputs.issues }}
         run: |
-          export BN_ISSUES_DIR="$(mktemp -d)"
+          export POLAR_ISSUES_DIR="$(mktemp -d)"
           if [ -n "$ISSUE" ]; then python3 dm/tools/issue_digest_comment.py "$ISSUE"
           elif [ "$ISSUES" = open ]; then python3 dm/tools/issue_digest_comment.py --open
           else

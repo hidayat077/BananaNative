@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Ported to C for Banana Native from Eden's src/video_core/renderer_vulkan/present/frame_gen_pacer.cpp: how many frames to generate for each game frame. With a fixed
+// Ported to C for Polar from Eden's src/video_core/renderer_vulkan/present/frame_gen_pacer.cpp: how many frames to generate for each game frame. With a fixed
 // multiplier, multiplier - 1 once the game's frame rate is steady; with a target rate, as many as hold that output rate, probing one more at a time and rolling a step back
 // when it lowers the game's own rate. Times are seconds on CLOCK_MONOTONIC (0 = unset)
 #include "lsfg.h"

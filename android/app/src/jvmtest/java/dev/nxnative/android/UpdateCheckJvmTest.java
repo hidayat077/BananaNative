@@ -22,7 +22,7 @@ public final class UpdateCheckJvmTest {
     static final String HEX = "ad232b1c519e8f14d1f6dbeaa2569847002714306bc93f18924dd3a7e8abe23e";
 
     static UpdateCheck.Asset apk(String tag) {
-        return new UpdateCheck.Asset("banana-native-" + tag + ".apk", "https://github.com/moceure/BananaNative/releases/download/" + tag + "/banana-native-" + tag + ".apk", 123456789, "sha256:" + HEX);
+        return new UpdateCheck.Asset("polar-" + tag + ".apk", "https://github.com/moceure/BananaNative/releases/download/" + tag + "/polar-" + tag + ".apk", 123456789, "sha256:" + HEX);
     }
     static UpdateCheck.Release rel(String tag, boolean draft, boolean pre, UpdateCheck.Asset... as) { return new UpdateCheck.Release(tag, draft, pre, "notes of " + tag, Arrays.asList(as)); }
     static String pick(int[] cur, UpdateCheck.Release... rs) { UpdateCheck.Update u = UpdateCheck.pick(Arrays.asList(rs), cur); return u == null ? null : u.tag(); }
@@ -91,7 +91,7 @@ public final class UpdateCheckJvmTest {
     static final UpdateCheck.Source GH = UpdateCheck.SOURCES.get(0), FJ = UpdateCheck.SOURCES.get(1);
 
     static UpdateCheck.Asset fjApk(String tag) {
-        return new UpdateCheck.Asset("banana-native-" + tag + ".apk", "https://git.eden-emu.dev/moceure/BananaNative/releases/download/" + tag + "/banana-native-" + tag + ".apk", 44791088, null);
+        return new UpdateCheck.Asset("polar-" + tag + ".apk", "https://git.eden-emu.dev/moceure/BananaNative/releases/download/" + tag + "/polar-" + tag + ".apk", 44791088, null);
     }
     static UpdateCheck.Release ghRel(String tag) { return new UpdateCheck.Release(tag, false, true, "", Arrays.asList(apk(tag)), GH); }
     static UpdateCheck.Release fjRel(String tag) { return new UpdateCheck.Release(tag, false, false, "", Arrays.asList(fjApk(tag)), FJ); }
@@ -115,11 +115,11 @@ public final class UpdateCheckJvmTest {
         eq("v0.2.0", r.tag, "tag_name");
         eq(false, r.draft, "draft");
         eq(false, r.prerelease, "prerelease");
-        eq(true, r.body.startsWith("> This is the temporary home of Banana Native"), "body");
+        eq(true, r.body.startsWith("> This is the temporary home of Polar"), "body");
         eq(FJ, r.source, "its source");
         eq(1, r.assets.size(), "one asset");
-        eq("banana-native-v0.2.0.apk", r.assets.get(0).name, "asset name");
-        eq("https://git.eden-emu.dev/moceure/BananaNative/releases/download/v0.2.0/banana-native-v0.2.0.apk", r.assets.get(0).url, "browser_download_url");
+        eq("polar-v0.2.0.apk", r.assets.get(0).name, "asset name");
+        eq("https://git.eden-emu.dev/moceure/BananaNative/releases/download/v0.2.0/polar-v0.2.0.apk", r.assets.get(0).url, "browser_download_url");
         eq(44791088L, r.assets.get(0).size, "size");
         eq(null, r.assets.get(0).digest, "Forgejo gives no digest");
         UpdateCheck.Update u = UpdateCheck.pickAll(Arrays.asList(null, fj), UpdateCheck.appVersion("0.1.5"));
@@ -130,7 +130,7 @@ public final class UpdateCheckJvmTest {
 
         // GitHub's shape (the fields the updater reads, digest included; escapes, nulls, numbers and unknown fields)
         String gh = "[{\"tag_name\":\"v0.2.1\",\"draft\":false,\"prerelease\":true,\"body\":\"a\\nb \\u00e9 \\\"q\\\"\",\"author\":{\"login\":\"x\",\"id\":1},\"reactions\":null,"
-                + "\"assets\":[{\"name\":\"banana-native-v0.2.1.apk\",\"size\":45000000,\"digest\":\"sha256:" + HEX + "\",\"browser_download_url\":\"https://github.com/moceure/BananaNative/releases/download/v0.2.1/banana-native-v0.2.1.apk\",\"x\":1.5e3}]},"
+                + "\"assets\":[{\"name\":\"polar-v0.2.1.apk\",\"size\":45000000,\"digest\":\"sha256:" + HEX + "\",\"browser_download_url\":\"https://github.com/moceure/BananaNative/releases/download/v0.2.1/polar-v0.2.1.apk\",\"x\":1.5e3}]},"
                 + "{\"tag_name\":\"v0.2.2\",\"draft\":true,\"body\":null,\"assets\":[]}]";
         List<UpdateCheck.Release> g = UpdateCheck.parse(gh, GH);
         eq(2, g.size(), "two GitHub releases");
@@ -179,7 +179,7 @@ public final class UpdateCheckJvmTest {
         eq(false, UpdateCheck.allowedAsset("not a url", FJ), "no URL");
         eq(false, UpdateCheck.allowedAsset(fjUrl, null), "no source");
         UpdateCheck.Release foreign = new UpdateCheck.Release("v0.2.3", false, false, "", Arrays.asList(
-                new UpdateCheck.Asset("banana-native-v0.2.3.apk", "https://evil.example/banana-native-v0.2.3.apk", 10, null)), FJ);
+                new UpdateCheck.Asset("polar-v0.2.3.apk", "https://evil.example/polar-v0.2.3.apk", 10, null)), FJ);
         eq("v0.2.2@git.eden-emu.dev", where(all(cur, null, Arrays.asList(foreign, fjRel("v0.2.2")))), "a release whose APK is on another host is skipped");
     }
 
@@ -233,11 +233,11 @@ public final class UpdateCheckJvmTest {
         eq("v0.4.2", UpdateCheck.pick(Arrays.asList(crit, fix, major), cur, true).tag(), "small fixes off: a critical one still is");
         eq("v0.4.1", UpdateCheck.pickAll(Arrays.asList(Arrays.asList(fix), null), cur, false).tag(), "pickAll with small fixes on");
         // the experimental Android 12 build's asset (..-android12.apk) is taken only by that build, and the other apps never take it, whatever the order
-        UpdateCheck.Asset a12 = new UpdateCheck.Asset("banana-native-v0.1.4-android12.apk", "https://github.com/moceure/BananaNative/releases/download/v0.1.4/banana-native-v0.1.4-android12.apk", 123456789, "sha256:" + HEX);
-        eq("banana-native-v0.1.4.apk", UpdateCheck.apk(rel("v0.1.4", false, false, a12, apk("v0.1.4"))).name, "a normal app skips the android12 asset even when it is listed first");
+        UpdateCheck.Asset a12 = new UpdateCheck.Asset("polar-v0.1.4-android12.apk", "https://github.com/moceure/BananaNative/releases/download/v0.1.4/polar-v0.1.4-android12.apk", 123456789, "sha256:" + HEX);
+        eq("polar-v0.1.4.apk", UpdateCheck.apk(rel("v0.1.4", false, false, a12, apk("v0.1.4"))).name, "a normal app skips the android12 asset even when it is listed first");
         eq(null, UpdateCheck.apk(rel("v0.1.4", false, false, a12)), "a release with only the android12 asset is no update for a normal app");
         UpdateCheck.android12 = true;
-        eq("banana-native-v0.1.4-android12.apk", UpdateCheck.apk(rel("v0.1.4", false, false, apk("v0.1.4"), a12)).name, "the android12 build takes its asset");
+        eq("polar-v0.1.4-android12.apk", UpdateCheck.apk(rel("v0.1.4", false, false, apk("v0.1.4"), a12)).name, "the android12 build takes its asset");
         eq(null, pick(cur, rel("v0.1.4", false, false, apk("v0.1.4"))), "the android12 build is offered no normal APK (it could not install it)");
         UpdateCheck.android12 = false;
         eq(null, pick(cur, rel("v0.1.3", false, true, apk("v0.1.3")), rel("v0.1.2", false, true, apk("v0.1.2"))), "nothing newer");
@@ -251,9 +251,9 @@ public final class UpdateCheckJvmTest {
         eq(null, pick(cur, rel("v0.1.6", false, true, http)), "an APK without an https link is skipped");
         UpdateCheck.Asset bad = new UpdateCheck.Asset("x.apk", "https://github.com/x/y/releases/download/v0.1.6/x.apk", 10, "sha256:1234");
         eq(null, pick(cur, rel("v0.1.6", false, true, bad)), "an APK whose SHA-256 is malformed is skipped");
-        UpdateCheck.Asset upper = new UpdateCheck.Asset("Banana-Native.APK", "https://github.com/x/y/releases/download/v0.1.6/Banana-Native.APK", 10, null);
+        UpdateCheck.Asset upper = new UpdateCheck.Asset("Polar.APK", "https://github.com/x/y/releases/download/v0.1.6/Polar.APK", 10, null);
         UpdateCheck.Update u = UpdateCheck.pick(Collections.singletonList(rel("v0.1.6", false, true, zip, upper)), cur);
-        eq("Banana-Native.APK", u == null ? null : u.apk.name, "the .apk asset, any case, beside other assets");
+        eq("Polar.APK", u == null ? null : u.apk.name, "the .apk asset, any case, beside other assets");
         eq(null, u == null ? "x" : u.sha256, "no digest: nothing to compare");
         u = UpdateCheck.pick(Collections.singletonList(rel("v0.1.4", false, true, apk("v0.1.4"))), cur);
         eq(HEX, u == null ? null : u.sha256, "the digest's hex");

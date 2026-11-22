@@ -26,7 +26,7 @@ What to expect while it prepares:
 
 A Mac prepares Donkey Kong Bananza (`040074A01BF12000`) in about 10-15 minutes. The Mac packer is tested; the Windows one is new and not yet tested on a real PC, so please report how it goes.
 
-1. Get the project's repository from the [official site](https://git.eden-emu.dev/moceure/BananaNative) (clone or download). Double-click `scripts\bananative.bat` (Windows) or `scripts/bananative.command` (Mac).
+1. Get the project's repository from the [official site](https://git.eden-emu.dev/moceure/BananaNative) (clone or download). Double-click `scripts\polar.bat` (Windows) or `scripts/polar.command` (Mac).
 2. The first time, it asks for a folder for its tools and installs them there (Python, the shader tools and the .NET runtime, about 400 MB).
 3. In the window, pick the game (**.nup file...** or **Dump folder...**) and click **Prepare**. **Stop** ends it; the next run goes on from where it stopped.
 4. The pack ends up in `<title ID>-work/android-pack` next to the game folder (about 250-400 MB). **Show pack** opens it.
@@ -34,7 +34,7 @@ A Mac prepares Donkey Kong Bananza (`040074A01BF12000`) in about 10-15 minutes. 
    - copy only `android-pack` beside it as `Switch2/<title ID>-work/android-pack`, then tap **Add game** and pick the game folder: the app finds the pack; or
    - copy `android-pack` anywhere, tap **Add game**, and when the app asks **Prepare ...?** choose **Import pack...** > **A pack folder (with pack.tsv and shaders/)**.
 
-If it fails, the window's log and tool check say what is missing; `scripts/bananative.command check` (or `scripts\bananative.bat check`) checks the tools again.
+If it fails, the window's log and tool check say what is missing; `scripts/polar.command check` (or `scripts\polar.bat check`) checks the tools again.
 
 ## Moving a pack between phones
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Polar bear from polar.png: the launcher header's mark and the empty game list. Original art, no game content -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_polar_bear"
+    android:gravity="fill"
+    android:filter="true" />

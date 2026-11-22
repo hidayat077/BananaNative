@@ -3,8 +3,8 @@
 
     python3 scripts/shader_harvest.py [PATH ...] [--game <title ID>] [--apply] [--note TEXT]
 
-PATH is a log, a missing_shaders.tsv, a zip of them or a folder (searched for *.log, *.txt, missing_shaders.tsv and *.zip); default $BN_ISSUES_DIR, else
-the folder `$BN_ISSUES_DIR` names, or the paths given (scripts/issue_digest.py keeps the issues' logs in its issues folder). Three sources are read:
+PATH is a log, a missing_shaders.tsv, a zip of them or a folder (searched for *.log, *.txt, missing_shaders.tsv and *.zip); default $POLAR_ISSUES_DIR, else
+the folder `$POLAR_ISSUES_DIR` names, or the paths given (scripts/issue_digest.py keeps the issues' logs in its issues folder). Three sources are read:
   - `[shaders-missing] <key><TAB><stage>` lines of a game's log (the host notes each missing key once),
   - the rows `key<TAB>stage` of a missing_shaders.tsv (the host's $DM_TEMP file; a player attaches it to an issue),
   - older logs' `[RED] vk: shader <key> (program stage N) is not in the shader library` lines (no stage: taken from the profile's shader_map.tsv).
@@ -143,8 +143,8 @@ def main(argv=None):
     ap.add_argument('--apply', action='store_true', help='append the new keys to each selected-set profile\'s shader_seen.tsv')
     ap.add_argument('--note', default='')
     a = ap.parse_args(argv)
-    paths = a.paths or ([os.environ['BN_ISSUES_DIR']] if os.environ.get('BN_ISSUES_DIR') else [])
-    if not paths: sys.exit('shader_harvest: name a folder of logs or set BN_ISSUES_DIR')
+    paths = a.paths or ([os.environ['POLAR_ISSUES_DIR']] if os.environ.get('POLAR_ISSUES_DIR') else [])
+    if not paths: sys.exit('shader_harvest: name a folder of logs or set POLAR_ISSUES_DIR')
     for p in paths:
         if not Path(p).exists(): print(f'[RED] {p}: not found', file=sys.stderr); return 2
     by = collect(paths, a.game.upper() if a.game else None)

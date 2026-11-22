@@ -89,7 +89,7 @@
     <string name="home_allow">허용</string>
     <string name="home_allow_file_access">파일 액세스 허용</string>
     <string name="home_back_up_saves">세이브 백업</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">계속 준비</string>
     <string name="home_copy_into_the_app">앱으로 복사</string>
     <string name="home_delete">삭제</string>
@@ -189,7 +189,7 @@
     <string name="settings_theme">테마</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">이 런처는 바로가기를 고정할 수 없어요.</string>
     <string name="settings_this_release_has_no_notes">이 릴리스에는 노트가 없어요.</string>
-    <string name="settings_to_install_the_update_allow">업데이트를 설치하려면 Banana Native에 앱 설치 권한(\"출처를 알 수 없는 앱 설치\")을 허용한 뒤 다시 돌아와 주세요.</string>
+    <string name="settings_to_install_the_update_allow">업데이트를 설치하려면 Polar에 앱 설치 권한(\"출처를 알 수 없는 앱 설치\")을 허용한 뒤 다시 돌아와 주세요.</string>
     <string name="settings_update">업데이트</string>
     <string name="settings_updates">업데이트</string>
     <string name="settings_what_s_new">새로운 기능</string>
@@ -506,7 +506,7 @@
     <string name="err_save_busy">%1$s의 세이브 백업 또는 복원이 아직 진행 중이에요. 끝나면 플레이가 시작돼요.</string>
     <string name="err_pack_busy">%1$s 팩의 내보내기 또는 가져오기가 아직 진행 중이에요. 끝나면 플레이가 시작돼요.</string>
     <string name="err_no_app_can_open">%1$s을(를) 열 수 있는 앱이 없어요</string>
-    <string name="settings_adb_control_warning">켜져 있는 동안에는 adb와 이 휴대폰의 다른 앱이 묻지 않고 Banana Native 런처를 통해 게임을 추가하고, 준비를 시작하고, GPU 드라이버를 설치하거나 선택할 수 있어요. GPU 드라이버는 게임 안에서 실행되는 코드예요. adb를 사용할 때만 켜고, 다 쓰면 다시 끄세요.</string>
+    <string name="settings_adb_control_warning">켜져 있는 동안에는 adb와 이 휴대폰의 다른 앱이 묻지 않고 Polar 런처를 통해 게임을 추가하고, 준비를 시작하고, GPU 드라이버를 설치하거나 선택할 수 있어요. GPU 드라이버는 게임 안에서 실행되는 코드예요. adb를 사용할 때만 켜고, 다 쓰면 다시 끄세요.</string>
     <string name="home_pick_dump_folder_again">%1$s의 덤프 폴더를 다시 선택하세요</string>
     <string name="err_no_game_in_folder">%1$s 안에 main.npdm(base/exefs/, updates/&lt;version&gt;/exefs/ 또는 exefs/), .nup 파일, 게임 폴더가 없어요. 게임 자체 폴더, .nup 파일, 또는 게임들이 들어 있는 폴더를 선택하세요.</string>
     <string name="err_nup_rename">%1$s: 이름이 \".nup\" 또는 \".nsp\"(소문자)로 끝나도록 바꿔 주세요. 게임과 도구는 그 이름만 읽어요.</string>
@@ -613,7 +613,7 @@
     <string name="game_no_zip_assets">%1$s: 릴리스에 .zip 파일이 없어요</string>
     <string name="game_not_installed_reason">설치 안 됨: %1$s</string>
     <string name="game_installed_and_picked">%1$s 설치 및 선택됨</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">%1$s 버전을 사용할 수 있어요</string>
     <string name="settings_you_have_install_over">현재 %1$s 버전이에요. 덮어서 설치해도 세이브, 팩, 설정은 유지돼요.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · 출처: %3$s</string>
@@ -1045,7 +1045,7 @@
     <string name="prepare_simulated">" (시뮬레이션)"</string>
     <string name="prepare_starting">시작하는 중…</string>
     <string name="prepare_name_is_ready_title">%1$s 플레이 준비 완료</string>
-    <string name="prepare_open_and_tap_play">Banana Native를 열고 플레이를 탭하세요.</string>
+    <string name="prepare_open_and_tap_play">Polar를 열고 플레이를 탭하세요.</string>
     <string name="prepare_waiting_name">대기 중: %1$s</string>
     <string name="prepare_could_not_prepare_name">%1$s을(를) 준비하지 못했어요</string>
     <string name="prepare_paused_name">일시 정지됨: %1$s</string>
@@ -1062,7 +1062,7 @@
     <string name="prepare_copying_progress">%1$s 복사 중: %3$s GiB 중 %2$s GiB (%4$d %%)\n%5$s\n\n앱을 열어 두세요. 앱 자체 저장 공간으로 복사하므로 모든 파일 액세스 권한이 필요 없어요.</string>
     <string name="game_turnip_slow_note">Turnip 드라이버에서는 이 게임이 느리게 실행돼요(성능 낮음). 891.14 같은 Qualcomm 드라이버나 시스템 드라이버가 더 빨라요.</string>
     <string name="game_aspect_native_laid_out">" (네이티브: 카메라와 메뉴가 %1$s에 맞춰 배치됨)"</string>
-    <string name="game_hold60_text">끔: 본체처럼 60fps를 유지하지 못하면 30fps로 떨어져요. 켬: 게임이 항상 60fps 모드로 실행되고 Banana Native가 프레임을 유지하지 않아서 30으로 떨어지지 않아요. 대신 60 미만일 때는 프레임 레이트가 덜 균일하고 게임이 조금 느려져요. 60fps 제한일 때만 사용 가능</string>
+    <string name="game_hold60_text">끔: 본체처럼 60fps를 유지하지 못하면 30fps로 떨어져요. 켬: 게임이 항상 60fps 모드로 실행되고 Polar가 프레임을 유지하지 않아서 30으로 떨어지지 않아요. 대신 60 미만일 때는 프레임 레이트가 덜 균일하고 게임이 조금 느려져요. 60fps 제한일 때만 사용 가능</string>
     <string name="game_present_only_note">이 게임에서는 실험적 기능이에요: 제한은 게임 자체가 아니라 화면 표시 빈도만 제한해요. 버그가 있을 수 있어요(예: 게임이 더 느리거나 빠르게 실행됨).</string>
     <string name="prepare_save_default_earlier">" (기본값: 이전 버전에서 쓰던 게임 옆의 세이브. 다음 게임 시작 때 앱 저장 공간(%1$s)으로 복사해서 거기서 플레이하며, 이 폴더는 절대 바뀌지 않아요)"</string>
     <string name="prepare_save_default_in_app_copied">" (기본값: 앱 저장 공간. %1$s에서 복사했으며 원본은 그대로 유지돼요)."</string>
@@ -1198,7 +1198,7 @@
     <string name="settings_the_release_sources">릴리스 소스</string>
     <string name="settings_is_not_a_release_version">)이(가) 릴리스 버전이 아니어서 비교할 대상이 없어요.</string>
     <string name="settings_this_build_s_version">이 빌드의 버전(</string>
-    <string name="settings_only_the_release_app_dev">릴리스 앱(dev.bananative.android)만 업데이트를 확인해요. 테스트 앱은 파일 폴더의 update.txt에 repo= 또는 url=이 있을 때 확인해요.</string>
+    <string name="settings_only_the_release_app_dev">릴리스 앱(dev.polar.android)만 업데이트를 확인해요. 테스트 앱은 파일 폴더의 update.txt에 repo= 또는 url=이 있을 때 확인해요.</string>
     <string name="settings_no_release_source">릴리스 소스 없음</string>
     <string name="settings_did_not_answer_in_time">이(가) 제때 응답하지 않음)</string>
     <string name="settings_s_answer_is_too_large">의 응답이 너무 큼</string>

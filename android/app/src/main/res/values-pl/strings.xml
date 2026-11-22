@@ -91,7 +91,7 @@
     <string name="home_allow">Zezwól</string>
     <string name="home_allow_file_access">Zezwól na dostęp do plików</string>
     <string name="home_back_up_saves">Utwórz kopię zapisów</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">Kontynuuj przygotowywanie</string>
     <string name="home_copy_into_the_app">Kopiuj do aplikacji</string>
     <string name="home_delete">Usuń</string>
@@ -191,7 +191,7 @@
     <string name="settings_theme">Motyw</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">Ten launcher nie potrafi przypinać skrótów.</string>
     <string name="settings_this_release_has_no_notes">To wydanie nie ma notatek.</string>
-    <string name="settings_to_install_the_update_allow">Aby zainstalować aktualizację, zezwól Banana Native na instalowanie aplikacji („Instaluj nieznane aplikacje”), a potem wróć.</string>
+    <string name="settings_to_install_the_update_allow">Aby zainstalować aktualizację, zezwól Polar na instalowanie aplikacji („Instaluj nieznane aplikacje”), a potem wróć.</string>
     <string name="settings_update">Aktualizuj</string>
     <string name="settings_updates">Aktualizacje</string>
     <string name="settings_what_s_new">Co nowego</string>
@@ -510,7 +510,7 @@
     <string name="err_save_busy">Kopia lub przywracanie zapisu %1$s nadal trwa: Graj na nie czeka.</string>
     <string name="err_pack_busy">Eksport lub import pakietu %1$s nadal trwa: Graj na niego czeka.</string>
     <string name="err_no_app_can_open">Żadna aplikacja nie może otworzyć: %1$s</string>
-    <string name="settings_adb_control_warning">Gdy jest włączone, adb i każda inna aplikacja na tym telefonie mogą dodawać gry, uruchamiać Przygotuj oraz instalować lub wybierać sterownik GPU przez launcher Banana Native, nie pytając cię. Sterownik GPU to kod działający wewnątrz gry. Włączaj tylko na czas używania adb, potem wyłącz.</string>
+    <string name="settings_adb_control_warning">Gdy jest włączone, adb i każda inna aplikacja na tym telefonie mogą dodawać gry, uruchamiać Przygotuj oraz instalować lub wybierać sterownik GPU przez launcher Polar, nie pytając cię. Sterownik GPU to kod działający wewnątrz gry. Włączaj tylko na czas używania adb, potem wyłącz.</string>
     <string name="home_pick_dump_folder_again">Wybierz ponownie folder zrzutu: %1$s</string>
     <string name="err_no_game_in_folder">W %1$s nie ma main.npdm (base/exefs/, updates/&lt;version&gt;/exefs/ ani exefs/), pliku .nup ani folderu gry. Wybierz własny folder gry, jej plik .nup albo folder z twoimi grami.</string>
     <string name="err_nup_rename">%1$s: zmień nazwę tak, by kończyła się na „.nup” lub „.nsp” (małymi literami); gra i narzędzia odczytują tylko taką nazwę.</string>
@@ -623,7 +623,7 @@
     <string name="game_no_zip_assets">%1$s: brak plików .zip w jego wydaniach</string>
     <string name="game_not_installed_reason">Nie zainstalowano: %1$s</string>
     <string name="game_installed_and_picked">Zainstalowano i wybrano: %1$s</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">Dostępna wersja %1$s</string>
     <string name="settings_you_have_install_over">Masz: %1$s. Zainstaluj na wierzchu: zapisy, pakiety i ustawienia zostają.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · z %3$s</string>
@@ -1076,7 +1076,7 @@
     <string name="prepare_simulated">" (symulacja)"</string>
     <string name="prepare_starting">Uruchamianie…</string>
     <string name="prepare_name_is_ready_title">%1$s jest gotowa do gry</string>
-    <string name="prepare_open_and_tap_play">Otwórz Banana Native i dotknij Graj.</string>
+    <string name="prepare_open_and_tap_play">Otwórz Polar i dotknij Graj.</string>
     <string name="prepare_waiting_name">Oczekiwanie: %1$s</string>
     <string name="prepare_could_not_prepare_name">Nie udało się przygotować: %1$s</string>
     <string name="prepare_paused_name">Wstrzymano: %1$s</string>
@@ -1093,7 +1093,7 @@
     <string name="prepare_copying_progress">Kopiowanie %1$s: %2$s z %3$s GiB (%4$d %%)\n%5$s\n\nPozostaw aplikację otwartą. Kopia trafia do własnej pamięci aplikacji, więc nie potrzeba dostępu do wszystkich plików.</string>
     <string name="game_turnip_slow_note">Sterowniki Turnip uruchamiają tę grę wolno (niska wydajność). Sterownik Qualcomm, np. 891.14, lub System działa szybciej.</string>
     <string name="game_aspect_native_laid_out">" (natywny: kamery i menu ułożone dla %1$s)"</string>
-    <string name="game_hold60_text">Wyłączone: gra spada do 30 fps, gdy nie utrzyma 60, jak na konsoli. Włączone: gra zawsze działa w trybie 60 fps, a Banana Native nie wstrzymuje klatek, więc nigdy nie spada do 30; liczba klatek jest mniej równa, a gra działa trochę wolniej poniżej 60. Tylko z limitem 60 fps</string>
+    <string name="game_hold60_text">Wyłączone: gra spada do 30 fps, gdy nie utrzyma 60, jak na konsoli. Włączone: gra zawsze działa w trybie 60 fps, a Polar nie wstrzymuje klatek, więc nigdy nie spada do 30; liczba klatek jest mniej równa, a gra działa trochę wolniej poniżej 60. Tylko z limitem 60 fps</string>
     <string name="game_present_only_note">Eksperymentalne dla tej gry: limit ogranicza tylko, jak często pokazywany jest obraz, a nie samą grę. Spodziewaj się błędów (np. gra działa wolniej lub szybciej).</string>
     <string name="prepare_save_default_earlier">" (domyślnie: twój zapis z wcześniejszej wersji, obok gry. Następne uruchomienie gry kopiuje go do pamięci aplikacji, %1$s, i gra z niej; ten folder nigdy nie jest zmieniany)"</string>
     <string name="prepare_save_default_in_app_copied">" (domyślnie: w pamięci aplikacji; skopiowany z %1$s, który zostaje bez zmian)."</string>
@@ -1229,7 +1229,7 @@
     <string name="settings_the_release_sources">źródła wydań</string>
     <string name="settings_is_not_a_release_version">) nie jest wersją wydania: nie ma z czym porównywać.</string>
     <string name="settings_this_build_s_version">Wersja tej kompilacji (</string>
-    <string name="settings_only_the_release_app_dev">Tylko aplikacja wydaniowa (dev.bananative.android) sprawdza aktualizacje. Aplikacja testowa sprawdza, gdy update.txt w jej folderze plików podaje repo= lub url=.</string>
+    <string name="settings_only_the_release_app_dev">Tylko aplikacja wydaniowa (dev.polar.android) sprawdza aktualizacje. Aplikacja testowa sprawdza, gdy update.txt w jej folderze plików podaje repo= lub url=.</string>
     <string name="settings_no_release_source">brak źródła wydań</string>
     <string name="settings_did_not_answer_in_time">" nie odpowiedział na czas)"</string>
     <string name="settings_s_answer_is_too_large">odpowiedź jest zbyt duża</string>

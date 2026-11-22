@@ -2,7 +2,7 @@
 
 Short answers, with links to the page that has the detail.
 
-**What is Banana Native?** An Android app that runs Switch 2 games from your own dumps. Like Wine, it emulates no hardware: the game's code runs on the phone's CPU and the system services and graphics are supplied by the app. It is an Android port of nxnative by seedds. Most of the code was written with an AI coding assistant (Claude) and tested by hand.
+**What is Polar?** An Android app that runs Switch 2 games from your own dumps. Like Wine, it emulates no hardware: the game's code runs on the phone's CPU and the system services and graphics are supplied by the app. It is an Android port of nxnative by seedds. Most of the code was written with an AI coding assistant (Claude) and tested by hand.
 
 **Does it include games, keys or firmware?** No. It contains no Nintendo code, firmware or keys and decrypts nothing. It reads only a dump folder (or a `.nup` file of one) from your own console. This project does not explain how to get games; please don't ask.
 

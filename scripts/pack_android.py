@@ -278,7 +278,7 @@ def collect_nros(exe, romfs, work, in_process=False):
     """The NROs the game registers: {name: collected .nro} in <work>/android-nro/ (dm/tools/nro_collect.py, with the version's own ExeFS for a boot stub's NRO),
     {} without NRRs. Reused while nro_key is unchanged (Super Smash Bros. Ultimate's scan takes minutes). in_process: in this Python, without a pool (the phone).
     Written in place, its key file the marker (deleted first, written last, by a file's rename): a folder renamed under /storage/emulated goes through MediaProvider,
-    which may refuse it with EPERM (BananaNative issues #1 and #296; android/app Outputs.java)"""
+    which may refuse it with EPERM (Polar issues #1 and #296; android/app Outputs.java)"""
     work = Path(work); coll, kf = work / 'android-nro', work / 'android-nro.key'
     nrrs = nrr_files(romfs)
     if not nrrs:

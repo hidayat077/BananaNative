@@ -188,7 +188,7 @@ class Load(unittest.TestCase):
 
 def synthetic(n, seed):
     """Text-like bytes from a fixed generator (words, line ends, now and then a stray byte): the input of zbic_synthetic.zbic is synthetic(24000, 3)"""
-    words = [b'the', b'zbic', b'frame', b'table', b'count', b'segment', b'module', b'banana', b'native', b'x', b'qq', b'lorem', b'ipsum']
+    words = [b'the', b'zbic', b'frame', b'table', b'count', b'segment', b'module', b'polar', b'native', b'x', b'qq', b'lorem', b'ipsum']
     x, out = seed, bytearray()
     while len(out) < n:
         x = (x * 6364136223846793005 + 1442695040888963407) & (2**64 - 1)

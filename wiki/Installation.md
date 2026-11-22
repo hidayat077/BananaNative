@@ -1,6 +1,6 @@
 # Installation
 
-New here? The [Quick start](Quick-Start) has the five steps on one page, and the [Glossary](Glossary) explains the words. Banana Native is an Android app (an APK). This page says what phone you need, where to get the app, and what to turn on after installing. Your game is added afterwards: see [First start and Prepare](First-Start-and-Prepare).
+New here? The [Quick start](Quick-Start) has the five steps on one page, and the [Glossary](Glossary) explains the words. Polar is an Android app (an APK). This page says what phone you need, where to get the app, and what to turn on after installing. Your game is added afterwards: see [First start and Prepare](First-Start-and-Prepare).
 
 ## What you need
 
@@ -27,13 +27,13 @@ A flattened folder, with `exefs/` and `romfs/` directly in `base/` and `updates/
 
 1. Open the project's [releases page](https://git.eden-emu.dev/moceure/BananaNative/releases) on the official site and download the newest APK. Download only from there.
 2. Install it. Android may ask you to allow installing from your browser or file manager; that is a normal Android prompt.
-3. Open **Banana Native**.
+3. Open **Polar**.
 
 Later versions come through the app's own updater ([Updates](Updates)).
 
 ## Allow file access
 
-Home shows an **Allow file access** card with an **Allow** button. It opens Android's settings, where you turn on **All files access** for Banana Native; then come back. With it on, the app reads your dump where it is.
+Home shows an **Allow file access** card with an **Allow** button. It opens Android's settings, where you turn on **All files access** for Polar; then come back. With it on, the app reads your dump where it is.
 
 A game's update and add-on content can sit in the same folder as the game: **update and DLC `.nup` files** (a `.nup` with a base game stays a game of its own), or **`.nsp` files** beside a `.nup` game. The app finds them by title and adds them to that game; **Add game** lists only the game. (New in 0.3.40; in 0.3.43 a Pokopia add-on beside its `.nup` links to the game.)
 

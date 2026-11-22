@@ -27,7 +27,7 @@
         android:hasFragileUserData="true">
         <activity
             android:name=".MainActivity"
-            android:theme="@style/Theme.Banana"
+            android:theme="@style/Theme.Polar"
             android:launchMode="singleTask"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
@@ -36,7 +36,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Emulator frontends (FRONTENDS.md): reached only by the exported alias <application ID>.Launch (dev.bananative.android/.Launch); draws nothing of its own -->
+        <!-- Emulator frontends (FRONTENDS.md): reached only by the exported alias <application ID>.Launch (dev.polar.android/.Launch); draws nothing of its own -->
         <activity
             android:name=".FrontendLaunch"
             android:exported="false"
@@ -86,14 +86,14 @@
         <activity
             android:name=".CropActivity"
             android:exported="false"
-            android:theme="@style/Theme.Banana"
+            android:theme="@style/Theme.Polar"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode" />
         <!-- The readiness check (ReadinessActivity), in a process of its own: it loads a host and the GPU driver to ask Vulkan what the phone has -->
         <activity
             android:name=".ReadinessActivity"
             android:exported="false"
             android:process=":readiness"
-            android:theme="@style/Theme.Banana"
+            android:theme="@style/Theme.Polar"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
         <provider
             android:name=".LogProvider"

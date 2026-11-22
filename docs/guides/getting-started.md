@@ -32,9 +32,9 @@ This guide sets up a game with the phone alone. A Windows PC or a Mac prepares a
 
 1. **Copy your dump** to the phone, for example to `Switch2/DonkeyKongBananza`.
 2. **Install the app.** Download the APK from [Releases](https://git.eden-emu.dev/moceure/BananaNative/releases) and
-   install it. Open **Banana Native**.
+   install it. Open **Polar**.
 3. **Allow file access.** The **Allow file access** card has an **Allow** button: it opens Android's settings, where
-   you turn on **All files access** for Banana Native, then come back. (You can also skip it: a `.nup` file is then
+   you turn on **All files access** for Polar, then come back. (You can also skip it: a `.nup` file is then
    used where it is, and a dump folder is copied into the app's own storage. See [Storage access](storage-access.md).)
 4. **Add the game.** Tap **Add game**, choose **A folder (with base/, and updates/ if any)** or **A .nup file**, and
    pick your dump. Without All files access the choices are **A .nup file (used where it is)** and **A dump folder

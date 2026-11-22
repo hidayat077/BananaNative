@@ -4,7 +4,7 @@ Pokémon Pokopia (`0400A3A01EE4C000`) can load **mods**: folders of replacement 
 
 ## Add a mod
 
-1. Get the mod as a **.zip** from its author. Nothing is bundled with Banana Native.
+1. Get the mod as a **.zip** from its author. Nothing is bundled with Polar.
 2. Open the game's page (the **...** on its card), tab **Game**, section **Game options**, row **Mods**.
 3. Tap **Import mod (.zip)...** and pick the file. The launcher unpacks it into its own storage. One outer folder (the zip's own name, a version such as `2.0.1`, or `romfs`) is dropped, so the files inside sit as the game's data folders do.
 4. Start the game. The change applies at the next start.

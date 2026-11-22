@@ -39,7 +39,7 @@ final class SkipNotice {
 
     /**
      * Whether the largest cause is shaders the pack's shader library does not have (vka_skipwarn.h VKS_MISSING): a pack made from an incomplete dump or by an older
-     * split (BananaNative #356: a Switch 2 Edition prepared without its add-on's shaders). No driver draws a shader that is not there, so the notice names none
+     * split (Polar #356: a Switch 2 Edition prepared without its add-on's shaders). No driver draws a shader that is not there, so the notice names none
      */
     static boolean missingShaders(String status) { return causes(status).startsWith("shaders missing from the pack"); }
 

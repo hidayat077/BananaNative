@@ -91,7 +91,7 @@
     <string name="home_allow">سماح</string>
     <string name="home_allow_file_access">السماح بالوصول إلى الملفات</string>
     <string name="home_back_up_saves">نسخ احتياطي للحفظ</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">متابعة التجهيز</string>
     <string name="home_copy_into_the_app">نسخ إلى التطبيق</string>
     <string name="home_delete">حذف</string>
@@ -191,7 +191,7 @@
     <string name="settings_theme">السمة</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">لا يستطيع هذا المشغّل تثبيت الاختصارات.</string>
     <string name="settings_this_release_has_no_notes">لا توجد ملاحظات لهذا الإصدار.</string>
-    <string name="settings_to_install_the_update_allow">لتثبيت التحديث، اسمح لـ Banana Native بتثبيت التطبيقات («تثبيت التطبيقات غير المعروفة») ثم عد.</string>
+    <string name="settings_to_install_the_update_allow">لتثبيت التحديث، اسمح لـ Polar بتثبيت التطبيقات («تثبيت التطبيقات غير المعروفة») ثم عد.</string>
     <string name="settings_update">تحديث</string>
     <string name="settings_updates">التحديثات</string>
     <string name="settings_what_s_new">الجديد</string>
@@ -512,7 +512,7 @@
     <string name="err_save_busy">نسخ احتياطي أو استعادة للحفظ الخاص بـ %1$s لا يزال جاريًا: «تشغيل» ينتظره.</string>
     <string name="err_pack_busy">تصدير أو استيراد لحزمة %1$s لا يزال جاريًا: «تشغيل» ينتظره.</string>
     <string name="err_no_app_can_open">لا يوجد تطبيق يستطيع فتح %1$s</string>
-    <string name="settings_adb_control_warning">أثناء تفعيله، يستطيع adb وأي تطبيق آخر على هذا الهاتف إضافة الألعاب وبدء التجهيز وتثبيت تعريف GPU أو اختياره عبر مشغّل Banana Native دون سؤالك. تعريف GPU رمز يعمل داخل اللعبة. فعّله فقط أثناء استخدام adb، ثم أوقفه.</string>
+    <string name="settings_adb_control_warning">أثناء تفعيله، يستطيع adb وأي تطبيق آخر على هذا الهاتف إضافة الألعاب وبدء التجهيز وتثبيت تعريف GPU أو اختياره عبر مشغّل Polar دون سؤالك. تعريف GPU رمز يعمل داخل اللعبة. فعّله فقط أثناء استخدام adb، ثم أوقفه.</string>
     <string name="home_pick_dump_folder_again">اختر مجلد التفريغ الخاص بـ %1$s مرة أخرى</string>
     <string name="err_no_game_in_folder">لا يحتوي %1$s على main.npdm (في base/exefs/ أو updates/&lt;version&gt;/exefs/ أو exefs/) ولا على ملف .nup ولا على مجلد لعبة. اختر مجلد اللعبة نفسه، أو ملف .nup الخاص بها، أو المجلد الذي يضم ألعابك.</string>
     <string name="err_nup_rename">%1$s: أعد تسميته بحيث ينتهي اسمه بـ «.nup» أو «.nsp» (بأحرف صغيرة)؛ فاللعبة والأدوات تقرأ هذا الاسم فقط.</string>
@@ -629,7 +629,7 @@
     <string name="game_no_zip_assets">%1$s: لا توجد ملفات .zip في إصداراته</string>
     <string name="game_not_installed_reason">لم يُثبَّت: %1$s</string>
     <string name="game_installed_and_picked">تم تثبيت %1$s واختياره</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">الإصدار %1$s متاح</string>
     <string name="settings_you_have_install_over">لديك %1$s. ثبّته فوقه: يبقى الحفظ والحزم والإعدادات.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · من %3$s</string>
@@ -1090,7 +1090,7 @@
     <string name="prepare_simulated">" (محاكاة)"</string>
     <string name="prepare_starting">جارٍ البدء…</string>
     <string name="prepare_name_is_ready_title">%1$s جاهزة للعب</string>
-    <string name="prepare_open_and_tap_play">افتح Banana Native واضغط «تشغيل».</string>
+    <string name="prepare_open_and_tap_play">افتح Polar واضغط «تشغيل».</string>
     <string name="prepare_waiting_name">في الانتظار: %1$s</string>
     <string name="prepare_could_not_prepare_name">تعذّر تجهيز %1$s</string>
     <string name="prepare_paused_name">متوقف مؤقتًا: %1$s</string>
@@ -1107,7 +1107,7 @@
     <string name="prepare_copying_progress">جارٍ نسخ %1$s: %2$s من %3$s GiB (%4$d %%)\n%5$s\n\nأبقِ التطبيق مفتوحًا. يُنسخ إلى مساحة التطبيق الخاصة، لذا لا يحتاج إلى إذن الوصول إلى كل الملفات.</string>
     <string name="game_turnip_slow_note">تعريفات Turnip تشغّل هذه اللعبة ببطء (أداء منخفض). تعريف Qualcomm، مثل 891.14، أو «النظام» أسرع.</string>
     <string name="game_aspect_native_laid_out">" (أصلي: الكاميرات والقوائم مخططة لـ %1$s)"</string>
-    <string name="game_hold60_text">متوقف: تهبط اللعبة إلى 30 fps عندما لا تثبت على 60، كما على الجهاز الأصلي. مفعّل: تعمل اللعبة دائمًا بوضع 60 fps ولا يحجز Banana Native الإطارات، فلا تهبط إلى 30؛ ويكون معدل الإطارات أقل انتظامًا وتعمل اللعبة أبطأ قليلًا تحت 60. فقط مع حد 60 fps</string>
+    <string name="game_hold60_text">متوقف: تهبط اللعبة إلى 30 fps عندما لا تثبت على 60، كما على الجهاز الأصلي. مفعّل: تعمل اللعبة دائمًا بوضع 60 fps ولا يحجز Polar الإطارات، فلا تهبط إلى 30؛ ويكون معدل الإطارات أقل انتظامًا وتعمل اللعبة أبطأ قليلًا تحت 60. فقط مع حد 60 fps</string>
     <string name="game_present_only_note">تجريبي لهذه اللعبة: الحد يقيّد عدد مرات عرض الصورة فقط، لا اللعبة نفسها. توقّع أخطاء (مثل أن تعمل اللعبة أبطأ أو أسرع).</string>
     <string name="prepare_save_default_earlier">" (افتراضي: حفظك من إصدار سابق، بجانب اللعبة. عند البدء التالي تنسخه اللعبة إلى مساحة التطبيق، %1$s، وتلعب منها؛ ولا يتغير هذا المجلد أبدًا)"</string>
     <string name="prepare_save_default_in_app_copied">" (افتراضي: في مساحة التطبيق؛ نُسخ من %1$s الذي يبقى كما كان)."</string>
@@ -1243,7 +1243,7 @@
     <string name="settings_the_release_sources">مصادر الإصدار</string>
     <string name="settings_is_not_a_release_version">) ليس رقم إصدار رسميًا: لا شيء للمقارنة.</string>
     <string name="settings_this_build_s_version">رقم إصدار هذا البناء (</string>
-    <string name="settings_only_the_release_app_dev">تطبيق الإصدار فقط (dev.bananative.android) يتحقق من التحديثات. أما تطبيق الاختبار فيتحقق عندما يحدد update.txt في مجلد ملفاته repo= أو url=.</string>
+    <string name="settings_only_the_release_app_dev">تطبيق الإصدار فقط (dev.polar.android) يتحقق من التحديثات. أما تطبيق الاختبار فيتحقق عندما يحدد update.txt في مجلد ملفاته repo= أو url=.</string>
     <string name="settings_no_release_source">لا يوجد مصدر إصدار</string>
     <string name="settings_did_not_answer_in_time">" لم يردّ في الوقت المناسب)"</string>
     <string name="settings_s_answer_is_too_large">: الرد كبير جدًا</string>

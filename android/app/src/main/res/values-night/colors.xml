@@ -5,9 +5,9 @@
     <color name="bn_card">#FF151B26</color>
     <color name="bn_card_stroke">#FF242D3D</color>
     <color name="bn_tint">#FF1E2736</color>
-    <color name="bn_banana">#FF3B82F6</color>          <!-- primary: blue -->
-    <color name="bn_banana_deep">#FF2563EB</color>
-    <color name="bn_on_banana">#FFFFFFFF</color>
+    <color name="bn_polar">#FF3B82F6</color>          <!-- primary: blue -->
+    <color name="bn_polar_deep">#FF2563EB</color>
+    <color name="bn_on_polar">#FFFFFFFF</color>
     <color name="bn_text">#FFF3F6FC</color>
     <color name="bn_text_2">#FF93A1B5</color>
     <color name="bn_accent">#FF60A5FA</color>

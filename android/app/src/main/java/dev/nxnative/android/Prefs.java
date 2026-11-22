@@ -630,8 +630,8 @@ final class Prefs {
     }
 
     /**
-     * Which build a log or a screenshot came from. Play app: "Banana Native 0.1 · 6a6448d" (the version up to its "-", the commit);
-     * test app: "Banana Native test · int@6a6448d" (the branch without "android-", the commit). "+dirty" follows the commit when the
+     * Which build a log or a screenshot came from. Play app: "Polar 0.1 · 6a6448d" (the version up to its "-", the commit);
+     * test app: "Polar test · int@6a6448d" (the branch without "android-", the commit). "+dirty" follows the commit when the
      * tree had changes. The play app adds " · official" when the release key signed the APK, else " · unofficial build" (Signer). The main screen shows it and it
      * is the first line of every game log ("[nxlaunch] build ...").
      */

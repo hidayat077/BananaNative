@@ -3,7 +3,7 @@
 Back to the [main page](../../.github/README.md).
 
 Unofficial and experimental, tested on one phone. Not affiliated with Nintendo, nxnative, Eden or
-[nx2android](https://github.com/shirai91/nx2android): please don't send them bug reports about this. Banana Native is
+[nx2android](https://github.com/shirai91/nx2android): please don't send them bug reports about this. Polar is
 its own codebase, ported from [nxnative](https://github.com/seedds/nxnative), and not a fork of nx2android; a few shader
 translator fixes are adapted from nx2android (MIT), credited in [NOTICE](../../android/NOTICE.md). Most of the code was
 written with an AI coding assistant (Claude) and tested by hand. Releases are only published on the project's page on
@@ -25,7 +25,7 @@ written with an AI coding assistant (Claude) and tested by hand. Releases are on
 
 ## The only official place
 
-**[git.eden-emu.dev/moceure/BananaNative](https://git.eden-emu.dev/moceure/BananaNative) is the official place for Banana Native** (the GitHub repository is not available at the moment). The
+**[git.eden-emu.dev/moceure/BananaNative](https://git.eden-emu.dev/moceure/BananaNative) is the official place for Polar** (the GitHub repository is not available at the moment). The
 project has no Discord server, subreddit, Telegram group, X / social media account or website, and nobody speaks for it
 anywhere else. Download the APK only from [Releases](https://git.eden-emu.dev/moceure/BananaNative/releases): a copy from
 anywhere else may be modified or malicious. Nobody connected to the project will ask you for money, keys, game files or

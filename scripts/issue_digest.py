@@ -4,11 +4,11 @@
     python3 scripts/issue_digest.py <issue number> [<issue number> ...] [--since COMMENT_ID] [--json]
     python3 scripts/issue_digest.py --open                          (open issues, one line each, with how many logs each has)
 
-Reads the public API only (no login, nothing is written to Forgejo). The logs are kept in $BN_ISSUES_DIR/<number>/ (default: <system temp>/bananative-issues),
+Reads the public API only (no login, nothing is written to Forgejo). The logs are kept in $POLAR_ISSUES_DIR/<number>/ (default: <system temp>/polar-issues),
 never in this repository: digests show line numbers, and the raw log there is the place to read around one. Logs attached as .log, .txt or .zip (a bug report) are
 fetched; the launcher's own .digest.txt attachments are kept beside them; other attachments (videos, pictures) are listed, not fetched.
 Each log's digest is dm/tools/log_digest.py's (scripts/log_digest.py), with its graphics section.
-Environment: BN_FORGEJO (default https://git.eden-emu.dev), BN_FORGEJO_REPO (default moceure/BananaNative), BN_ISSUES_DIR.
+Environment: POLAR_FORGEJO (default https://git.eden-emu.dev), POLAR_FORGEJO_REPO (default moceure/BananaNative), POLAR_ISSUES_DIR.
 Exit code: 0, 2 when an issue cannot be read."""
 import argparse
 import json
@@ -24,13 +24,13 @@ import log_digest  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import shader_harvest  # noqa: E402
 
-FORGEJO = os.environ.get('BN_FORGEJO', 'https://git.eden-emu.dev').rstrip('/')
-REPO = os.environ.get('BN_FORGEJO_REPO', 'moceure/BananaNative')
-OUT = Path(os.environ.get('BN_ISSUES_DIR') or Path(tempfile.gettempdir()) / 'bananative-issues')
+FORGEJO = os.environ.get('POLAR_FORGEJO', 'https://git.eden-emu.dev').rstrip('/')
+REPO = os.environ.get('POLAR_FORGEJO_REPO', 'moceure/BananaNative')
+OUT = Path(os.environ.get('POLAR_ISSUES_DIR') or Path(tempfile.gettempdir()) / 'polar-issues')
 FETCH_EXT = ('.log', '.txt', '.zip')
 MAX_BYTES = 64 << 20
 LOG_HINT = re.compile(r'^\[(nxlaunch|dm)\] ', re.M)
-UA = {'User-Agent': 'bananative-issue-digest', 'Accept': 'application/json'}
+UA = {'User-Agent': 'polar-issue-digest', 'Accept': 'application/json'}
 
 
 def get(url, raw=False):
@@ -43,7 +43,7 @@ def get(url, raw=False):
 def api(path): return get(f'{FORGEJO}/api/v1/repos/{REPO}/{path}')
 
 
-BOT_MARK = '<!-- bananative-issue-digest -->'   # dm/tools/issue_digest_comment.py's own comment: left out, it holds digests, not logs
+BOT_MARK = '<!-- polar-issue-digest -->'   # dm/tools/issue_digest_comment.py's own comment: left out, it holds digests, not logs
 
 
 def comments(n):

@@ -72,14 +72,14 @@ public final class PackZipJvmTest {
     static void roundTrip(File t) throws Exception {
         File src = pack(new File(t, "src/android-pack"), ID, "c0ffee", "a"), out = new File(t, "out"), packs = new File(t, "app/packs");
         File z = PackZip.export(src, out);
-        check(z.getName().equals("banana-pack-" + ID + "-458752.zip"), "the zip's name: " + z.getName());
+        check(z.getName().equals("polar-pack-" + ID + "-458752.zip"), "the zip's name: " + z.getName());
         check(!new File(z.getPath() + ".partial").exists(), "no .partial left");
         try (ZipFile zf = new ZipFile(z)) {
             check(zf.getEntry("pack.tsv") != null && zf.getEntry("shaders/v-c0ffee/dmsh_vk.lib") != null, "pack.tsv at the root, the library under shaders/");
             for (java.util.Enumeration<? extends ZipEntry> e = zf.entries(); e.hasMoreElements(); ) check(e.nextElement().getMethod() == ZipEntry.STORED, "every entry stored");
         }
         File z2 = PackZip.export(src, out);
-        check(z2.getName().equals("banana-pack-" + ID + "-458752-2.zip") && z.isFile(), "a second export gets a new name, the first stays");
+        check(z2.getName().equals("polar-pack-" + ID + "-458752-2.zip") && z.isFile(), "a second export gets a new name, the first stays");
         Pack p = PackZip.stage(z, packs, ID);
         check(p.dir.equals(new File(packs, ID + ".partial")) && p.titleId.equals(ID), "staged into <id>.partial");
         File target = new File(packs, ID);

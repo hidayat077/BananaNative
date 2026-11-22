@@ -12,14 +12,14 @@ if (!nxGames) throw new GradleException('nxGames: no game (gradle.properties nam
 nxGames.each { g ->
     if (!(g ==~ /[0-9A-F]{16}/)) throw new GradleException("nxGames: each game must be a title ID (16 upper-case hex digits), not $g")
 }
-// -PnxPlay=true builds a second app (dev.nxnative.android.play, "Banana Native") that installs beside the test app, so test installs leave it alone
+// -PnxPlay=true builds a second app (dev.nxnative.android.play, "Polar") that installs beside the test app, so test installs leave it alone
 def nxPlay = providers.gradleProperty('nxPlay').getOrElse('false') == 'true'
-// -PnxApp=<suffix> builds another test app, dev.nxnative.android.<suffix> ("Banana Native <suffix>", or -PnxLabel), beside the test app: one game's bring-up (-PnxApp=mkw) installs
+// -PnxApp=<suffix> builds another test app, dev.nxnative.android.<suffix> ("Polar <suffix>", or -PnxLabel), beside the test app: one game's bring-up (-PnxApp=mkw) installs
 // without replacing the test app other agents run. It is a test app (saves-test/), with its own files folder (Android/data/dev.nxnative.android.<suffix>/files: env.txt, logs)
 def nxApp = providers.gradleProperty('nxApp').getOrElse('')
 if (nxApp && !(nxApp ==~ /[a-z][a-z0-9]*/)) throw new GradleException("nxApp must be lower-case letters and digits, not $nxApp")
 if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different apps: give one of them')
-// -PnxLive=true builds the public release (dev.bananative.android, "Banana Native"): the play app's behaviour (saves/<id>, no test switches), not debuggable, signed
+// -PnxLive=true builds the public release (dev.polar.android, "Polar"): the play app's behaviour (saves/<id>, no test switches), not debuggable, signed
 // with the release key named by the environment (NX_SIGN_STORE, NX_SIGN_ALIAS, NX_SIGN_PASS; the key never lives in this repository). -PnxVersion sets its version
 def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
@@ -31,7 +31,7 @@ if (nxLive && !(signStore && signAlias && signPass && new File(signStore).isFile
 // -PnxMinSdk=31 lowers the APK's minSdk from 33 to 31 (Android 12/12L) for an experimental test build (internal android12 note); the default stays 33. Only 31..33 are accepted.
 def nxMinSdk = (providers.gradleProperty('nxMinSdk').getOrElse('33') as int)
 if (nxMinSdk < 31 || nxMinSdk > 33) throw new GradleException("nxMinSdk must be 31, 32 or 33, not $nxMinSdk")
-def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "Banana Native $nxApp" : '')
+def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "Polar $nxApp" : '')
 // The build tag the launcher shows over the game and in its main screen, and writes as the first line of each game log: branch@commit[+dirty] (no build time: the commit and the signer identify a build)
 def gitOut = { List<String> a -> try { providers.exec { commandLine(['git'] + a); ignoreExitValue = true }.standardOutput.asText.get().trim() } catch (Exception e) { '' } }
 def commit = gitOut(['rev-parse', '--short=12', 'HEAD'])
@@ -234,8 +234,8 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId nxLive ? 'dev.bananative.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.nxnative.android'
-        resValue 'string', 'app_name', nxPlay || nxLive ? 'Banana Native' : nxApp ? nxLabel : 'Banana Native test'
+        applicationId nxLive ? 'dev.polar.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.nxnative.android'
+        resValue 'string', 'app_name', nxPlay || nxLive ? 'Polar' : nxApp ? nxLabel : 'Polar test'
         minSdk nxMinSdk
         targetSdk 35
         versionCode nxVersionCode
@@ -250,7 +250,7 @@ android {
         buildConfigField 'int', 'NX_MIN_SDK', "$nxMinSdk"
         // The play app and the release behave alike (saves/<id>, the user's build tag, no test switches); every other app is a test app
         buildConfigField 'boolean', 'NX_PLAY', "${nxPlay || nxLive}"
-        // The public release (dev.bananative.android) alone checks GitHub for a newer release at start (Updater; a test app only through its update.txt)
+        // The public release (dev.polar.android) alone checks GitHub for a newer release at start (Updater; a test app only through its update.txt)
         buildConfigField 'boolean', 'NX_LIVE', "$nxLive"
         // The shader library the host loads: <pack>/shaders/v-<DMSH_VK_CHAIN>/dmsh_vk.lib (vka_shader.c); the launcher checks a pack has it before starting the game
         buildConfigField 'String', 'NX_DMSH_CHAIN', "\"${defineOf('dm/gfx/nvn/dmsh_chain.h', 'DMSH_CHAIN')}\""
@@ -381,7 +381,7 @@ tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'
     from(layout.buildDirectory.dir('outputs/apk/release')) { include '*.apk' }
     into layout.projectDirectory.dir('out')
-    rename { nxLive ? "banana-native-${nxVersion}${nxMinSdk < 33 ? '-android12' : ''}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
+    rename { nxLive ? "polar-${nxVersion}${nxMinSdk < 33 ? '-android12' : ''}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
 }
 
 // The on-device packer's native side (android/ONDEVICE.md "In the APK"; not with -PnxPackEngine=fake). android/ondevice/build.sh makes its stage on the Mac;

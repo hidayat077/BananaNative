@@ -1,10 +1,10 @@
-# Banana Native wiki
+# Polar wiki
 
-Banana Native runs Switch 2 games from your own dumps on Android phones. It emulates no hardware: the game's own ARM64 code runs on the phone's CPU, and Banana Native supplies the system services the game calls and translates its graphics to Vulkan. This wiki is for players: how to install, set up, play and fix things. It is unofficial and experimental, and not affiliated with Nintendo, nxnative or Eden.
+Polar runs Switch 2 games from your own dumps on Android phones. It emulates no hardware: the game's own ARM64 code runs on the phone's CPU, and Polar supplies the system services the game calls and translates its graphics to Vulkan. This wiki is for players: how to install, set up, play and fix things. It is unofficial and experimental, and not affiliated with Nintendo, nxnative or Eden.
 
-![Donkey Kong Bananza on Banana Native](images/donkey-kong-bananza.jpg)
+![Donkey Kong Bananza on Polar](images/donkey-kong-bananza.jpg)
 
-![Banana Native Home: a row of game tiles with the dock at the bottom and the round Add game button](images/home-launcher.jpg)
+![Polar Home: a row of game tiles with the dock at the bottom and the round Add game button](images/home-launcher.jpg)
 
 ## Start here
 

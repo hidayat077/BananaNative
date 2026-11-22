@@ -91,7 +91,7 @@
     <string name="home_allow">İzin ver</string>
     <string name="home_allow_file_access">Dosya erişimine izin ver</string>
     <string name="home_back_up_saves">Kayıtları yedekle</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">Hazırlamaya devam et</string>
     <string name="home_copy_into_the_app">Uygulamaya kopyala</string>
     <string name="home_delete">Sil</string>
@@ -191,7 +191,7 @@
     <string name="settings_theme">Tema</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">Bu başlatıcı kısayol sabitleyemiyor.</string>
     <string name="settings_this_release_has_no_notes">Bu sürümün notu yok.</string>
-    <string name="settings_to_install_the_update_allow">Güncellemeyi kurmak için Banana Native\'in uygulama kurmasına izin verin (\"Bilinmeyen uygulamaları yükle\"), sonra geri dönün.</string>
+    <string name="settings_to_install_the_update_allow">Güncellemeyi kurmak için Polar\'in uygulama kurmasına izin verin (\"Bilinmeyen uygulamaları yükle\"), sonra geri dönün.</string>
     <string name="settings_update">Güncelle</string>
     <string name="settings_updates">Güncellemeler</string>
     <string name="settings_what_s_new">Yenilikler</string>
@@ -508,7 +508,7 @@
     <string name="err_save_busy">%1$s için bir kayıt yedeği veya geri yükleme hâlâ çalışıyor: Oyna bunu bekler.</string>
     <string name="err_pack_busy">%1$s paketinin bir dışa veya içe aktarımı hâlâ çalışıyor: Oyna bunu bekler.</string>
     <string name="err_no_app_can_open">Hiçbir uygulama açamıyor: %1$s</string>
-    <string name="settings_adb_control_warning">Açıkken adb ve bu telefondaki diğer tüm uygulamalar, Banana Native\'in başlatıcısı üzerinden size sormadan oyun ekleyebilir, Hazırla\'yı başlatabilir, GPU sürücüsü kurabilir veya seçebilir. GPU sürücüsü, oyunun içinde çalışan koddur. Yalnızca adb kullanırken açın, sonra yeniden kapatın.</string>
+    <string name="settings_adb_control_warning">Açıkken adb ve bu telefondaki diğer tüm uygulamalar, Polar\'in başlatıcısı üzerinden size sormadan oyun ekleyebilir, Hazırla\'yı başlatabilir, GPU sürücüsü kurabilir veya seçebilir. GPU sürücüsü, oyunun içinde çalışan koddur. Yalnızca adb kullanırken açın, sonra yeniden kapatın.</string>
     <string name="home_pick_dump_folder_again">%1$s dökümünün klasörünü yeniden seçin</string>
     <string name="err_no_game_in_folder">%1$s içinde main.npdm (base/exefs/, updates/&lt;version&gt;/exefs/ veya exefs/), .nup dosyası ve oyun klasörü yok. Oyunun kendi klasörünü, .nup dosyasını veya oyunlarınızı barındıran klasörü seçin.</string>
     <string name="err_nup_rename">%1$s: adı \".nup\" veya \".nsp\" ile (küçük harf) bitecek şekilde yeniden adlandırın; oyun ve araçlar yalnızca bu adı okur.</string>
@@ -617,7 +617,7 @@
     <string name="game_no_zip_assets">%1$s: sürümlerinde .zip eki yok</string>
     <string name="game_not_installed_reason">Kurulmadı: %1$s</string>
     <string name="game_installed_and_picked">Kuruldu ve seçildi: %1$s</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">Sürüm %1$s hazır</string>
     <string name="settings_you_have_install_over">Sizde şu var: %1$s. Üzerine kurun: kayıtlar, paketler ve ayarlar korunur.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · kaynak: %3$s</string>
@@ -1062,7 +1062,7 @@
     <string name="prepare_simulated">" (simüle)"</string>
     <string name="prepare_starting">Başlıyor…</string>
     <string name="prepare_name_is_ready_title">%1$s oynamaya hazır</string>
-    <string name="prepare_open_and_tap_play">Banana Native\'i açın ve Oyna\'ya dokunun.</string>
+    <string name="prepare_open_and_tap_play">Polar\'i açın ve Oyna\'ya dokunun.</string>
     <string name="prepare_waiting_name">Bekliyor: %1$s</string>
     <string name="prepare_could_not_prepare_name">Hazırlanamadı: %1$s</string>
     <string name="prepare_paused_name">Duraklatıldı: %1$s</string>
@@ -1079,7 +1079,7 @@
     <string name="prepare_copying_progress">%1$s kopyalanıyor: %2$s / %3$s GiB (%4$d %%)\n%5$s\n\nUygulamayı açık tutun. Kopya uygulamanın kendi depolamasına gider, bu yüzden Tüm dosyalara erişim gerekmez.</string>
     <string name="game_turnip_slow_note">Turnip sürücüleri bu oyunu yavaş çalıştırır (düşük performans). 891.14 gibi bir Qualcomm sürücüsü veya Sistem daha hızlıdır.</string>
     <string name="game_aspect_native_laid_out">" (yerel: kameralar ve menüler %1$s için düzenlenmiş)"</string>
-    <string name="game_hold60_text">Kapalı: oyun 60\'ı tutamadığında konsoldaki gibi 30 fps\'e düşer. Açık: oyun her zaman 60 fps modunda çalışır ve Banana Native kare tutmaz, bu yüzden hiç 30\'a düşmez; kare hızı daha az düzgün olur ve oyun 60\'ın altındayken biraz yavaş çalışır. Yalnızca 60 fps sınırıyla</string>
+    <string name="game_hold60_text">Kapalı: oyun 60\'ı tutamadığında konsoldaki gibi 30 fps\'e düşer. Açık: oyun her zaman 60 fps modunda çalışır ve Polar kare tutmaz, bu yüzden hiç 30\'a düşmez; kare hızı daha az düzgün olur ve oyun 60\'ın altındayken biraz yavaş çalışır. Yalnızca 60 fps sınırıyla</string>
     <string name="game_present_only_note">Bu oyun için deneysel: sınır yalnızca görüntünün ne sıklıkla gösterildiğini sınırlar, oyunun kendisini değil. Hatalar bekleyin (örneğin oyunun daha yavaş veya daha hızlı çalışması).</string>
     <string name="prepare_save_default_earlier">" (varsayılan: oyunun yanındaki, önceki bir sürümden kaydınız. Oyunun bir sonraki başlatması onu uygulamanın depolamasına, %1$s, kopyalar ve oradan oynar; bu klasör asla değişmez)"</string>
     <string name="prepare_save_default_in_app_copied">" (varsayılan: uygulamanın depolamasında; %1$s konumundan kopyalandı, o olduğu gibi kalır)."</string>
@@ -1215,7 +1215,7 @@
     <string name="settings_the_release_sources">sürüm kaynakları</string>
     <string name="settings_is_not_a_release_version">) bir sürüm numarası değil: karşılaştırılacak bir şey yok.</string>
     <string name="settings_this_build_s_version">Bu sürümün sürüm numarası (</string>
-    <string name="settings_only_the_release_app_dev">Yalnızca sürüm uygulaması (dev.bananative.android) güncellemeleri denetler. Bir test uygulaması, dosyalar klasöründeki update.txt repo= veya url= belirttiğinde denetler.</string>
+    <string name="settings_only_the_release_app_dev">Yalnızca sürüm uygulaması (dev.polar.android) güncellemeleri denetler. Bir test uygulaması, dosyalar klasöründeki update.txt repo= veya url= belirttiğinde denetler.</string>
     <string name="settings_no_release_source">sürüm kaynağı yok</string>
     <string name="settings_did_not_answer_in_time">" zamanında yanıt vermedi)"</string>
     <string name="settings_s_answer_is_too_large">\'in yanıtı çok büyük</string>

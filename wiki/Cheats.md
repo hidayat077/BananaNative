@@ -1,6 +1,6 @@
 # Cheats
 
-Banana Native can apply cheat files in the Atmosphère format to a running game. Cheats are **experimental** and **off by default**. Two games ship with a cheat file of their own: Ocarina of Time (`0400486024DEC000`) and Fire Emblem: Fortune's Weave (`04007EF01F8AE000`). Both files were written from reading the game's code and had **not been tried in play** at the time of writing; each cheat lists what is known.
+Polar can apply cheat files in the Atmosphère format to a running game. Cheats are **experimental** and **off by default**. Two games ship with a cheat file of their own: Ocarina of Time (`0400486024DEC000`) and Fire Emblem: Fortune's Weave (`04007EF01F8AE000`). Both files were written from reading the game's code and had **not been tried in play** at the time of writing; each cheat lists what is known.
 
 <!-- TODO screenshot: game page, Game tab, Cheats switch and Cheat files row -->
 

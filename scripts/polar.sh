@@ -1,37 +1,37 @@
 #!/bin/sh
-# Banana Native's packer on Linux (Fedora KDE and others): launch this file for the window (scripts/pack_gui.py),
+# Polar's packer on Linux (Fedora KDE and others): launch this file for the window (scripts/pack_gui.py),
 # or run it in a terminal. It uses an environment that already works (Python 3.14 with Tk, Capstone 5, lz4, zbic,
 # zstd, spirv-val, the .NET 10 runtime), or makes one from android/environment.yml on first use: it downloads
 # micromamba (github.com/mamba-org/micromamba-releases) when none is on PATH, about 400 MB of packages from
-# conda-forge into <folder>/bananative/ (asked once; the drive with your dumps is a good place). The environment's
-# path is remembered in .bananative-env in the repository (not committed). Usage:
-#   scripts/bananative.sh                        the window
-#   scripts/bananative.sh pack <game> [...]      scripts/pack_android.py <game folder | .nup file> [its options]
-#   scripts/bananative.sh check                  check the environment's tools
-#   scripts/bananative.sh setup [<folder>]       make (or remake) the environment in <folder>/bananative/
-#   scripts/bananative.sh python [...]           the environment's Python, set up as for the packer
-# Environment: BANANATIVE_ENV names the environment to use (a venv or a conda environment made from android/environment.yml).
+# conda-forge into <folder>/polar/ (asked once; the drive with your dumps is a good place). The environment's
+# path is remembered in .polar-env in the repository (not committed). Usage:
+#   scripts/polar.sh                        the window
+#   scripts/polar.sh pack <game> [...]      scripts/pack_android.py <game folder | .nup file> [its options]
+#   scripts/polar.sh check                  check the environment's tools
+#   scripts/polar.sh setup [<folder>]       make (or remake) the environment in <folder>/polar/
+#   scripts/polar.sh python [...]           the environment's Python, set up as for the packer
+# Environment: POLAR_ENV names the environment to use (a venv or a conda environment made from android/environment.yml).
 set -e
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-CONF="$REPO/.bananative-env"
+CONF="$REPO/.polar-env"
 YML="$REPO/android/environment.yml"
 
 say() { printf '%s\n' "$*" >&2; }
 die() { say "[RED] $*"; exit 1; }
 
-usable() {   # an environment whose Python runs and whose tools pass bananative_env.py's check
-	[ -n "$1" ] && [ -x "$1/bin/python" ] && "$1/bin/python" "$REPO/scripts/bananative_env.py" --quiet >/dev/null 2>&1
+usable() {   # an environment whose Python runs and whose tools pass polar_env.py's check
+	[ -n "$1" ] && [ -x "$1/bin/python" ] && "$1/bin/python" "$REPO/scripts/polar_env.py" --quiet >/dev/null 2>&1
 }
 
 remember() { printf '%s\n' "$1" > "$CONF"; }
 
-find_env() {   # BANANATIVE_ENV, the remembered one, an active conda/venv, then a micromamba / conda environment named bananative*
-	for e in "${BANANATIVE_ENV:-}" "$(cat "$CONF" 2>/dev/null || true)" "${CONDA_PREFIX:-}" "${VIRTUAL_ENV:-}"; do
+find_env() {   # POLAR_ENV, the remembered one, an active conda/venv, then a micromamba / conda environment named polar*
+	for e in "${POLAR_ENV:-}" "$(cat "$CONF" 2>/dev/null || true)" "${CONDA_PREFIX:-}" "${VIRTUAL_ENV:-}"; do
 		if usable "$e"; then printf '%s\n' "$e"; return 0; fi
 	done
 	for mm in micromamba mamba conda; do
 		command -v $mm >/dev/null 2>&1 || continue
-		for e in $($mm env list 2>/dev/null | awk '{print $NF}' | grep -i '/bananative[^/]*$' || true); do
+		for e in $($mm env list 2>/dev/null | awk '{print $NF}' | grep -i '/polar[^/]*$' || true); do
 			if usable "$e"; then printf '%s\n' "$e"; return 0; fi
 		done
 	done
@@ -54,21 +54,21 @@ get_micromamba() {   # → the path of a micromamba: one on PATH, one downloaded
 	printf '%s\n' "$base/micromamba"
 }
 
-setup() {   # make the environment in <folder>/bananative/env (asked when no folder is given)
+setup() {   # make the environment in <folder>/polar/env (asked when no folder is given)
 	folder=$1
 	if [ -z "$folder" ]; then
 		def=$(dirname "$REPO")
 		say "The packer needs its tools (Python 3.14, spirv-val, the .NET 10 runtime: about 400 MB)."
-		say "They go into <folder>/bananative/. The drive with your game dumps is a good place."
+		say "They go into <folder>/polar/. The drive with your game dumps is a good place."
 		printf 'Folder [%s]: ' "$def" >&2; read -r folder || true
 		folder=${folder:-$def}
 	fi
 	folder=$(cd "$folder" 2>/dev/null && pwd) || die "no folder $1"
-	base="$folder/bananative"; mkdir -p "$base"
+	base="$folder/polar"; mkdir -p "$base"
 	mm=$(get_micromamba "$base")
 	say "making the environment $base/env from android/environment.yml (a few minutes)"
 	MAMBA_ROOT_PREFIX="$base/mamba" PIP_CACHE_DIR="$base/mamba/pip" "$mm" create -y -p "$base/env" -f "$YML" || die "micromamba create failed"
-	usable "$base/env" || { "$base/env/bin/python" "$REPO/scripts/bananative_env.py"; die "the new environment's tools do not all work (above)"; }
+	usable "$base/env" || { "$base/env/bin/python" "$REPO/scripts/polar_env.py"; die "the new environment's tools do not all work (above)"; }
 	remember "$base/env"; say "ready: $base/env"
 	ENV_DIR="$base/env"
 }
@@ -81,10 +81,10 @@ if ENV_DIR=$(find_env); then
 else
 	old=$(cat "$CONF" 2>/dev/null || true)
 	if [ -n "$old" ] && [ -x "$old/bin/python" ]; then
-		say "the environment $old lacks a tool:"; "$old/bin/python" "$REPO/scripts/bananative_env.py" || true
+		say "the environment $old lacks a tool:"; "$old/bin/python" "$REPO/scripts/polar_env.py" || true
 	fi
 	case $old in
-	*/bananative/env) say "remaking it (its packages are cached)"; setup "$(dirname "$(dirname "$old")")" ;;   # one this script made
+	*/polar/env) say "remaking it (its packages are cached)"; setup "$(dirname "$(dirname "$old")")" ;;   # one this script made
 	*)
 		setup "" ;;
 	esac
@@ -95,7 +95,7 @@ PATH="$ENV_DIR/bin:$PATH"; export PATH
 case $cmd in
 	gui) exec "$PY" "$REPO/scripts/pack_gui.py" "$@" ;;
 	pack) exec "$PY" "$REPO/scripts/pack_android.py" "$@" ;;
-	check) exec "$PY" "$REPO/scripts/bananative_env.py" ;;
+	check) exec "$PY" "$REPO/scripts/polar_env.py" ;;
 	python) exec "$PY" "$@" ;;
 	*) die "unknown command $cmd (gui, pack, check, setup, python)" ;;
 esac

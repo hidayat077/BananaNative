@@ -71,7 +71,7 @@ public final class ReadinessActivity extends Activity {
         // The verdict: a mark, one line, the counts; then Run again and the report. Each check below shows its details on a tap (failures and warnings open)
         LinearLayout top = Ui.add(content, Ui.card(this), 16);
         LinearLayout vr = Ui.row(this);
-        mark = Ui.text(this, "…", 26, R.color.bn_on_banana, 900);
+        mark = Ui.text(this, "…", 26, R.color.bn_on_polar, 900);
         mark.setGravity(android.view.Gravity.CENTER);
         mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         vr.addView(mark, new LinearLayout.LayoutParams(Ui.dp(this, 52), Ui.dp(this, 52)));
@@ -218,11 +218,11 @@ public final class ReadinessActivity extends Activity {
         }
     }
 
-    /** The verdict's mark: ✓ on leaf green, ! on banana, ✕ on red-orange; … while checking */
+    /** The verdict's mark: ✓ on leaf green, ! on polar, ✕ on red-orange; … while checking */
     private void setMark(int level) {
         mark.setText(level == 0 ? "✓" : level == 1 ? "!" : level == 2 ? "✕" : "…");
-        int fill = level == 0 ? R.color.bn_leaf : level == 2 ? R.color.bn_danger : R.color.bn_banana;
-        mark.setTextColor(Ui.col(this, level == 0 ? R.color.bn_on_leaf : level == 2 ? R.color.bn_card : R.color.bn_on_banana));
+        int fill = level == 0 ? R.color.bn_leaf : level == 2 ? R.color.bn_danger : R.color.bn_polar;
+        mark.setTextColor(Ui.col(this, level == 0 ? R.color.bn_on_leaf : level == 2 ? R.color.bn_card : R.color.bn_on_polar));
         mark.setBackground(Ui.round(Ui.col(this, fill), Ui.dp(this, 999), 0, 0));
     }
 

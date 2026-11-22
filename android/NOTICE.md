@@ -1,6 +1,6 @@
-# Banana Native: license notice for the Android build
+# Polar: license notice for the Android build
 
-Banana Native (the Android launcher in `android/app` and the host it builds, `libnxhost.so`) is based on [nxnative](https://github.com/seedds/nxnative) by seedds,
+Polar (the Android launcher in `android/app` and the host it builds, `libnxhost.so`) is based on [nxnative](https://github.com/seedds/nxnative) by seedds,
 which is MIT-licensed ([LICENSE](../LICENSE)).
 
 **The Android build that includes LSFG is GPL-3.0-or-later.** By default the host links Lossless Scaling frame generation, a C port of
@@ -54,7 +54,7 @@ The on-device packer's Python home (`assets/pack/python.zip`) carries, besides t
 [Capstone](https://www.capstone-engine.org/) 5.0.7 (BSD-3-Clause) and [python-lz4](https://github.com/python-lz4/python-lz4) 4.4.5 (BSD-3-Clause, with LZ4's BSD-2-Clause
 sources). Since 0.2.2 the APK also carries `lib/arm64-v8a/libzbicdec.so`, which decodes the ZBIC segments of system 22.0.0+ modules for the packer's
 `dm/tools/nso.py`: [Zstandard](https://github.com/facebook/zstd) 1.5.7's decoder by Meta (BSD; zstd is BSD or GPL-2.0, the BSD terms are taken), unmodified, with
-an independent reader of ZBIC's entropy tables and the ZBIC frame magic (MIT, Banana Native), written from a description of the format with no code from any other
+an independent reader of ZBIC's entropy tables and the ZBIC frame magic (MIT, Polar), written from a description of the format with no code from any other
 ZBIC implementation ([dm/third_party/zstd-zbic](../dm/third_party/zstd-zbic/README.md), zstd's licence in its `LICENSE`). Thanks to
 [Atmosphère](https://github.com/Atmosphere-NX/Atmosphere) and Yannik Marchand's [zbic](https://github.com/kinnay/zbic) for discovering and documenting the format.
 On a PC or Mac the packer may instead use the zbic package from PyPI (GPL-2.0), which the user installs (`android/environment.yml` lists it); it is not in the APK.

@@ -32,7 +32,7 @@ KEY = '0123456789abcdef0123456789abcdef'
 def start(extra_env=()):
     """the launcher's and the host's start-up lines, as the sources print them (GameActivity.start, nxlaunch.c, main.c, plat_android.c, hle_svc.c, hle_nvn.c)"""
     return [
-        '[nxlaunch] build Banana Native test · int@abc1234 · signer 0011223344556677',
+        '[nxlaunch] build Polar test · int@abc1234 · signer 0011223344556677',
         '[nxlaunch] env DM_ROMFS=/storage/emulated/0/Switch2/Game/updates/65536/romfs',
         f'[nxlaunch] env DM_SAVE={APP}/saves/{TID}',
         f'[nxlaunch] env HOME={APP}',

@@ -12,11 +12,11 @@ Five steps from nothing to playing. Each step links to the page with the details
 
 1. **Get the app.** Download the newest APK from the [releases page](https://git.eden-emu.dev/moceure/BananaNative/releases) (only from there) and install it. Android may ask you to allow installs from your browser: that is normal. More: [Installation](Installation#get-the-app).
 2. **Copy your game to the phone.** Put the game's folder (or its `.nup` file) anywhere you like, for example in a folder called `Switch2`. More: [Installation](Installation#what-you-need) shows how the folder should look.
-3. **Allow file access.** Open **Banana Native**. If Home shows **Allow file access**, tap **Allow** and switch on **All files access** for the app, then go back. More: [Installation](Installation#allow-file-access).
+3. **Allow file access.** Open **Polar**. If Home shows **Allow file access**, tap **Allow** and switch on **All files access** for the app, then go back. More: [Installation](Installation#allow-file-access).
 4. **Add and prepare the game.** Tap **Add game**, pick your folder or `.nup` file, then tap **Prepare** when the app asks. This takes from 20 minutes to over an hour, once per game. Keep the phone on the charger. A Windows PC or a Mac does it faster ([PC or Mac](First-Start-and-Prepare#preparing-on-a-pc-or-a-mac)). More: [First start and Prepare](First-Start-and-Prepare).
 5. **Play.** When the game's card says it is ready, tap **Play**. More: [Playing](Playing).
 
-![Banana Native Home: a row of game tiles with the dock at the bottom and the round Add game button](images/home-launcher.jpg)
+![Polar Home: a row of game tiles with the dock at the bottom and the round Add game button](images/home-launcher.jpg)
 
 ## If something looks wrong
 

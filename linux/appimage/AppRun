@@ -1,35 +1,35 @@
 #!/bin/sh
-# BananaNative for aarch64 Linux: starts the host built for a prepared pack's game.
-#   BananaNative.AppImage <pack folder> [game file (.nup)]
-#   BananaNative.AppImage                   (no argument, from a desktop) a game picker
-#   BananaNative.AppImage --games           the prepared packs found (title ID, name, pack folder, host here or not)
-#   BananaNative.AppImage --install         menu entries: the picker and one per game found (also listed by Steam's "Add a Non-Steam Game")
-#   BananaNative.AppImage --steam [--close-steam] [title ID ...]   Steam shortcuts for Game Mode, launch options filled in (Steam must be closed)
-#   BananaNative.AppImage --list            title IDs this AppImage has a host for
-#   BananaNative.AppImage --selftest [ID]   the Vulkan self-test of one host (no game needed)
-# Settings: ~/.config/banananative/settings.env (every game) and <title ID>.env (one game), lines KEY=VALUE
-# (docs/env_switches.tsv). Saves, caches and logs: ~/.local/share/banananative/<title ID>/.
+# Polar for aarch64 Linux: starts the host built for a prepared pack's game.
+#   Polar.AppImage <pack folder> [game file (.nup)]
+#   Polar.AppImage                   (no argument, from a desktop) a game picker
+#   Polar.AppImage --games           the prepared packs found (title ID, name, pack folder, host here or not)
+#   Polar.AppImage --install         menu entries: the picker and one per game found (also listed by Steam's "Add a Non-Steam Game")
+#   Polar.AppImage --steam [--close-steam] [title ID ...]   Steam shortcuts for Game Mode, launch options filled in (Steam must be closed)
+#   Polar.AppImage --list            title IDs this AppImage has a host for
+#   Polar.AppImage --selftest [ID]   the Vulkan self-test of one host (no game needed)
+# Settings: ~/.config/polar/settings.env (every game) and <title ID>.env (one game), lines KEY=VALUE
+# (docs/env_switches.tsv). Saves, caches and logs: ~/.local/share/polar/<title ID>/.
 APPDIR=${APPDIR:-$(cd "$(dirname "$0")" && pwd)}
 BIN="$APPDIR/usr/bin"
 ids() { for f in "$BIN"/nxhost_*; do [ -x "$f" ] && echo "${f##*/nxhost_}"; done; }
 # launcher.log: one block per start (what was asked, the display environment, why it stopped), since Steam shows none of it
-LLOG="${XDG_DATA_HOME:-$HOME/.local/share}/banananative/launcher.log"; mkdir -p "${LLOG%/*}" 2>/dev/null
+LLOG="${XDG_DATA_HOME:-$HOME/.local/share}/polar/launcher.log"; mkdir -p "${LLOG%/*}" 2>/dev/null
 [ -f "$LLOG" ] && [ "$(wc -c < "$LLOG")" -gt 200000 ] && tail -c 50000 "$LLOG" > "$LLOG.1" && mv "$LLOG.1" "$LLOG"
 note() { echo "$(date '+%F %T') $*" >> "$LLOG" 2>/dev/null; }
 note "start: $* | DISPLAY=$DISPLAY WAYLAND_DISPLAY=$WAYLAND_DISPLAY XAUTHORITY=$XAUTHORITY SDL_VIDEODRIVER=$SDL_VIDEODRIVER XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP APPIMAGE=$APPIMAGE"
 # a dialog when there is no terminal to read the message (a double-click, a menu entry), and zenity is there
 GUI=0; { [ ! -t 2 ] || [ "${NX_GUI:-0}" = 1 ]; } && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; } && command -v zenity >/dev/null && GUI=1
-die() { echo "BananaNative: $*" >&2; note "stopped: $*"; [ $GUI = 1 ] && zenity --error --title=BananaNative --width=480 --text="$*" 2>/dev/null; exit 2; }
+die() { echo "Polar: $*" >&2; note "stopped: $*"; [ $GUI = 1 ] && zenity --error --title=Polar --width=480 --text="$*" 2>/dev/null; exit 2; }
 usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # the system's SDL3 when it has one; else the copy in here (X11 only)
 if ! { ldconfig -p 2>/dev/null | grep -q 'libSDL3\.so\.0'; }; then export LD_LIBRARY_PATH="$APPDIR/usr/lib/sdl3${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; fi
 
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/banananative"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/polar"
 SELF=${APPIMAGE:-$0}
 write_settings() { mkdir -p "$CONF"
   settings_text() { cat <<'EOT'
-# BananaNative settings for every game.
+# Polar settings for every game.
 # How to use: each setting is one line NAME=VALUE. A line starting with '#' is switched off (the default applies).
 # To change a setting, remove the '#' at the start of its line and edit the value. Save, then start the game again.
 # Or use Settings (every game) and Options (one game) in the game window: they edit this file and <title ID>.env.
@@ -121,8 +121,8 @@ find_nup() {
   done; }
 tilde() { case "$1" in "$HOME"/*) echo "~${1#$HOME}";; *) echo "$1";; esac; }
 # Prepare a game: its pack made here from its .nup, with the packer the Android app runs (scripts/pack_android.py, through linux/tools/linux-pack.sh) at the
-# source this AppImage was built from (usr/share/banananative/source: commit and repository). The tools go to ~/.local/share/banananative/packer once per AppImage
-# version (the source, ~130 MB) and once for all (Python packages, the .NET 10 runtime); the pack to ~/Games/BananaNative/packs/<ID>, replacing an older one
+# source this AppImage was built from (usr/share/polar/source: commit and repository). The tools go to ~/.local/share/polar/packer once per AppImage
+# version (the source, ~130 MB) and once for all (Python packages, the .NET 10 runtime); the pack to ~/Games/Polar/packs/<ID>, replacing an older one
 # when the new one is done. The device is kept awake meanwhile (kde-inhibit or systemd-inhibit); no game may run (both would not fit in memory)
 prepare() {
   Z() { zenity --title="Prepare a game" --width=520 "$@" 2>/dev/null; }
@@ -134,10 +134,10 @@ prepare() {
   [ -x "$BIN/nxhost_$i" ] || { Z --error --text="This AppImage cannot run $i ($(basename "$f")).\nIt runs: $(ids | tr '\n' ' ')\nA newer AppImage with that game is needed first."; return; }
   command -v spirv-val >/dev/null || { Z --error --text="spirv-val (SPIRV-Tools) is missing: install the spirv-tools package, then try again."; return; }
   command -v python3 >/dev/null && command -v curl >/dev/null || { Z --error --text="python3 and curl are needed."; return; }
-  SRCF="$APPDIR/usr/share/banananative/source"
+  SRCF="$APPDIR/usr/share/polar/source"
   [ -f "$SRCF" ] || { Z --error --text="This AppImage does not say which source it was built from: it cannot prepare games."; return; }
   c=$(awk '$1=="commit"{print $2}' "$SRCF"); u=$(awk '$1=="url"{print $2}' "$SRCF")
-  PE="${XDG_DATA_HOME:-$HOME/.local/share}/banananative/packer"; SRC="$PE/src-$(echo "$c" | cut -c1-12)"
+  PE="${XDG_DATA_HOME:-$HOME/.local/share}/polar/packer"; SRC="$PE/src-$(echo "$c" | cut -c1-12)"
   if [ ! -x "$SRC/linux/tools/linux-pack.sh" ] || [ ! -x "$PE/venv/bin/python" ] || [ ! -x "$PE/dotnet/dotnet" ]; then
     Z --question --ok-label=Download --text="Preparing needs the pack tools of this AppImage's version, once:\n- the source (about 130 MB)\n- Python packages and the .NET 10 runtime (first time only)\nThis takes about 10 minutes. Download them now?" || return
     mkdir -p "$PE"
@@ -152,8 +152,8 @@ prepare() {
     [ -x "$SRC/linux/tools/linux-pack.sh" ] && [ -x "$PE/venv/bin/python" ] && [ -x "$PE/dotnet/dotnet" ] ||
       { Z --error --text="Getting the pack tools failed. Details: $PE/setup.log"; return; }
   fi
-  OUT="$HOME/Games/BananaNative/packs/$i"; LOGF="$PE/prepare-$i.log"; mkdir -p "$(dirname "$OUT")"; rm -rf "$OUT.new" "$LOGF.rc"
-  inh=; if command -v kde-inhibit >/dev/null; then inh="kde-inhibit --power --screenSaver"; elif command -v systemd-inhibit >/dev/null; then inh="systemd-inhibit --what=idle:sleep --why=BananaNative"; fi
+  OUT="$HOME/Games/Polar/packs/$i"; LOGF="$PE/prepare-$i.log"; mkdir -p "$(dirname "$OUT")"; rm -rf "$OUT.new" "$LOGF.rc"
+  inh=; if command -v kde-inhibit >/dev/null; then inh="kde-inhibit --power --screenSaver"; elif command -v systemd-inhibit >/dev/null; then inh="systemd-inhibit --what=idle:sleep --why=Polar"; fi
   setsid sh -c "NX_PACK_ENV='$PE' $inh '$SRC/linux/tools/linux-pack.sh' \"\$0\" -j 4 -J 6 --made-by 'AppImage $c' --out '$OUT.new' >'$LOGF' 2>&1; echo \$? >'$LOGF.rc'" "$f" &
   pk=$!
   # the packer's progress as zenity's: "progress N M translate" lines are the shaders (most of the time), the rest are steps
@@ -184,19 +184,19 @@ pick() {
                                  "+add" "Add a pack folder from somewhere else..." "" "" "" \
                                  "+steam" "Add the prepared games to Steam (for Game Mode)..." "" "" "" \
                                  "+settings" "Settings (opens settings.env)" "" "" ""; } |
-          zenity --list --title=BananaNative --width=1500 --height=440 \
+          zenity --list --title=Polar --width=1500 --height=440 \
                  --text="Choose a game. A game needs a pack (prepared once, from its game file) and its game file (.nup).\nPacks are looked for in ~/Games and on SD cards; game files beside the pack or in ~/Games." \
                  --column=key --column=Game --column="Title ID" --column="Pack" --column="Game file" --hide-column=1 --print-column=1 2>/dev/null) || exit 0
     case "$sel" in
       "") continue ;;
       +add) d=$(zenity --file-selection --directory --title="The pack folder (the one with pack.tsv)" 2>/dev/null) || continue
             if [ -f "$d/pack.tsv" ]; then mkdir -p "$CONF"; echo "$d" >> "$CONF/games.list"
-            else zenity --error --title=BananaNative --width=480 --text="$d has no pack.tsv: choose the folder of a pack prepared by BananaNative on Android." 2>/dev/null; fi ;;
+            else zenity --error --title=Polar --width=480 --text="$d has no pack.tsv: choose the folder of a pack prepared by Polar on Android." 2>/dev/null; fi ;;
       +prepare) prepare ;;
       +steam) out=$(steam_entries 2>&1); rc=$?
-              if [ $rc = 3 ] && zenity --title=BananaNative --width=520 --question --text="Steam has to close for a moment to add the games (it starts again by itself). Close Steam now?" 2>/dev/null; then
+              if [ $rc = 3 ] && zenity --title=Polar --width=520 --question --text="Steam has to close for a moment to add the games (it starts again by itself). Close Steam now?" 2>/dev/null; then
                 out=$(steam_entries --close-steam 2>&1); rc=$?; fi
-              if [ $rc = 0 ]; then zenity --title=BananaNative --width=520 --info --text="In Steam now (Game Mode: Library, Non-Steam):\n\n$out" 2>/dev/null; elif [ $rc != 3 ]; then zenity --title=BananaNative --width=520 --error --text="$out" 2>/dev/null; fi ;;
+              if [ $rc = 0 ]; then zenity --title=Polar --width=520 --info --text="In Steam now (Game Mode: Library, Non-Steam):\n\n$out" 2>/dev/null; elif [ $rc != 3 ]; then zenity --title=Polar --width=520 --error --text="$out" 2>/dev/null; fi ;;
       +settings) write_settings
                  xdg-open "$CONF/settings.env" >/dev/null 2>&1 & ;;
       *) PICKED=$sel; return ;;
@@ -206,17 +206,17 @@ pick() {
 games_newest() {
   games_one | while IFS="$(printf '\t')" read -r i n d h; do printf '%s\t%s\t%s\t%s\t%s\n' "$(stat -c %Y "$d/pack.tsv" 2>/dev/null || echo 0)" "$i" "$n" "$d" "$h"; done |
   sort -t "$(printf '\t')" -k1,1nr | awk -F'\t' '!seen[$2]++' | cut -f2-; }
-# --steam [--close-steam] [title ID ...]: a Steam shortcut ("<name> (BananaNative)", launch options filled in) for each game with a pack and a host
+# --steam [--close-steam] [title ID ...]: a Steam shortcut ("<name> (Polar)", launch options filled in) for each game with a pack and a host
 # here (all of them, or the title IDs given), for Game Mode. steam_shortcut.py writes Steam's shortcuts.vdf; Steam must be closed (--close-steam
 # closes it and starts it again). Exit codes: steam_shortcut.py's, and 5 when there is no prepared game
 steam_entries() {
   close=; [ "$1" = --close-steam ] && { close=1; shift; }
   want=" $* "; all=; [ -z "$*" ] && all=1
   I="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"; mkdir -p "$I"
-  [ -f "$APPDIR/banananative.png" ] && cp "$APPDIR/banananative.png" "$I/banananative.png"
+  [ -f "$APPDIR/polar.png" ] && cp "$APPDIR/polar.png" "$I/polar.png"
   list=$(games_newest | awk -F'\t' '$4=="yes"{print $1 "\t" $2 "=" $3}')
   set --; [ -n "$close" ] && set -- --close-steam
-  set -- "$@" --exe "$SELF" --icon "$I/banananative.png"; n=0
+  set -- "$@" --exe "$SELF" --icon "$I/polar.png"; n=0
   old=$IFS; IFS='
 '
   for l in $list; do
@@ -226,27 +226,27 @@ steam_entries() {
   done
   IFS=$old
   [ $n -gt 0 ] || { echo "No prepared game to add (a game needs its pack and a host in this AppImage: --games lists them)."; return 5; }
-  python3 "$APPDIR/usr/share/banananative/steam_shortcut.py" "$@"; }
-# --install: ~/.local/share/applications/banananative.desktop (the picker) and banananative-<ID>.desktop for each game with a host
+  python3 "$APPDIR/usr/share/polar/steam_shortcut.py" "$@"; }
+# --install: ~/.local/share/applications/polar.desktop (the picker) and polar-<ID>.desktop for each game with a host
 install_entries() {
   A="${XDG_DATA_HOME:-$HOME/.local/share}/applications"; I="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
-  mkdir -p "$A" "$I"; [ -f "$APPDIR/banananative.png" ] && cp "$APPDIR/banananative.png" "$I/banananative.png"
-  rm -f "$A"/banananative-*.desktop
+  mkdir -p "$A" "$I"; [ -f "$APPDIR/polar.png" ] && cp "$APPDIR/polar.png" "$I/polar.png"
+  rm -f "$A"/polar-*.desktop
   # (PATH: Steam starts non-Steam games with none, and the AppImage runtime needs fusermount from it)
   q=$(printf %s "$SELF" | sed 's/[\\"`$]/\\&/g')
-  printf '[Desktop Entry]\nType=Application\nName=BananaNative\nComment=Choose a prepared game pack and play it\nExec=env PATH=/usr/local/bin:/usr/bin:/bin "%s"\nIcon=banananative\nCategories=Game;\nTerminal=false\n' "$q" > "$A/banananative.desktop"
-  echo "$A/banananative.desktop (the picker)"
+  printf '[Desktop Entry]\nType=Application\nName=Polar\nComment=Choose a prepared game pack and play it\nExec=env PATH=/usr/local/bin:/usr/bin:/bin "%s"\nIcon=polar\nCategories=Game;\nTerminal=false\n' "$q" > "$A/polar.desktop"
+  echo "$A/polar.desktop (the picker)"
   # one entry per game: its newest pack when there are several (of any version: the entry's file name is the title ID's)
   games_newest | while IFS="$(printf '\t')" read -r i n d h; do [ "$h" = yes ] || continue
     dq=$(printf %s "$d" | sed 's/[\\"`$]/\\&/g')
-    printf '[Desktop Entry]\nType=Application\nName=%s (BananaNative)\nComment=%s, prepared pack in %s\nExec=env PATH=/usr/local/bin:/usr/bin:/bin "%s" "%s"\nIcon=banananative\nCategories=Game;\nTerminal=false\n' "$n" "$i" "$d" "$q" "$dq" > "$A/banananative-$i.desktop"
-    echo "$A/banananative-$i.desktop ($n)"; done
+    printf '[Desktop Entry]\nType=Application\nName=%s (Polar)\nComment=%s, prepared pack in %s\nExec=env PATH=/usr/local/bin:/usr/bin:/bin "%s" "%s"\nIcon=polar\nCategories=Game;\nTerminal=false\n' "$n" "$i" "$d" "$q" "$dq" > "$A/polar-$i.desktop"
+    echo "$A/polar-$i.desktop ($n)"; done
   command -v update-desktop-database >/dev/null && update-desktop-database "$A" 2>/dev/null; return 0; }
 
 case "$1" in
   "") # the game window (launcher.py, PyQt6) where the system has PyQt6; else the zenity picker below
       if [ $GUI = 1 ] && [ "${NX_ZENITY:-0}" != 1 ] && python3 -c 'import PyQt6.QtWidgets' 2>/dev/null; then
-        NX_APPDIR="$APPDIR" NX_SELF="$SELF" NX_CONF="$CONF" exec python3 "$APPDIR/usr/share/banananative/launcher.py"
+        NX_APPDIR="$APPDIR" NX_SELF="$SELF" NX_CONF="$CONF" exec python3 "$APPDIR/usr/share/polar/launcher.py"
       fi
       if [ $GUI = 1 ]; then pick; set -- "$PICKED"; else usage; echo "Hosts in this AppImage: $(ids | tr '\n' ' ')"; exit 0; fi ;;
   -h|--help) usage; echo "Hosts in this AppImage: $(ids | tr '\n' ' ')"; exit 0 ;;
@@ -259,7 +259,7 @@ case "$1" in
 esac
 
 PACK=$(cd "$1" 2>/dev/null && pwd) || die "pack folder not found: $1"
-[ -f "$PACK/pack.tsv" ] || die "$PACK has no pack.tsv: not a prepared pack (prepare the game with BananaNative on Android and copy the pack here)"
+[ -f "$PACK/pack.tsv" ] || die "$PACK has no pack.tsv: not a prepared pack (prepare the game with Polar on Android and copy the pack here)"
 ID=$(awk -F'\t' '$1=="title_id"{print $2; exit}' "$PACK/pack.tsv")
 NAME=$(awk -F'\t' '$1=="name"{print $2; exit}' "$PACK/pack.tsv")
 [ -n "$ID" ] || die "$PACK/pack.tsv names no title_id"
@@ -276,7 +276,7 @@ if [ -z "$NUP" ] && [ $GUI = 1 ]; then
 fi
 [ -z "$NUP" ] || [ -f "$NUP" ] || die "game file not found: $NUP"
 
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}/banananative/$ID"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/polar/$ID"
 mkdir -p "$CONF" "$DATA/save" "$DATA/temp" "$DATA/root" "$DATA/aoc" "$DATA/home" "$DATA/tmp" "$DATA/logs" || die "cannot create $DATA"
 write_settings
 # settings: defaults, then settings.env, then <ID>.env; a variable already in the environment wins over all three
@@ -316,7 +316,7 @@ if [ "${NX_FRAMEGEN:-0}" = 1 ]; then
   else note "frame generation asked for, but no Lossless.dll found (NX_FRAMEGEN_DLL)"; fi
 fi
 if [ "${NX_OVERLAY:-0}" = 1 ]; then export MANGOHUD=1; setdef MANGOHUD_CONFIG "${NX_OVERLAY_CONFIG:-fps,frametime,cpu_temp,gpu_temp,ram,position=top-right}"; fi
-[ -d "$APPDIR/usr/share/banananative/fonts" ] && setdef DM_FONT_DIR "$APPDIR/usr/share/banananative/fonts"   # the shared-font stand-ins (Noto Sans, button icons)
+[ -d "$APPDIR/usr/share/polar/fonts" ] && setdef DM_FONT_DIR "$APPDIR/usr/share/polar/fonts"   # the shared-font stand-ins (Noto Sans, button icons)
 if [ "${NX_GAMESCOPE_WSI:-0}" != 1 ]; then unset ENABLE_GAMESCOPE_WSI; export DISABLE_GAMESCOPE_WSI=1; fi
 
 [ -n "$NUP" ] && export DM_ROMFS="$NUP"
@@ -334,15 +334,15 @@ cd "$PACK" || die "cannot enter $PACK"
 # on a 12 GB device). The lock is held by this shell for the host's whole run and goes with it
 exec 9>"$DATA/.running"
 if command -v flock >/dev/null && ! flock -n 9; then
-  [ $GUI = 1 ] && { zenity --info --timeout=6 --title=BananaNative --width=420 --text="$NAME is already running." 2>/dev/null &}   # (closes by itself: it may be behind the game)
-  note "not started: $ID is already running"; echo "BananaNative: $NAME is already running" >&2
+  [ $GUI = 1 ] && { zenity --info --timeout=6 --title=Polar --width=420 --text="$NAME is already running." 2>/dev/null &}   # (closes by itself: it may be behind the game)
+  note "not started: $ID is already running"; echo "Polar: $NAME is already running" >&2
   exit 0
 fi
 # While the game runs, the schedutil CPU governor (NX_GOVERNOR=performance: that one; 0: none), when the helper is installed (linux/tools/install-governor-helper.sh)
-GOV=/usr/local/sbin/banananative-governor; gov=0
+GOV=/usr/local/sbin/polar-governor; gov=0
 case "${NX_GOVERNOR:-schedutil}" in performance) g=performance;; 0|off|no) g=;; *) g=schedutil;; esac
 if [ -n "$g" ] && [ -x "$GOV" ] && sudo -n "$GOV" on $g 2>/dev/null; then gov=1; note "CPU governor: $g while the game runs"; fi
-echo "BananaNative: $NAME ($ID), log $LOG"; note "host $ID, log $LOG"
+echo "Polar: $NAME ($ID), log $LOG"; note "host $ID, log $LOG"
 if [ -t 1 ] && [ "${NX_LOG_TTY:-0}" = 1 ]; then HOME="$DATA/home" "$HOST" "$PACK" & else HOME="$DATA/home" "$HOST" "$PACK" > "$LOG" 2>&1 & fi
 child=$!
 # Memory trace and guard. With no swap, Ocarina of Time's 3D world needed more memory than the Odin 2 had (2026-11-16): the device thrashed with no frame
@@ -389,7 +389,7 @@ note "host ended: exit code $rc"
 if [ -f "$DATA/.memguard" ]; then
   a=$(cat "$DATA/.memguard"); note "memory guard stopped $ID: $a MiB available (NX_MEM_GUARD_MB $MG); trace $MEM"
   msg="$NAME was closed: the device ran out of memory ($a MiB left) and the game had stopped drawing. Left running, the device would have stayed frozen. Progress since the last save is lost."
-  [ $GUI = 1 ] && { zenity --warning --title=BananaNative --width=480 --text="$msg" 2>/dev/null || notify-send -a BananaNative "BananaNative" "$msg" 2>/dev/null; }
-  echo "BananaNative: $msg" >&2
+  [ $GUI = 1 ] && { zenity --warning --title=Polar --width=480 --text="$msg" 2>/dev/null || notify-send -a Polar "Polar" "$msg" 2>/dev/null; }
+  echo "Polar: $msg" >&2
 fi
 exit $rc

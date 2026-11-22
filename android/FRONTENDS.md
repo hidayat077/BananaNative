@@ -1,9 +1,9 @@
 # Emulator frontends
 
-Banana Native starts a game for an emulator frontend (ES-DE, Daijisho, Beacon, Pegasus, or anything that runs `am start`). The frontend lists your `.nup` files ([NUP.md](NUP.md)) and sends the one you pick to the app. The app's component for this is:
+Polar starts a game for an emulator frontend (ES-DE, Daijisho, Beacon, Pegasus, or anything that runs `am start`). The frontend lists your `.nup` files ([NUP.md](NUP.md)) and sends the one you pick to the app. The app's component for this is:
 
 ```
-dev.bananative.android/dev.bananative.android.Launch
+dev.polar.android/dev.polar.android.Launch
 ```
 
 `Launch` is an alias of `FrontendLaunch`, and its name follows the application ID, so the test app's is `dev.nxnative.android/dev.nxnative.android.Launch`. The alias, and `Open` for file managers, are the only exported parts of the app that start games.
@@ -33,9 +33,9 @@ Home's game menu (tap or long-press its tile) has **Add to home screen**: the la
 
 ## In the frontend's own Switch list
 
-A frontend needs no change of its own: each one lets you add an emulator by its component. Until a frontend ships Banana Native in its bundled emulator list, you add it once, by hand:
+A frontend needs no change of its own: each one lets you add an emulator by its component. Until a frontend ships Polar in its bundled emulator list, you add it once, by hand:
 
-- ES-DE: a system in `custom_systems/es_systems.xml` with the same `<name>` as a bundled one (`switch`) replaces that system. Copy the bundled `switch` entry from ES-DE's own `es_systems.xml`, add `.nup` to its `<extension>` and add the Banana Native `<command>` lines below. Then Banana Native is one of the alternative emulators of the Switch system.
+- ES-DE: a system in `custom_systems/es_systems.xml` with the same `<name>` as a bundled one (`switch`) replaces that system. Copy the bundled `switch` entry from ES-DE's own `es_systems.xml`, add `.nup` to its `<extension>` and add the Polar `<command>` lines below. Then Polar is one of the alternative emulators of the Switch system.
 - Daijisho and Beacon: add a player to the existing Switch platform with the `am start` arguments below, and add `nup` to its extensions.
 
 ## ES-DE
@@ -45,9 +45,9 @@ ES-DE reads custom emulators from `ES-DE/custom_systems/es_find_rules.xml` and c
 ```xml
 <?xml version="1.0"?>
 <ruleList>
-    <emulator name="BANANA-NATIVE">
+    <emulator name="POLAR">
         <rule type="androidpackage">
-            <entry>dev.bananative.android/dev.bananative.android.Launch</entry>
+            <entry>dev.polar.android/dev.polar.android.Launch</entry>
         </rule>
     </emulator>
 </ruleList>
@@ -59,12 +59,12 @@ Then add a system that lists `.nup` files and uses it. Change `path` to your ROM
 <?xml version="1.0"?>
 <systemList>
     <system>
-        <name>banananative</name>
-        <fullname>Banana Native</fullname>
-        <path>%ROMPATH%/banananative</path>
+        <name>polar</name>
+        <fullname>Polar</fullname>
+        <path>%ROMPATH%/polar</path>
         <extension>.nup .NUP</extension>
-        <command label="Banana Native">%EMULATOR_BANANA-NATIVE% %ACTION%=android.intent.action.VIEW %DATA%=%ROMSAF%</command>
-        <command label="Banana Native (path)">%EMULATOR_BANANA-NATIVE% %EXTRA_game%=%ROM%</command>
+        <command label="Polar">%EMULATOR_POLAR% %ACTION%=android.intent.action.VIEW %DATA%=%ROMSAF%</command>
+        <command label="Polar (path)">%EMULATOR_POLAR% %EXTRA_game%=%ROM%</command>
         <platform>switch</platform>
         <theme>switch</theme>
     </system>
@@ -75,15 +75,15 @@ Then add a system that lists `.nup` files and uses it. Change `path` to your ROM
 
 ## Daijisho
 
-Daijisho has no screen for adding a player by hand. Its platforms are JSON files: the bundled ones come from its repository (`TapiocaFox/Daijishou`, `platforms/NintendoSwitch.json`), and it imports a platform file you give it. A Switch platform with Banana Native in its player list is that file with these entries added at the top of `playerList` and `revisionNumber` raised by one:
+Daijisho has no screen for adding a player by hand. Its platforms are JSON files: the bundled ones come from its repository (`TapiocaFox/Daijishou`, `platforms/NintendoSwitch.json`), and it imports a platform file you give it. A Switch platform with Polar in its player list is that file with these entries added at the top of `playerList` and `revisionNumber` raised by one:
 
 ```json
 {
-  "name": "switch - Banana Native",
-  "uniqueId": "switch.dev.bananative.android",
+  "name": "switch - Polar",
+  "uniqueId": "switch.dev.polar.android",
   "description": "Supported extensions: nup.",
   "acceptedFilenameRegex": "^(.*)\\.(?:nup)$",
-  "amStartArguments": "-n dev.bananative.android/dev.bananative.android.Launch\n -e game {file.path}",
+  "amStartArguments": "-n dev.polar.android/dev.polar.android.Launch\n -e game {file.path}",
   "killPackageProcesses": false,
   "killPackageProcessesWarning": false,
   "extra": ""
@@ -97,13 +97,13 @@ A second entry with `-a android.intent.action.VIEW\n -d {file.uri}` is the URI f
 Any frontend that runs `am start` works with the same arguments. In Pegasus's `metadata.pegasus.txt`:
 
 ```
-launch: am start -n dev.bananative.android/dev.bananative.android.Launch -e game "{file.path}"
+launch: am start -n dev.polar.android/dev.polar.android.Launch -e game "{file.path}"
 ```
 
 From a computer, with the phone on adb:
 
 ```bash
-adb shell am start -n dev.bananative.android/dev.bananative.android.Launch -e game /storage/emulated/0/ROMs/game.nup
+adb shell am start -n dev.polar.android/dev.polar.android.Launch -e game /storage/emulated/0/ROMs/game.nup
 ```
 
 ## Opening a .nup from a file manager
@@ -122,4 +122,4 @@ On Android 15, an explicit intent reaches an exported component that has intent 
 
 ## Status
 
-- 2026-11-04, Honor phone, test app: over adb, the extra `game` (with `/sdcard`), `ACTION_VIEW` of a `file://` URI and of a SAF document URI, and the extra `title_id` each start the game straight away; a missing file shows its dialog. From Daijisho, on its Switch platform imported with the Banana Native players, both players (`-e game {file.path}` and `-a VIEW -d {file.uri}`) start the game. ES-DE, Beacon and Pegasus are not tried.
+- 2026-11-04, Honor phone, test app: over adb, the extra `game` (with `/sdcard`), `ACTION_VIEW` of a `file://` URI and of a SAF document URI, and the extra `title_id` each start the game straight away; a missing file shows its dialog. From Daijisho, on its Switch platform imported with the Polar players, both players (`-e game {file.path}` and `-a VIEW -d {file.uri}`) start the game. ES-DE, Beacon and Pegasus are not tried.

@@ -1,4 +1,4 @@
-## Banana Native v0.1.3
+## Polar v0.1.3
 
 Install over v0.1.2: saves, packs and settings are kept.
 
@@ -9,5 +9,5 @@ Install over v0.1.2: saves, packs and settings are kept.
 Needs Android 13+, a Snapdragon (Adreno) phone with 12 GB of RAM or more, and your own dump. Experimental: back up your saves. Download only from this page. No games, keys or shaders are included. GPL-3.0-or-later.
 
 
-SHA-256 (`banana-native-v0.1.3.apk`): `410a01c004110180fba08c81ab721bbff9203d5fee94cb06d090fb113ef05790`
+SHA-256 (`polar-v0.1.3.apk`): `410a01c004110180fba08c81ab721bbff9203d5fee94cb06d090fb113ef05790`
 

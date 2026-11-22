@@ -187,7 +187,7 @@ class BuildWorker(QtCore.QThread):
 class ShaderRebuildWindow(QtWidgets.QMainWindow):
     def __init__(self, initial: str | None = None):
         super().__init__()
-        self.setWindowTitle('Banana Native — Shader Rebuild Studio')
+        self.setWindowTitle('Polar — Shader Rebuild Studio')
         self.resize(980, 760)
         self.ctx: sfr.GameContext | None = None
         self.scan: sfr.LibraryScan | None = None
@@ -653,7 +653,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
           code { background: rgba(128,128,128,0.18); padding: 1px 4px; border-radius: 3px; }
           .tip { border-left: 3px solid #3a86ff; padding: 6px 10px; background: rgba(58,134,255,0.10); margin: 10px 0; }
         </style>
-        <h1>Banana Native — Shader Rebuild Studio Guide</h1>
+        <h1>Polar — Shader Rebuild Studio Guide</h1>
         <p>This tool supports both <b>first-time full shader builds</b> for new games and <b>fast incremental rebuilds</b> after shader/translator fixes, without re-translating unaffected shaders from scratch.</p>
 
         <h2>1. Game / Work Folder</h2>

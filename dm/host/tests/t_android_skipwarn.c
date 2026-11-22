@@ -52,7 +52,7 @@ int main(void) {
     win(&l, 9000, 1000, 0, 0, 0, 5);
     CHECK(win(&l, 50, 50, 0, 0, 0, 5) == 0 && l.s.strikes == 0, "a window with little work resets");
 
-    // shaders missing from the pack (VKS_MISSING, BananaNative #356) count, and are named first when they are the largest cause: the launcher's notice then names no driver
+    // shaders missing from the pack (VKS_MISSING, Polar #356) count, and are named first when they are the largest cause: the launcher's notice then names no driver
     run m = {0}; m.f = 1500; vkskip_step(&m.s, m.f, 0, m.dev, 0, 5);
     m.f += VKS_WINDOW; m.work += 1000; m.dev[VKS_MISSING] += 9000; m.dev[VKS_SHADER] += 10; vkskip_step(&m.s, m.f, m.work, m.dev, m.other, 5);
     m.f += VKS_WINDOW; m.work += 1000; m.dev[VKS_MISSING] += 9000; m.dev[VKS_SHADER] += 10;

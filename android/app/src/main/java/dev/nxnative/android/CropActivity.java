@@ -213,7 +213,7 @@ public final class CropActivity extends Activity {
             dim.setColor(0xB3000000);
             edge.setStyle(Paint.Style.STROKE);
             edge.setStrokeWidth(Ui.dp(a, 2));
-            edge.setColor(Ui.col(a, R.color.bn_banana));
+            edge.setColor(Ui.col(a, R.color.bn_polar));
             pinch = new ScaleGestureDetector(a, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 @Override public boolean onScale(ScaleGestureDetector d) {
                     math.zoomBy(d.getScaleFactor(), d.getFocusX() - frame.centerX(), d.getFocusY() - frame.centerY());

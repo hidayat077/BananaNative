@@ -50,7 +50,7 @@ class Body(unittest.TestCase):
         with self.render('== log digest\n-- verdict\n'):
             b = C.body(82, {'logs': [log('attached in issue: A.log')]})
         self.assertTrue(b.startswith(I.BOT_MARK))
-        self.assertIn('- **alice** · [A.log](https://example.test/i/1#c2) · Banana Native 0.3.14 · Xiaomi 23049PCD8G (Android 17), Adreno 725 · '
+        self.assertIn('- **alice** · [A.log](https://example.test/i/1#c2) · Polar 0.3.14 · Xiaomi 23049PCD8G (Android 17), Adreno 725 · '
                       'Qualcomm system driver · The Legend of Zelda: Ocarina of Time (`0400486024DEC000`)\n'
                       '  **Driver lost** (in game, about 30 fps before it): The GPU stopped.', b)
         self.assertIn('**What you can try**\n\n- Try another GPU driver.', b)

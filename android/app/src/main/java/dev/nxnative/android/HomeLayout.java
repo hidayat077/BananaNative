@@ -109,8 +109,8 @@ final class HomeLayout {
             });
             tile.setClipToOutline(true);
             ImageView play = new ImageView(a);
-            play.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_banana));
-            play.setBackground(Ui.round(Ui.col(a, R.color.bn_banana), Ui.dp(a, 999), 0, 0));
+            play.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_polar));
+            play.setBackground(Ui.round(Ui.col(a, R.color.bn_polar), Ui.dp(a, 999), 0, 0));
             play.setPadding(Ui.dp(a, 8), Ui.dp(a, 8), Ui.dp(a, 6), Ui.dp(a, 8));
             play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
             play.setClickable(true);

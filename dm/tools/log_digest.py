@@ -639,7 +639,7 @@ JAVA_CRASH_RX = re.compile(r'\[RED\] crash: uncaught exception on thread (.+?), 
 
 # logcat
 LC_RX = re.compile(r'^(?:\d\d-\d\d \d\d:\d\d:\d\d\.\d+\s+)?(?:(\d+)\s+(\d+)\s+([VDIWEFA])\s+([^:]*?)\s*: |([VDIWEFA])/([^(]*?)\(\s*(\d+)\): )(.*)$')
-OURS = re.compile(r':game\b|dev\.nxnative\.android|dev\.bananative\.android|\[nxlaunch\]|\[dm\]')
+OURS = re.compile(r':game\b|dev\.nxnative\.android|dev\.polar\.android|\[nxlaunch\]|\[dm\]')
 
 
 class Digest:

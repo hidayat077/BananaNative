@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Hokkaido contributors (the distribution pass: pavelgajdo/Hokkaido #569 EmitMeshEmulationDistribution)
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native (this port)
+// SPDX-FileCopyrightText: Copyright 2026 Polar (this port)
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The mesh emulation's distribution pass (vka_memu.c): one workgroup per record of the batch; for a task draw, the tasks' mesh workgroup counts become exclusive
 // offsets (a workgroup scan, 64 tasks a step; Hokkaido summed them in one invocation), then its mesh output is placed. Not game code

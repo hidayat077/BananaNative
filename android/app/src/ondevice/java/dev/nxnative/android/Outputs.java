@@ -15,7 +15,7 @@ import java.nio.file.StandardCopyOption;
  * Why not a temporary folder renamed into place: on Android 11 and later a folder renamed under /storage/emulated goes through MediaProvider
  * (renameForFuse, renameDirectoryUncheckedForFuse), which moves the database row of every indexed file in it in one transaction and answers EPERM when
  * one of them does not move exactly one row; a file's rename falls back for an app with all files access. A user's device refused the split's
- * split.tmp -> split with EPERM (BananaNative issue #1; which row did not move is not known). Only files are renamed here (the marker), as job.json is.
+ * split.tmp -> split with EPERM (Polar issue #1; which row did not move is not known). Only files are renamed here (the marker), as job.json is.
  */
 final class Outputs {
     static final String MARKER = "complete";

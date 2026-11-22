@@ -121,7 +121,7 @@ final class UsersUi {
     /** The ring that marks the chosen picture (and the one the focus is on) */
     private static Drawable ring(Activity a) {
         StateListDrawable s = new StateListDrawable();
-        Drawable on = Ui.round(0, Ui.dp(a, 999), Ui.col(a, R.color.bn_banana_deep), Ui.dp(a, 4));
+        Drawable on = Ui.round(0, Ui.dp(a, 999), Ui.col(a, R.color.bn_polar_deep), Ui.dp(a, 4));
         s.addState(new int[] {android.R.attr.state_selected}, on);
         s.addState(new int[] {android.R.attr.state_focused}, on);
         s.addState(new int[] {android.R.attr.state_pressed}, Ui.round(0x22000000, Ui.dp(a, 999), 0, 0));
@@ -187,9 +187,9 @@ final class UsersUi {
             f.setOnClickListener(v -> { Users.setDefault(a, u.uid); a.userChanged(); a.rebuildUsers(); });
             holder.addView(f, new FrameLayout.LayoutParams(Ui.dp(a, 96), Ui.dp(a, 96)));
             ImageView pen = new ImageView(a);   // the pencil: this player's page
-            pen.setImageDrawable(Ui.icon(a, R.drawable.ic_edit, R.color.bn_on_banana));
+            pen.setImageDrawable(Ui.icon(a, R.drawable.ic_edit, R.color.bn_on_polar));
             pen.setPadding(Ui.dp(a, 7), Ui.dp(a, 7), Ui.dp(a, 7), Ui.dp(a, 7));
-            pen.setBackground(Ui.round(Ui.col(a, R.color.bn_banana), Ui.dp(a, 999), Ui.col(a, R.color.bn_card), Ui.dp(a, 2)));
+            pen.setBackground(Ui.round(Ui.col(a, R.color.bn_polar), Ui.dp(a, 999), Ui.col(a, R.color.bn_card), Ui.dp(a, 2)));
             pen.setContentDescription(Tx.s(R.string.settings_edit_player));
             pen.setTooltipText(Tx.s(R.string.settings_edit_player));
             pen.setFocusable(true);

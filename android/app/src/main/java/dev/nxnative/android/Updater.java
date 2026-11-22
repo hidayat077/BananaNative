@@ -52,7 +52,7 @@ import java.util.Locale;
 import javax.net.ssl.HttpsURLConnection;
 
 /**
- * The in-app updater (release app only, dev.bananative.android). Once per app start (a new process: not on a resume or a rotation), Home asks every release source
+ * The in-app updater (release app only, dev.polar.android). Once per app start (a new process: not on a resume or a rotation), Home asks every release source
  * at once, with short timeouts (UpdateCheck.SOURCES: GitHub's releases API for moceure/BananaNative, the list, not /releases/latest: every release is a
  * pre-release, which /latest skips; then the same releases on git.eden-emu.dev's Forgejo API), each list through a URL with a fresh cache-busting query
  * parameter and Cache-Control: no-cache, so no shared cache in front of a host can answer with an old list (releases(Source)). A source that fails is left out (a log line); when a release in
@@ -139,7 +139,7 @@ final class Updater {
         URL u = new URL(url);
         if (!"https".equals(u.getProtocol())) throw new Failure("not an https link: " + url);
         HttpsURLConnection c = (HttpsURLConnection) u.openConnection();
-        c.setRequestProperty("User-Agent", "BananaNative-updater");
+        c.setRequestProperty("User-Agent", "Polar-updater");
         c.setRequestProperty("Accept", accept);
         if (fresh) {
             c.setRequestProperty("Cache-Control", "no-cache");
@@ -381,7 +381,7 @@ final class Updater {
         if (size > MAX_APK) throw new Failure(Tx.s(R.string.settings_the_apk_is_larger_than));
         File d = dir(c);
         if (!d.isDirectory() && !d.mkdirs()) throw new Failure("cannot make " + d);
-        String name = "banana-native-" + u.tag().replaceAll("[^A-Za-z0-9._-]", "_");
+        String name = "polar-" + u.tag().replaceAll("[^A-Za-z0-9._-]", "_");
         File part = new File(d, name + ".part"), apk = new File(d, name + ".apk");
         part.delete(); apk.delete();
         MessageDigest md;

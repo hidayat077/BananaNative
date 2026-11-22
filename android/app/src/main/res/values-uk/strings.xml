@@ -103,7 +103,7 @@
     <string name="home_allow">Дозволити</string>
     <string name="home_allow_file_access">Надати доступ до файлів</string>
     <string name="home_back_up_saves">Створити резервну копію збережень</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">Продовжити підготовку</string>
     <string name="home_copy_into_the_app">Скопіювати в додаток</string>
     <string name="home_delete">Видалити</string>
@@ -202,7 +202,7 @@
     <string name="settings_theme">Тема</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">Цей лаунчер не підтримує закріплення ярликів.</string>
     <string name="settings_this_release_has_no_notes">Цей реліз не має приміток.</string>
-    <string name="settings_to_install_the_update_allow">Щоб встановити оновлення, дозвольте Banana Native встановлювати додатки («Встановлення невідомих додатків»), а потім поверніться.</string>
+    <string name="settings_to_install_the_update_allow">Щоб встановити оновлення, дозвольте Polar встановлювати додатки («Встановлення невідомих додатків»), а потім поверніться.</string>
     <string name="settings_update">Оновити</string>
     <string name="settings_updates">Оновлення</string>
     <string name="settings_what_s_new">Що нового</string>
@@ -538,7 +538,7 @@
     <string name="err_no_app_can_open">Жоден додаток не може відкрити %1$s</string>
 
     <!-- placeholders (MainActivity dialogs) -->
-    <string name="settings_adb_control_warning">Поки цей параметр увімкнено, adb і будь-який інший додаток на цьому телефоні можуть додавати ігри, запускати підготовку та встановлювати чи обирати драйвер GPU через лаунчер Banana Native без вашого підтвердження. Драйвер GPU — це код, що виконується всередині гри. Вмикайте цю опцію лише на час роботи з adb, а потім вимикайте знову.</string>
+    <string name="settings_adb_control_warning">Поки цей параметр увімкнено, adb і будь-який інший додаток на цьому телефоні можуть додавати ігри, запускати підготовку та встановлювати чи обирати драйвер GPU через лаунчер Polar без вашого підтвердження. Драйвер GPU — це код, що виконується всередині гри. Вмикайте цю опцію лише на час роботи з adb, а потім вимикайте знову.</string>
     <string name="home_pick_dump_folder_again">Знову оберіть папку дампа для %1$s</string>
     <string name="err_no_game_in_folder">%1$s не містить main.npdm (base/exefs/, updates/&lt;version&gt;/exefs/ або exefs/), файлу .nup чи папки гри всередині. Оберіть власну папку гри, її файл .nup або папку, у якій зберігаються ваші ігри.</string>
     <string name="err_nup_rename">%1$s: перейменуйте файл так, щоб його назва закінчувалася на ".nup" або ".nsp" (малими літерами); гра та інструменти читають лише таку назву.</string>
@@ -665,7 +665,7 @@
     <string name="game_installed_and_picked">Встановлено та обрано %1$s</string>
 
     <!-- placeholders (update, release page, Ui, controller mapping) -->
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">Доступна версія %1$s</string>
     <string name="settings_you_have_install_over">У вас встановлено %1$s. Встановіть поверх: збереження, паки та налаштування залишаться.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · джерело: %3$s</string>
@@ -1133,7 +1133,7 @@
     <string name="prepare_simulated">" (симуляція)"</string>
     <string name="prepare_starting">Запуск…</string>
     <string name="prepare_name_is_ready_title">%1$s готова до гри</string>
-    <string name="prepare_open_and_tap_play">Відкрийте Banana Native та натисніть «Грати».</string>
+    <string name="prepare_open_and_tap_play">Відкрийте Polar та натисніть «Грати».</string>
     <string name="prepare_waiting_name">Очікування: %1$s</string>
     <string name="prepare_could_not_prepare_name">Не вдалося підготувати %1$s</string>
     <string name="prepare_paused_name">На паузі: %1$s</string>
@@ -1152,7 +1152,7 @@
     <string name="prepare_copying_progress">Копіювання %1$s: %2$s із %3$s ГіБ (%4$d %%)\n%5$s\n\nНе закривайте додаток. Копія зберігається у власному сховищі додатка, тому доступ до всіх файлів не потрібен.</string>
     <string name="game_turnip_slow_note">На драйверах Turnip ця гра працює повільно (низька продуктивність). Драйвер Qualcomm, наприклад 891.14, або системний працюють швидше.</string>
     <string name="game_aspect_native_laid_out">" (нативне: камери та меню зверстано під %1$s)"</string>
-    <string name="game_hold60_text">Вимкнено: гра знижує частоту до 30 fps, коли не може втримати 60, як на консолі. Увімкнено: гра завжди працює в режимі 60 fps, а Banana Native не затримує кадри, тому частота ніколи не падає до 30; плавність менш рівномірна, а гра трохи сповільнюється, коли FPS нижчий за 60. Працює лише з обмеженням 60 fps</string>
+    <string name="game_hold60_text">Вимкнено: гра знижує частоту до 30 fps, коли не може втримати 60, як на консолі. Увімкнено: гра завжди працює в режимі 60 fps, а Polar не затримує кадри, тому частота ніколи не падає до 30; плавність менш рівномірна, а гра трохи сповільнюється, коли FPS нижчий за 60. Працює лише з обмеженням 60 fps</string>
     <string name="game_present_only_note">Експериментально для цієї гри: обмеження лімітує лише частоту виведення зображення на екран, а не саму гру. Можливі баги (наприклад, сповільнення або прискорення гри).</string>
 
     <!-- second sweep: folders, packs, mapping, controls, profile -->
@@ -1292,7 +1292,7 @@
     <string name="settings_the_release_sources">джерела релізів</string>
     <string name="settings_is_not_a_release_version">) не є версією релізу: немає з чим порівняти.</string>
     <string name="settings_this_build_s_version">Версія цієї збірки (</string>
-    <string name="settings_only_the_release_app_dev">Лише релізна версія додатка (dev.bananative.android) перевіряє оновлення. Тестова збірка перевіряє їх, якщо у файлі update.txt у її папці files вказано repo= або url=.</string>
+    <string name="settings_only_the_release_app_dev">Лише релізна версія додатка (dev.polar.android) перевіряє оновлення. Тестова збірка перевіряє їх, якщо у файлі update.txt у її папці files вказано repo= або url=.</string>
     <string name="settings_no_release_source">немає джерела релізів</string>
     <string name="settings_did_not_answer_in_time">" не відповів вчасно)"</string>
     <string name="settings_s_answer_is_too_large"> повернув занадто велику відповідь</string>

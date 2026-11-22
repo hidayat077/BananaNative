@@ -38,7 +38,7 @@ class Unsized(unittest.TestCase):
         self.assertEqual(unsized(d), (BODY, ''))
 
     def test_lz4_frame_without_the_frame_module(self):
-        # the phone's Python has lz4.block only (BananaNative #356: Kirby's add-on keeps its shaders in such frames): the reader must not need lz4.frame
+        # the phone's Python has lz4.block only (Polar #356: Kirby's add-on keeps its shaders in such frames): the reader must not need lz4.frame
         import lz4.frame
         d = struct.pack('<I', len(BODY)) + lz4.frame.compress(BODY)
         from unittest import mock

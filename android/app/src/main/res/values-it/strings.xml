@@ -91,7 +91,7 @@
     <string name="home_allow">Consenti</string>
     <string name="home_allow_file_access">Consenti l\'accesso ai file</string>
     <string name="home_back_up_saves">Esegui backup dei salvataggi</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">Continua la preparazione</string>
     <string name="home_copy_into_the_app">Copia nell\'app</string>
     <string name="home_delete">Elimina</string>
@@ -191,7 +191,7 @@
     <string name="settings_theme">Tema</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">Questo launcher non può fissare collegamenti.</string>
     <string name="settings_this_release_has_no_notes">Questa versione non ha note.</string>
-    <string name="settings_to_install_the_update_allow">Per installare l\'aggiornamento, consenti a Banana Native di installare app («Installa app sconosciute»), poi torna qui.</string>
+    <string name="settings_to_install_the_update_allow">Per installare l\'aggiornamento, consenti a Polar di installare app («Installa app sconosciute»), poi torna qui.</string>
     <string name="settings_update">Aggiornamento</string>
     <string name="settings_updates">Aggiornamenti</string>
     <string name="settings_what_s_new">Novità</string>
@@ -510,7 +510,7 @@
     <string name="err_save_busy">Un backup o un ripristino del salvataggio di %1$s è ancora in corso: «Gioca» lo aspetta.</string>
     <string name="err_pack_busy">Un\'esportazione o un\'importazione del pacchetto di %1$s è ancora in corso: «Gioca» la aspetta.</string>
     <string name="err_no_app_can_open">Nessuna app può aprire %1$s</string>
-    <string name="settings_adb_control_warning">Finché è attivo, adb e qualsiasi altra app su questo telefono possono aggiungere giochi, avviare Prepara e installare o scegliere un driver GPU tramite il launcher di Banana Native, senza chiederti nulla. Un driver GPU è codice che viene eseguito dentro il gioco. Attivalo solo mentre usi adb, poi disattivalo di nuovo.</string>
+    <string name="settings_adb_control_warning">Finché è attivo, adb e qualsiasi altra app su questo telefono possono aggiungere giochi, avviare Prepara e installare o scegliere un driver GPU tramite il launcher di Polar, senza chiederti nulla. Un driver GPU è codice che viene eseguito dentro il gioco. Attivalo solo mentre usi adb, poi disattivalo di nuovo.</string>
     <string name="home_pick_dump_folder_again">Scegli di nuovo la cartella di dump di %1$s</string>
     <string name="err_no_game_in_folder">In %1$s non ci sono main.npdm (base/exefs/, updates/&lt;version&gt;/exefs/ o exefs/), né file .nup, né cartella di gioco. Scegli la cartella del gioco stesso, il suo file .nup o la cartella che contiene i tuoi giochi.</string>
     <string name="err_nup_rename">%1$s: rinominalo in modo che il nome termini con \".nup\" o \".nsp\" (minuscolo); il gioco e gli strumenti leggono solo quel nome.</string>
@@ -621,7 +621,7 @@
     <string name="game_no_zip_assets">%1$s: nessun asset .zip nelle sue release</string>
     <string name="game_not_installed_reason">Non installato: %1$s</string>
     <string name="game_installed_and_picked">%1$s installato e scelto</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">La versione %1$s è disponibile</string>
     <string name="settings_you_have_install_over">Hai %1$s. Installa sopra: salvataggi, pacchetti e impostazioni vengono mantenuti.</string>
     <string name="settings_apk_size_from">%1$s · %2$s · da %3$s</string>
@@ -1070,7 +1070,7 @@
     <string name="prepare_simulated">" (simulato)"</string>
     <string name="prepare_starting">Avvio…</string>
     <string name="prepare_name_is_ready_title">%1$s è pronto per giocare</string>
-    <string name="prepare_open_and_tap_play">Apri Banana Native e tocca Gioca.</string>
+    <string name="prepare_open_and_tap_play">Apri Polar e tocca Gioca.</string>
     <string name="prepare_waiting_name">In attesa: %1$s</string>
     <string name="prepare_could_not_prepare_name">Impossibile preparare %1$s</string>
     <string name="prepare_paused_name">In pausa: %1$s</string>
@@ -1087,7 +1087,7 @@
     <string name="prepare_copying_progress">Copia di %1$s: %2$s di %3$s GiB (%4$d %%)\n%5$s\n\nTieni aperta l\'app. La copia va nell\'archiviazione propria dell\'app, quindi non richiede l\'accesso a tutti i file.</string>
     <string name="game_turnip_slow_note">I driver Turnip eseguono questo gioco lentamente (prestazioni basse). Un driver Qualcomm, come 891.14, o Sistema è più veloce.</string>
     <string name="game_aspect_native_laid_out">" (nativo: camere e menu impostati per %1$s)"</string>
-    <string name="game_hold60_text">No: il gioco scende a 30 fps quando non riesce a mantenere i 60, come su console. Sì: il gioco usa sempre la sua modalità a 60 fps e Banana Native non trattiene fotogrammi, quindi non scende mai a 30; il frame rate è meno regolare e il gioco va un po\' più lento sotto i 60. Solo con il limite a 60 fps</string>
+    <string name="game_hold60_text">No: il gioco scende a 30 fps quando non riesce a mantenere i 60, come su console. Sì: il gioco usa sempre la sua modalità a 60 fps e Polar non trattiene fotogrammi, quindi non scende mai a 30; il frame rate è meno regolare e il gioco va un po\' più lento sotto i 60. Solo con il limite a 60 fps</string>
     <string name="game_present_only_note">Sperimentale per questo gioco: il limite regola solo la frequenza con cui l\'immagine viene mostrata, non il gioco stesso. Aspettati dei bug (per esempio il gioco più lento o più veloce).</string>
     <string name="prepare_save_default_earlier">" (predefinito: il tuo salvataggio di una versione precedente, accanto al gioco. Il prossimo avvio del gioco lo copia nell'archiviazione dell'app, %1$s, e lo usa da lì; questa cartella non viene mai modificata)"</string>
     <string name="prepare_save_default_in_app_copied">" (predefinito: nell'archiviazione dell'app; copiato da %1$s, che resta com'era)."</string>
@@ -1223,7 +1223,7 @@
     <string name="settings_the_release_sources">le fonti delle release</string>
     <string name="settings_is_not_a_release_version">) non è una versione di rilascio: niente da confrontare.</string>
     <string name="settings_this_build_s_version">La versione di questa build (</string>
-    <string name="settings_only_the_release_app_dev">Solo l\'app di rilascio (dev.bananative.android) cerca aggiornamenti. Un\'app di test cerca quando update.txt nella sua cartella dei file indica repo= o url=.</string>
+    <string name="settings_only_the_release_app_dev">Solo l\'app di rilascio (dev.polar.android) cerca aggiornamenti. Un\'app di test cerca quando update.txt nella sua cartella dei file indica repo= o url=.</string>
     <string name="settings_no_release_source">nessuna fonte di release</string>
     <string name="settings_did_not_answer_in_time">" non ha risposto in tempo)"</string>
     <string name="settings_s_answer_is_too_large">: la risposta è troppo grande</string>

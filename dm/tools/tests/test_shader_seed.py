@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """dm/gfx/tools/shader_seed.py without game data: records are made up and the readers replaced, so the request writer (code first, .ctl last, the control cut to the host's 0xd8
 bytes), the check that the bytes hash to the key, the order the .ctl times give, the pairs, the skipped requests, the dry run and the counts are tested. shader_layer.py's
-read_requests reads the seeds back. With an Ocarina of Time .nup in the folder `$BN_NUP_DIR` names the real scan is tried too (skipped without it)."""
+read_requests reads the seeds back. With an Ocarina of Time .nup in the folder `$POLAR_NUP_DIR` names the real scan is tried too (skipped without it)."""
 import os
 import struct
 import sys
@@ -130,7 +130,7 @@ class Seed(unittest.TestCase):
 
 
 OOT = '0400486024DEC000'
-_ND = Path(os.environ['BN_NUP_DIR']) if os.environ.get('BN_NUP_DIR') else None
+_ND = Path(os.environ['POLAR_NUP_DIR']) if os.environ.get('POLAR_NUP_DIR') else None
 NUP = next(iter(sorted(_ND.glob('The Legend of Zelda Ocarina of Time*.nup'))), None) if _ND and _ND.is_dir() else None
 
 

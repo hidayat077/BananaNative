@@ -122,7 +122,7 @@ class Scan(Base):
         self.assertEqual(pack_dump.program_dir(y, 1), (VER, y / f'switch2/updates/{VER}'))
         self.assertIsNone(pack_dump.program_dir(y, 2))
 
-    def test_program_1_splits_the_addons(self):   # BananaNative #356: a program n > 0 keeps its shaders in the application's add-ons, also when base/ is the program itself
+    def test_program_1_splits_the_addons(self):   # Polar #356: a program n > 0 keeps its shaders in the application's add-ons, also when base/ is the program itself
         self.assertEqual(pack_dump.split_addons(*pack_dump.scan(self.dump)[::2]), [])   # program 0: the game alone
         d = self.dump.parent / 'edition-as-base'   # program 1's exefs in base/, program 0's RomFS beside it, the application's add-on under dlc/
         version(d / 'base', tid=TID + 1)
@@ -137,7 +137,7 @@ class Scan(Base):
             self.assertEqual(shader_split.dump_addons(str(self.dump)), [])
         self.assertEqual(shader_split.dump_addons(''), [])
 
-    def test_split_finds_pack_dump_on_its_own(self):   # BananaNative #400/#403: the phone's split has only its own folder's relatives on sys.path; 'No module named pack_dump'
+    def test_split_finds_pack_dump_on_its_own(self):   # Polar #400/#403: the phone's split has only its own folder's relatives on sys.path; 'No module named pack_dump'
         with mock.patch.dict('os.environ', DM_GAME=f'{TID:016X}'): import shader_split
         keep = [p for p in sys.path if Path(p or '.').resolve() != REPO / 'scripts']
         mods = {k: v for k, v in sys.modules.items() if k != 'pack_dump'}

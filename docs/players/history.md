@@ -19,6 +19,6 @@ Back to the [main page](../../.github/README.md).
 - **v0.1.5, 5 November 2026**: Pokémon Pokopia (`0400A3A01EE4C000`) playable at about 60 fps on the system driver and
   Turnip, with Game resolution working for it (thanks to [Raphix91](https://github.com/Raphix91), #28 #29 #30); a text
   box for games that ask you to type; shaders already on the phone carry over without an update.
-- **v0.2.0**: preparing a game on a PC (Windows) or a Mac in a window (`scripts/bananative.bat`,
-  `scripts/bananative.command`), **Import pack…** in the app for packs made elsewhere, and two experimental games: The
+- **v0.2.0**: preparing a game on a PC (Windows) or a Mac in a window (`scripts/polar.bat`,
+  `scripts/polar.command`), **Import pack…** in the app for packs made elsewhere, and two experimental games: The
   Legend of Zelda: Ocarina of Time (`0400486024DEC000`) and Splatoon Raiders (`0400380020056000`).

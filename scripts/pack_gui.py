@@ -2,7 +2,7 @@
 # A window for scripts/pack_android.py: pick a game (a .nup file or a dump folder), see what it holds and whether the tools work, then prepare its pack
 # (the rewritten code and the Vulkan shader library) with a progress bar and the packer's log. The packing itself is pack_android.py's, run as a subprocess with
 # the arguments the window shows, so the command line and the window make the same pack.
-# Start it with scripts/bananative.command (macOS) or scripts/bananative.bat (Windows), which find or make the environment it needs (android/environment.yml).
+# Start it with scripts/polar.command (macOS) or scripts/polar.bat (Windows), which find or make the environment it needs (android/environment.yml).
 # Usage: <env python> scripts/pack_gui.py [<game folder | .nup file>]   (exit 1 when Tk is missing)
 import os, queue, re, signal, subprocess, sys, threading, time
 from pathlib import Path
@@ -15,11 +15,11 @@ except ImportError:
     sys.exit(f'[RED] {sys.executable} has no Tk: use the environment of android/environment.yml (conda-forge Python has Tk), or brew install python-tk')
 import pack_dump
 import game
-import bananative_env
+import polar_env
 
 PACKER = REPO / 'scripts/pack_android.py'
 WINDOWS = os.name == 'nt'
-bananative_env.apply()   # the environment's programs (spirv-val) and .NET runtime for the packer's subprocesses, also when started without the launcher
+polar_env.apply()   # the environment's programs (spirv-val) and .NET runtime for the packer's subprocesses, also when started without the launcher
 
 RE_SPLIT = re.compile(r'^progress: (\d+)/(\d+)')            # shader_split.py
 RE_BUILD = re.compile(r'^progress (\d+) (\d+) ?(.*)')       # vk_android_build.py
@@ -38,7 +38,7 @@ def inspect(path):
 class App:
     def __init__(self, root, initial=None):
         self.root, self.proc, self.q, self.info, self.t0 = root, None, queue.Queue(), None, 0.0
-        root.title('Banana Native: prepare a game'); root.minsize(760, 560)
+        root.title('Polar: prepare a game'); root.minsize(760, 560)
         f = ttk.Frame(root, padding=10); f.pack(fill='both', expand=True)
         f.columnconfigure(1, weight=1)
 
@@ -86,7 +86,7 @@ class App:
         self.log.tag_configure('red', foreground='#d03030'); self.log.tag_configure('me', foreground='gray')
 
         self.tools_ok = self.has_zstd = False
-        threading.Thread(target=lambda: self.q.put(('tools', bananative_env.check())), daemon=True).start()
+        threading.Thread(target=lambda: self.q.put(('tools', polar_env.check())), daemon=True).start()
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.pump)
         if initial: self.choose(Path(initial).expanduser().resolve())

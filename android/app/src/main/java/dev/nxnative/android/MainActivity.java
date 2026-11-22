@@ -277,7 +277,7 @@ public final class MainActivity extends Activity {
 
     /**
      * A controller or keyboard gives the focus to the outermost view that takes it (a page's scroll view), and Android paints the whole screen with its focus
-     * highlight: a yellow tint. The pages draw their own banana ring on tiles and rows, so the default highlight is off everywhere, and the scroll views that
+     * highlight: a yellow tint. The pages draw their own polar ring on tiles and rows, so the default highlight is off everywhere, and the scroll views that
      * only hold the page (they never take a tap) leave the focus to the tiles and rows
      */
     private static void noFocusTint(View v) {
@@ -307,7 +307,7 @@ public final class MainActivity extends Activity {
     }
 
     private View selectedTile;
-    private View addFab;   // Add game, a round banana button at the bottom right of Home
+    private View addFab;   // Add game, a round polar button at the bottom right of Home
     private LinearLayout dockRow;
     private TextView userButton;
 
@@ -317,7 +317,7 @@ public final class MainActivity extends Activity {
         selectedTile = null;
         LinearLayout top = Ui.row(this);   // the logo alone, small, at the left; the dock (the user, Add game, the wiki, Settings) in the top right corner
         ImageView logo = Ui.badge(this, 36);   // as big as the dock's buttons
-        logo.setContentDescription(Tx.s(R.string.home_banana_native));
+        logo.setContentDescription(Tx.s(R.string.home_polar));
         logo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         top.addView(logo);
         top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
@@ -341,7 +341,7 @@ public final class MainActivity extends Activity {
         refresh();
     }
 
-    /** The dock: round buttons in a pill. The first is the user (the console's users, what games start with): its letter is the current user's, as the profile icon of a console's home */
+    /** The dock: round buttons in a pill (the wiki and Settings) */
     private View dock() {
         dockRow = new LinearLayout(this);
         dockRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -355,19 +355,6 @@ public final class MainActivity extends Activity {
         gloss.setStroke(dp(1), 0x40FFFFFF);
         dockRow.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{fill, gloss}));
         dockRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-        userButton = Ui.text(this, "", 16, R.color.bn_on_leaf, 800);
-        userButton.setGravity(Gravity.CENTER);
-        userButton.setIncludeFontPadding(false);
-        styleUserButton();
-        userButton.setForeground(ring(999, false));
-        userButton.setContentDescription(Tx.s(R.string.common_users));
-        userButton.setTooltipText(Tx.s(R.string.common_users));
-        userButton.setFocusable(true);
-        userButton.setClickable(true);
-        userButton.setOnClickListener(v -> openUsers());
-        LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(dp(36), dp(36));
-        up.leftMargin = up.rightMargin = dp(3);
-        dockRow.addView(userButton, up);
         dockRow.addView(dockButton(R.drawable.ic_wiki, Tx.s(R.string.settings_player_wiki), false, v -> openLink(WIKI_URL)));
         dockRow.addView(dockButton(R.drawable.ic_settings, Tx.s(R.string.home_settings), false, v -> page(true)));
         return dockRow;
@@ -382,9 +369,9 @@ public final class MainActivity extends Activity {
 
     private View dockButton(int drawable, String name, boolean accent, View.OnClickListener l) {
         ImageView b = new ImageView(this);
-        b.setImageDrawable(Ui.icon(this, drawable, accent ? R.color.bn_on_banana : R.color.bn_text));
+        b.setImageDrawable(Ui.icon(this, drawable, accent ? R.color.bn_on_polar : R.color.bn_text));
         b.setPadding(dp(8), dp(8), dp(8), dp(8));
-        b.setBackground(Ui.round(accent ? Ui.col(this, R.color.bn_banana) : Ui.col(this, R.color.bn_tint), dp(999), 0, 0));
+        b.setBackground(Ui.round(accent ? Ui.col(this, R.color.bn_polar) : Ui.col(this, R.color.bn_tint), dp(999), 0, 0));
         b.setForeground(ring(999, false));
         b.setContentDescription(name);
         b.setTooltipText(name);
@@ -398,10 +385,10 @@ public final class MainActivity extends Activity {
         return b;
     }
 
-    /** A banana ring (focused, or selected when withSelected) over a view, and a dim wash while it is pressed */
+    /** A polar ring (focused, or selected when withSelected) over a view, and a dim wash while it is pressed */
     android.graphics.drawable.Drawable ring(int radiusDp, boolean withSelected) {
         android.graphics.drawable.StateListDrawable s = new android.graphics.drawable.StateListDrawable();
-        android.graphics.drawable.Drawable on = Ui.round(0, dp(radiusDp), Ui.col(this, R.color.bn_banana_deep), Ui.dp(this, 3.5f));
+        android.graphics.drawable.Drawable on = Ui.round(0, dp(radiusDp), Ui.col(this, R.color.bn_polar_deep), Ui.dp(this, 3.5f));
         s.addState(new int[]{android.R.attr.state_focused}, on);
         if (withSelected) s.addState(new int[]{android.R.attr.state_selected}, on);
         s.addState(new int[]{android.R.attr.state_pressed}, Ui.round(0x22000000, dp(radiusDp), 0, 0));
@@ -488,7 +475,7 @@ public final class MainActivity extends Activity {
 
     private View accessCard() {
         LinearLayout c = Ui.card(this);
-        c.setBackground(Ui.round(Ui.col(this, R.color.bn_warn_tint), dp(20), Ui.col(this, R.color.bn_banana_deep), dp(1)));
+        c.setBackground(Ui.round(Ui.col(this, R.color.bn_warn_tint), dp(20), Ui.col(this, R.color.bn_polar_deep), dp(1)));
         c.addView(Ui.heading(this, Tx.s(R.string.home_allow_file_access)));
         Ui.add(c, Ui.body(this, Tx.s(R.string.home_needed_to_read_a_dump)), 4);
         Ui.add(c, Ui.button(this, Tx.s(R.string.home_allow), Ui.Kind.PRIMARY, v -> openAccessSettings()), 14, Ui.wrap());
@@ -755,7 +742,7 @@ public final class MainActivity extends Activity {
 
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_about)), Ui.SECTION_GAP);
         LinearLayout about = Ui.add(content, Ui.card(this), 8);
-        TextView appName = Ui.text(this, Tx.s(R.string.home_banana_native) + " v" + BuildConfig.VERSION_NAME, 16, R.color.bn_text, 700);
+        TextView appName = Ui.text(this, Tx.s(R.string.home_polar) + " v" + BuildConfig.VERSION_NAME, 16, R.color.bn_text, 700);
         about.addView(appName, Ui.wrap());
         TextView tag = Ui.chip(this, Prefs.buildTag(this));   // which build this is (also the first line of every log)
         tag.setTextIsSelectable(true);
@@ -806,7 +793,7 @@ public final class MainActivity extends Activity {
     /** The settings rows' current values (after a dialog, on resume) */
     private void refreshSettings() {
         if (overlayRow == null) return;
-        updateRow.value(Tx.s(R.string.settings_banana_native_version, Updater.version(this)) + (Updater.available(this) ? "" : Tx.s(R.string.home_release_app_only)));
+        updateRow.value(Tx.s(R.string.settings_polar_version, Updater.version(this)) + (Updater.available(this) ? "" : Tx.s(R.string.home_release_app_only)));
         boolean ov = Prefs.overlay(this);
         if (overlayRow.toggle.isChecked() != ov) overlayRow.toggle.setChecked(ov);
         int n = 0;
@@ -1029,7 +1016,7 @@ public final class MainActivity extends Activity {
     private List<Game> shownGames() { return GameOrder.sort(games, Prefs.gameOrder(this), Game::orderId); }
 
     /**
-     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi)
+     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below)
      * and Remove game (GameDelete). A tile being prepared keeps its job sheet on a long press (workTile)
      */
     void optionsMenu(Game g) {
@@ -1037,8 +1024,6 @@ public final class MainActivity extends Activity {
         List<String> labels = new ArrayList<>();
         List<Runnable> acts = new ArrayList<>();
         if (shownGames().size() > 1) { labels.add(Tx.s(R.string.home_move_game)); acts.add(() -> startMove(g)); }
-        labels.add(Tx.s(R.string.game_cover_set)); acts.add(() -> CoverUi.start(this, g));
-        if (CoverUi.has(this, g)) { labels.add(Tx.s(R.string.game_cover_reset)); acts.add(() -> CoverUi.reset(this, g)); }
         labels.add(Tx.s(R.string.home_delete_game_menu)); acts.add(() -> GameDelete.ask(this, g));
         new PadFocus.Builder(this).setTitle(g.name).setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run()).show();
     }
@@ -1245,12 +1230,12 @@ public final class MainActivity extends Activity {
         return row;
     }
 
-    /** Add game: a round banana-yellow button (the plus of the dock's yellow), floating at the bottom right of Home */
+    /** Add game: a round polar-yellow button (the plus of the dock's yellow), floating at the bottom right of Home */
     private View addButton() {
         ImageView b = new ImageView(this);
-        b.setImageDrawable(Ui.icon(this, R.drawable.ic_add, R.color.bn_on_banana));
+        b.setImageDrawable(Ui.icon(this, R.drawable.ic_add, R.color.bn_on_polar));
         b.setPadding(dp(16), dp(16), dp(16), dp(16));
-        b.setBackground(Ui.round(Ui.col(this, R.color.bn_banana), dp(999), 0, 0));
+        b.setBackground(Ui.round(Ui.col(this, R.color.bn_polar), dp(999), 0, 0));
         b.setForeground(ring(999, false));
         b.setElevation(dp(8));
         b.setContentDescription(Tx.s(R.string.home_add_game));
@@ -1290,7 +1275,7 @@ public final class MainActivity extends Activity {
         ov.setOrientation(LinearLayout.VERTICAL);
         ov.setGravity(Gravity.CENTER);
         ov.setVisibility(View.GONE);
-        ProgressRing ring = new ProgressRing(this, Ui.col(this, R.color.bn_banana), true);   // while the game is being prepared: its progress on the dimmed picture, as an install on an icon
+        ProgressRing ring = new ProgressRing(this, Ui.col(this, R.color.bn_polar), true);   // while the game is being prepared: its progress on the dimmed picture, as an install on an icon
         ring.setVisibility(View.GONE);
         ov.addView(ring, new LinearLayout.LayoutParams(dp(64), dp(64)));
         TextView ot = Ui.text(this, "", 12, R.color.bn_on_leaf, 700);
@@ -1300,12 +1285,12 @@ public final class MainActivity extends Activity {
         ov.addView(ot);
         android.widget.ProgressBar pb = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         pb.setIndeterminate(true);
-        pb.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Ui.col(this, R.color.bn_banana)));
+        pb.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Ui.col(this, R.color.bn_polar)));
         LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4));
         pl.setMargins(dp(14), dp(8), dp(14), 0);
         ov.addView(pb, pl);
         c.addView(ov, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        ProgressRing badge = new ProgressRing(this, Ui.col(this, R.color.bn_banana), false);   // a game that stays playable while something is checked or updated: a small ring in the corner
+        ProgressRing badge = new ProgressRing(this, Ui.col(this, R.color.bn_polar), false);   // a game that stays playable while something is checked or updated: a small ring in the corner
         badge.setBackground(Ui.round(0x99000000, dp(999), 0, 0));
         badge.setPadding(dp(4), dp(4), dp(4), dp(4));
         badge.setVisibility(View.GONE);
@@ -1345,12 +1330,19 @@ public final class MainActivity extends Activity {
         c.setOnLongClickListener(v -> { manage(g); return true; });
         TextView tile = (TextView) c.getChildAt(0);
         boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
+        java.util.concurrent.atomic.AtomicBoolean hasLocalIcon = new java.util.concurrent.atomic.AtomicBoolean();
         GameMeta.loadControl(new File(g.gameDir), Edition.control(this, g), m -> {
-            if (m.icon != null && !ownCover) Ui.tileIcon(tile, m.icon);
+            if (m.icon != null && !ownCover) {
+                hasLocalIcon.set(true);
+                Ui.tileIcon(tile, m.icon);
+            }
             TileInfo ti = (TileInfo) c.getTag();
             ti.version = m.version;
             HomeLayout.caption(ti);   // the grid's and the list's second line
         });   // with the edition switch on, program 1's icon
+        if (!ownCover) CoverFetch.fetchIfMissing(this, g, hasLocalIcon, b -> {
+            if (!hasLocalIcon.get()) Ui.tileIcon(tile, b);
+        });
         if (Profile.of(g.titleId) == null) {   // no profile in this APK: it cannot run here (Profile.missing says why); the page still has its folders, saves and Remove
             state(st, Tx.s(R.string.common_not_in_this_app_version), R.color.bn_danger, 0);
             return c;

@@ -4,7 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 lsfg-vk
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Ported to C for Banana Native from Eden's src/video_core/frame_gen/lossless_dll.cpp and lsfg_translate.cpp: the user's own Lossless.dll (Lossless Scaling) is a PE image
+// Ported to C for Polar from Eden's src/video_core/frame_gen/lossless_dll.cpp and lsfg_translate.cpp: the user's own Lossless.dll (Lossless Scaling) is a PE image
 // whose RCDATA resources hold the frame generation shaders as SPIR-V. The performance set's modules (255, 256, 280..302) are taken from their native-FP16 twins
 // (resource ID + 49) and their bindings renumbered in (set, binding) order, as the descriptor set layouts of lsfg_chain.c expect. Unlike Eden there is no translated-module
 // cache: reading and renumbering the image takes a few milliseconds. Nothing of the DLL is ever part of this repository or the APK

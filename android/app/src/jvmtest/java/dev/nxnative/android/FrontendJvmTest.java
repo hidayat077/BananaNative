@@ -17,7 +17,7 @@ public final class FrontendJvmTest {
 
     public static void main(String[] args) {
         // file:// URIs: ES-DE's %ROM% as a URI, Daijisho's {file.uri}, escapes, an authority that is not this phone
-        eq("/storage/emulated/0/Games/Banana Game.nup", Frontend.fileUri("file:///storage/emulated/0/Games/Banana%20Game.nup"), "escaped space");
+        eq("/storage/emulated/0/Games/Polar Game.nup", Frontend.fileUri("file:///storage/emulated/0/Games/Polar%20Game.nup"), "escaped space");
         eq("/storage/emulated/0/a+b.nup", Frontend.fileUri("file:///storage/emulated/0/a+b.nup"), "plus stays");
         eq("/storage/emulated/0/é.nup", Frontend.fileUri("file:///storage/emulated/0/%C3%A9.nup"), "UTF-8 escape");
         eq("/storage/1234-ABCD/x.nup", Frontend.fileUri("file:/storage/1234-ABCD/x.nup"), "file: with one slash");

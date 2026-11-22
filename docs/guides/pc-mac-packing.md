@@ -8,8 +8,8 @@ the game's **pack**. A computer does this much faster than the phone: a Mac prep
 
 Get this repository from [git.eden-emu.dev](https://git.eden-emu.dev/moceure/BananaNative) (clone it, or download it). The packer is in its `scripts` folder:
 
-- **Windows:** `scripts\bananative.bat`. New and not yet tested on a real PC — please report how it goes.
-- **Mac:** `scripts/bananative.command`. Tested.
+- **Windows:** `scripts\polar.bat`. New and not yet tested on a real PC — please report how it goes.
+- **Mac:** `scripts/polar.command`. Tested.
 
 ## 2. First start
 
@@ -29,8 +29,8 @@ place. If you already have a working environment, it uses that one. Later starts
 The same from the command line:
 
 ```sh
-scripts/bananative.command pack /path/to/Switch2/DonkeyKongBananza     # Mac
-scripts\bananative.bat pack D:\Switch2\DonkeyKongBananza               # Windows
+scripts/polar.command pack /path/to/Switch2/DonkeyKongBananza     # Mac
+scripts\polar.bat pack D:\Switch2\DonkeyKongBananza               # Windows
 ```
 
 ## 4. Get the pack onto the phone
@@ -53,6 +53,6 @@ The app also offers **Use an existing pack…** in the same question: it uses a 
 
 ## If it fails
 
-- The window's log and its tool check say what is missing. `scripts/bananative.command check` (or
-  `scripts\bananative.bat check`) checks the tools again.
+- The window's log and its tool check say what is missing. `scripts/polar.command check` (or
+  `scripts\polar.bat check`) checks the tools again.
 - Open an issue as described in [Troubleshooting](troubleshooting.md), with the packer's log.

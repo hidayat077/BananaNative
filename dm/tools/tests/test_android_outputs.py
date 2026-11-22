@@ -1,6 +1,6 @@
 """The Android app's split outputs (android/app/src/ondevice Outputs.java): the split writes into split/ in place and the folder counts as complete only once a
 marker is written after every output is synced, so Prepare never renames a folder on shared storage (MediaProvider may refuse that with EPERM,
-BananaNative issue #1) and a stop at any point never leaves cut tables accepted. Skipped without a JDK."""
+Polar issue #1) and a stop at any point never leaves cut tables accepted. Skipped without a JDK."""
 import shutil
 import subprocess
 import tempfile
@@ -39,7 +39,7 @@ class NoFolderRename(unittest.TestCase):
 
 
 class OutputsThatWent(unittest.TestCase):
-    """BananaNative issue #3: job.json beside the dump outlives the app's pack folder (gone with an uninstall), so a step recorded done is checked against its
+    """Polar issue #3: job.json beside the dump outlives the app's pack folder (gone with an uninstall), so a step recorded done is checked against its
     outputs before the pack step uses them, and runs again when they went (OutputsJvmTest checks Outputs.redo and the checks themselves)"""
     def test_wired(self):
         s = PACK_SERVICE.read_text(encoding='utf-8')

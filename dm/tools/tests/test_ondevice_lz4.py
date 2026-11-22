@@ -3,7 +3,7 @@
 
 build.sh builds lz4 and lz4.block only. A tool that imports another submodule (lz4.frame) works on a computer and fails on the phone, where the import is
 missing: the .cmp containers of Kirby and the Forgotten Land's add-on stayed closed that way until shader_split.py decoded LZ4 frames with lz4.block
-(lz4_frame, BananaNative #356), and Kirby's Return to Dream Land Deluxe's ptcl/ containers did in Peanuts Native. Either the tool keeps to the submodules
+(lz4_frame, Polar #356), and Kirby's Return to Dream Land Deluxe's ptcl/ containers did in Peanuts Native. Either the tool keeps to the submodules
 build.sh builds, or build.sh builds the one it imports."""
 import os
 import re

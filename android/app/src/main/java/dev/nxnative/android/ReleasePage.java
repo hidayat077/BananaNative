@@ -49,7 +49,7 @@ final class ReleasePage {
         LinearLayout content = Ui.page(a, pageFrame, 640, true);
         Runnable close = () -> host.removeView(overlay);
 
-        content.addView(Ui.header(a, Ui.back(a, v -> close.run()), Tx.s(R.string.settings_update_available), Tx.s(R.string.settings_banana_native_version, UpdateCheck.text(u.version)), null));
+        content.addView(Ui.header(a, Ui.back(a, v -> close.run()), Tx.s(R.string.settings_update_available), Tx.s(R.string.settings_polar_version, UpdateCheck.text(u.version)), null));
         LinearLayout head = Ui.add(content, Ui.card(a), 8);
         head.addView(Ui.heading(a, Tx.s(R.string.settings_version_is_available, UpdateCheck.text(u.version))));
         Ui.add(head, Ui.body(a, Tx.s(R.string.settings_you_have_install_over, have)), 4);
@@ -175,7 +175,7 @@ final class ReleasePage {
                 + "![A picture that is not there](https://raw.githubusercontent.com/github/explore/main/does-not-exist.png)\n\n"
                 + "![Refused host](https://example.org/x.png)\n\nThe end of the sample.";
         UpdateCheck.Source src = UpdateCheck.github(UpdateCheck.REPO);
-        UpdateCheck.Asset apk = new UpdateCheck.Asset("banana-native-v9.9.9.apk", "https://github.com/" + UpdateCheck.REPO + "/releases/download/v9.9.9/banana-native-v9.9.9.apk", 118_000_000L, null);
+        UpdateCheck.Asset apk = new UpdateCheck.Asset("polar-v9.9.9.apk", "https://github.com/" + UpdateCheck.REPO + "/releases/download/v9.9.9/polar-v9.9.9.apk", 118_000_000L, null);
         UpdateCheck.Release r = new UpdateCheck.Release("v9.9.9", false, true, body, Arrays.asList(apk), src);
         return new UpdateCheck.Update(r, new int[] {9, 9, 9}, apk, null);
     }
