@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- The launcher icon's background (the navy of polar.png) -->
-    <color name="ic_launcher_background">#FF010B37</color>
+    <color name="ic_launcher_background">#FF020A28</color>
 
     <!-- The launcher's palette (Ui.java, themes.xml): a light-blue companion to the dark gaming theme; values-night has the navy set -->
     <color name="bn_bg">#FFF2F5FA</color>

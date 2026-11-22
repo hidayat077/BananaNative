@@ -558,13 +558,13 @@ final class Ui {
         return r;
     }
 
-    /** The polar with a face in a leaf-green circle (Home's header) */
+    /** The Polar bear badge in a navy circle (Home's header) */
     static ImageView badge(Context c, int sizeDp) {
         ImageView v = new ImageView(c);
         v.setImageDrawable(new android.graphics.drawable.InsetDrawable(c.getDrawable(R.drawable.ic_polar_logo), -0.16f));   // the polar fills more of the circle
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
-        g.setColor(0xFF1E5B3A);
+        g.setColor(col(c, R.color.ic_launcher_background));
         v.setBackground(g);
         v.setScaleType(ImageView.ScaleType.FIT_CENTER);
         v.setLayoutParams(new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp)));
