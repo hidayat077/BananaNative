@@ -118,14 +118,14 @@ def nca(secs, tid, ctype):
     return bytes(hdr) + body
 
 
-def cnmt(tid, version, typ, records, extended=b''):
+def cnmt(tid, version, typ, records, extended=b'', digest=None):
     h = bytearray(0x20)
     struct.pack_into('<QIBBHHH', h, 0, tid, version, typ, 0, len(extended), len(records), 0)
     body = bytes(h) + extended + b''.join(d + d[:16] + len(n).to_bytes(5, 'little') + bytes([0, t, 0]) for d, n, t in records)
-    return body + hashlib.sha256(body).digest()
+    return body + (digest if digest is not None else hashlib.sha256(body).digest())
 
 
-def build(kind, tid, version, game=None, extra=None, patch=False, wrong_id=False):
+def build(kind, tid, version, game=None, extra=None, patch=False, wrong_id=False, cnmt_digest=None):
     """An NSP: kind 'game' (Program + Control NCAs) or 'dlc' (a Data NCA); returns its bytes"""
     ents, recs = [], []
     def add(blob, t):
@@ -139,7 +139,7 @@ def build(kind, tid, version, game=None, extra=None, patch=False, wrong_id=False
     else:
         add(nca([section(0, romfs(game))], tid + (1 if wrong_id else 0), 4), 2)
         typ, ext = 0x82, struct.pack('<QI', TID, 0) + bytes(4)
-    c = cnmt(tid, version, 0x81 if patch else typ, [(d, b, t) for d, b, t in recs], ext)
+    c = cnmt(tid, version, 0x81 if patch else typ, [(d, b, t) for d, b, t in recs], ext, digest=cnmt_digest)
     name = f'{"Application" if kind == "game" else "AddOnContent"}_{tid:016x}.cnmt'
     meta = nca([section(1, pfs0([(name, c)]))], tid, 1)
     ents.append((hashlib.sha256(meta).digest()[:16].hex() + '.cnmt.nca', meta))
@@ -195,6 +195,12 @@ class Read(Base):
             (p,) = n.packages
             self.assertEqual((p.kind, p.id), (nsp.ADDON, DLC))
             self.assertEqual(sorted(p.files), ['romfs/dlc.bin', 'romfs/x/y.bin'])
+
+    def test_opaque_cnmt_digest(self):
+        # Real Switch / NSP-Box CNMTs carry an opaque 32-byte authoring digest, not SHA-256(cnmt[:-32]).
+        with nsp.open_nsp(self.write('opaque.nsp', build('game', TID, 0, GAME0, cnmt_digest=bytes(range(32)))), verify=True) as n:
+            (p,) = n.packages
+            self.assertEqual((p.kind, p.id, p.version), (nsp.APPLICATION, TID, 0))
 
 
 class Refused(Base):

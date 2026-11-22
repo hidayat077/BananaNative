@@ -195,6 +195,13 @@
 
 ## Packing on the phone
 
+### Plaintext NSP refused with `<name>.cnmt: its digest does not match`
+
+- **Symptom:** Prepare on the phone (or any Python tool reading a plaintext NSP) stops at "Rewriting the game's code: exit code 1" with `Application_<id>.cnmt: its digest does not match`, even though the launcher's own Java NSP reader accepted the file and identified the game and version.
+- **Cause:** `dm/tools/nsp.py` checked `hashlib.sha256(cbytes[:-32]).digest() == cbytes[-32:]` on the `.cnmt` record inside the metadata NCA. In Horizon's CNMT format, the trailing 32-byte digest is an opaque authoring digest rather than a SHA-256 of the preceding `.cnmt` bytes (`Nsp.java` and `dm/tools/cnmt.py` do not check it); the metadata NCA's own SHA-256 already covers the `.cnmt` when `verify=True`.
+- **Fix:** removed the trailing-digest SHA-256 check from `dm/tools/nsp.py` (`Nsp._packages`) and added `test_opaque_cnmt_digest` in `dm/tools/tests/test_nsp.py`.
+- **Found on:** [South Park: The Fractured but Whole](../../dm/games/01008F2005154000/README.md#found-on-this-game) (plaintext NSP-Box NSP of v327680). Applies to every plaintext NSP whose `.cnmt` carries an opaque authoring digest.
+
 ### Prepare is not offered for a game whose supported build is its base game
 
 - **Symptom:** on Android, **Add game** on a dump folder with `base/exefs` and `base/romfs` but no `updates/` (or a `.nup` with a base package only) does not offer Prepare: it asks to "Pick the pack folder", the game card has no Prepare, and ⋯ has no Prepare again. Only a pack made on a Mac works.

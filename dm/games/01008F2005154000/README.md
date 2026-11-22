@@ -23,9 +23,10 @@ Status: plays on a phone (2026-11-22, Turnip, 1080x2400, about 30 fps, 579 draws
 
 ## Found on this game
 
-General shader change first needed here; it applies to every game:
+General changes first needed here; they apply to every game:
 
 - **Shaders:** [Whole-asset zlib records in Snowdrop SDF slices](../../../docs/reference/shaders.md#whole-asset-zlib-records-in-snowdrop-sdf-slices): `shader_split.py` found nothing in the `.sdfdata` slices until it learned the `0xabcd00d4` framing and reassembled consecutive 64 KB (`0x10000`) zlib chunks up to `payload_length + 20`. A clean full split finds 4,614 shaders (75 compute, 467 pixel, 4,072 vertex) — including 10 pixel shaders from 956 multi-chunk `.mcache` assets (among them `a19dd0ddaa9e08ce` in `sdf-A-0200.sdfdata`, removing the need for an `nvn_shdump` capture) and 27 in `sdf-A-0000.sdfdata`. The `.mshader` / `.mshadergraph` / `.mshaders` assets in `sdf-A-0001.sdfdata` are plain zlib text/graph sources, not compiled NVN binaries (`_DataPartList.txt`'s offsets drifted from `sdf-A-0001.sdfdata`).
+- **Packing:** [Plaintext NSP refused with `<name>.cnmt: its digest does not match`](../../../docs/reference/packing.md#plaintext-nsp-refused-with-cnmt-its-digest-does-not-match): `dm/tools/nsp.py` rejected the plaintext NSP-Box NSP during on-device Prepare because `Application_01008f2005154000.cnmt`'s trailing 32-byte digest is an opaque authoring digest rather than `SHA-256(cbytes[:-32])`.
 
 Game-specific bring-up, resolved:
 
