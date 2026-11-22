@@ -629,7 +629,38 @@ def snowdrop_shaders(d, label, wrapped=True):
             if st and not check(label, st, ctl, code): out.append((f'{label}#SNOWDROP@{h:#x}:{c:#x}', st, ctl, code))
     for h, _, raw in chunks:
         out += snowdrop_shaders(raw, f'{label}#SDFZSTD@{h:#x}', wrapped=False)
+    if wrapped:
+        out += snowdrop_sdf_zlib_shaders(d, label)
     return out
+
+
+SDF_D4 = bytes.fromhex('d400cdab')
+
+def snowdrop_sdf_zlib_shaders(d, label):
+    """A second Snowdrop SDF asset framing (South Park: The Fractured but Whole): a logical asset is one zlib stream whose inflated object starts with 0xabcd00d4, not the raw 0xabcd00c5 / c6 record of snowdrop_shaders(). The object holds the same GLSLC control + code pair, with its lengths at the control's +0x20 and +0x704. Scan zlib headers rather than names: other SDF assets are bare streams too."""
+    out = []
+    view = memoryview(d)
+    for m in re.finditer(rb'[\x18\x28\x38\x48\x58\x68\x78]', d):
+        h = m.start()
+        if h + 2 > len(d) or int.from_bytes(view[h:h + 2], 'big') % 31: continue
+        # Only a 256-byte probe per candidate: inflating a whole 4 MB window for each
+        # false header made a full SDF scan take hours instead of minutes.
+        try: head = zlib.decompressobj().decompress(view[h:h + 256], 4)
+        except zlib.error: continue
+        if head != SDF_D4: continue
+        try: raw = zlib.decompressobj().decompress(d[h:h + (1 << 22)], 1 << 23)
+        except zlib.error: continue
+        for cm in re.finditer(re.escape(CTL_MAGIC), raw):
+            c = cm.start()
+            if c + 0x708 > len(raw): continue
+            nc, nk = struct.unpack_from('<I', raw, c + 0x20)[0], struct.unpack_from('<I', raw, c + 0x704)[0]
+            if nc < 0x760 or nc & 3 or nk < 0x34 or c + nc + nk > len(raw): continue
+            ctl, code = raw[c:c + nc], raw[c + nc:c + nc + nk]
+            st = glslc_stage(ctl, code)
+            if st and not check(label, st, ctl, code):
+                out.append((f'{label}#SDFZLIB@{h:#x}:{c:#x}', st, ctl, code))
+    return out
+
 
 NEEDLE = b'HNSHV002'
 NEEDLE_RECORD = {False: (0x90, 0x760, 0x20), True: (0x98, NVN2_KEY_CTL, 0x30)}   # by nvn2_ctl: the descriptor's length (its control offset), the least control length, where the control holds its own

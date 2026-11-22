@@ -46,6 +46,15 @@ class SnowdropTests(unittest.TestCase):
         self.assertEqual([s for _, s, _, _ in found], ['cs', 'ps'])
         self.assertEqual(found[0][2:], (bytes(ctl), bytes(code)))
 
+    def test_d4_zlib_asset_framing(self):
+        # South Park's SDF slices wrap a whole asset in zlib; the inflated object starts with 0xabcd00d4.
+        raw = struct.pack('<5I', 0xabcd00d4, 0, 0, 0, 0) + b''.join(shader('vs')) + b''.join(shader('ps'))
+        found = split.snowdrop_shaders(archive(zlib.compress(raw)), '/sdf-d4')
+        self.assertEqual([s for _, s, _, _ in found], ['vs', 'ps'])
+        for f in found: self.assertIn('#SDFZLIB@', f[0])
+        # A bare zlib stream of the same shader without the object magic is not a d4 asset.
+        self.assertEqual(split.snowdrop_shaders(archive(zlib.compress(b''.join(shader('ps')))), '/bare'), [])
+
     def test_zlib_cache_records_inside_zstd_archive_chunks(self):
         raw = record(b''.join(shader('ps')), legacy=True)
         data = archive(split.zstd_mod().compress(raw), record(b''.join(shader('vs'))))

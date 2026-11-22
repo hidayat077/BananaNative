@@ -219,6 +219,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **DLC:** additional shader records ship in the DLC's data slices. The NSP script includes each extracted DLC RomFS as an extra shader root, without an ExeFS module, and fingerprints its index and extraction timestamps for split reuse. Vulkan and OpenGL builds include the DLC roots too. When installing or removing optional DLC changes an NVN shader union, the script uses an external profile with new shader tables only after every non-DLC shader row and fact matches the registered tables; package indices may change. The registered module builds, settings and build-gated cuts are preserved. A cached proof of this comparison permits repeat builds to reuse the split.
 - **Found on:** [Mario + Rabbids Sparks of Hope](../../dm/games/0100317013770000/README.md) (zstd); [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md) (zlib records, some wrapped in zstd chunks; shorter control sections and headerless compute code).
 
+### Whole-asset zlib records in Snowdrop SDF slices
+
+- **Symptom:** the split reports `shaders: 0` for a `.sdfdata` RomFS even though the SDF part list names `.mshader` and `.mcache` files.
+- **Cause:** another Snowdrop SDF framing stores each logical asset as one zlib stream whose inflated object starts with `0xabcd00d4`, not the raw `0xabcd00c5 / 0xabcd00c6` record of the two Mario + Rabbids games. The record header is inside the compressed data, so scanning the slice bytes for the old magic finds nothing; SDF version 22 does not select the framing.
+- **Fix:** `shader_split.py`'s `snowdrop_sdf_zlib_shaders()` scans zlib headers in `BERG` slices, inflates only streams whose first four bytes are `0xabcd00d4`, and reads the GLSLC control and code with the same `+0x20` / `+0x704` lengths and checks as `snowdrop_shaders()`. The source column records the zlib and control offsets (`#SDFZLIB@…`).
+- **Found on:** [South Park: The Fractured but Whole](../../dm/games/01008F2005154000/README.md): 4,604 shaders in a full split (75 compute, 457 pixel, 4,072 vertex), 27 of them in `sdf-A-0000.sdfdata`'s `.mcache` assets alone.
+
 ### CompiledBytecode resources in Frostbite superbundles
 
 - **Symptom:** the survey finds no shader container in a RomFS of `.toc` and `.cas` files (`Data/NX`, `Patch/NX`, `Data/layout.toc`, `Data/initfs_NX`); the split reads every file loosely and finds nothing.
