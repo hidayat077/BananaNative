@@ -3,7 +3,7 @@ name: build-apk
 
 on:
   push:
-    branches: [performance_improvement]
+    branches: [UI_UX]
   workflow_dispatch:
 
 permissions:

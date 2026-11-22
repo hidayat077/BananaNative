@@ -73,6 +73,24 @@ class PerGameInput(unittest.TestCase):
         self.assertIn('As in Settings: %1$s', g)
 
 
+class ZAOnScreenControls(unittest.TestCase):
+    def test_only_za_gets_the_custom_layout(self):
+        a = (SRC / 'GameActivity.java').read_text(encoding='utf-8')
+        self.assertIn('controls.setGame(id);', a)
+        tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
+        self.assertIn('ZA_TITLE = "0100F43008C44000"', tc)
+        self.assertIn('void setGame(String titleId) { za = ZA_TITLE.equals(titleId); }', tc)
+        self.assertIn('if (za) layoutZA(', tc)
+        self.assertIn('if (za) { drawControlsZA(c); return; }', tc)
+        self.assertIn('else layoutDefault(', tc)
+
+    def test_za_action_labels(self):
+        tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
+        for s in ('"Focus"', '"Reset"', '"Ball"', '"Rotate"', '"Photo"', '"Map"', '"Crouch"', '"Mega"',
+                  '"Talk"', '"Dash"', '"Menu"', '"Roll"', '"SEND"', '"NEXT"', '"RECALL"', '"PREV"'):
+            self.assertIn(s, tc)
+
+
 def setUpModule():
     javatext.install()   # the launcher text is in strings.xml: this module reads the Java source with its English
 
