@@ -1043,6 +1043,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** Fire Emblem Fortune's Weave (upstream seedds/nxnative): 2 LDS and 2 STS with a register in its 16,888 shaders, all in the Lighting compute shaders; `d5bc99ffd183fa20` bounds its register by the element count (0x20) before `[R2 * 8]`. [Pokémon Pokopia](../../dm/games/0400A3A01EE4C000/README.md): 921 accesses with stride 1, 68 with 2 and 3,312 with 3, among its 131,426 shaders; `2118ab534fac88c6`'s histogram increments `[R3 * 4]`.
 - **Check:** `DMSH_TEST_XLATE=<translator> python3 dm/gfx/tests/test_dmsh_ampere_mem.py`.
 
+### InverseSqrt of zero on the Vulkan replay
+
+- **Symptom:** (Android) lit surfaces turn black in hard-edged polygons while other pixels blow out to white; the unlit UI still draws. `DM_VK_NANSCAN` finds NaN texels in the 1280x720 `R11G11B10F` scene colour target, with no NaN in any texture the writing fragment shader samples.
+- **Cause:** a normalisation uses GLSL.std.450 `InverseSqrt` on a scalar dot product. For a degenerate normal the dot is 0; Vulkan's `InverseSqrt(0)` gives Inf, and the following `0 * Inf` gives NaN. Maxwell's RSQ returns a finite value there, so the game never sees NaN on the console. The shader writes the result straight to the colour target with no NaN sanitisation.
+- **Fix:** general, in the replay (`vka_spv_safe_rsqrt` in `vka_spvpatch.c`, called from `prep_words` in `vka_shader.c`): before every scalar-float `OpExtInst GLSL.std.450 InverseSqrt`, insert `NMax(x, 0x00800000)` (the smallest normal float) and feed that to the inverse square root. No chain or shader-library rebuild: the modules are patched at pipeline time like the other rewrites there. Vector operands are left as they are (`shortcut:` in the code; add a same-shape constant if one is ever needed).
+- **Found on:** [Hogwarts Legacy](../../dm/games/0100F7E00C70E000/README.md): a frame capture's in-game scene targets had 433,858 NaN texels each (47%); `DM_VK_NANSCAN=2` with a one-draw step named pixel shader `36310803131ac0b6` as the first writer, and its nine sampled textures were all clean.
+- **Check:** `dm/host/tests/t_android_spvpatch.c` injects an `InverseSqrt` into the triangle selftest, checks the tiny constant, `NMax` and rewritten operand, and validates with `spirv-val`; the game's module also validates after the pass. Not yet checked on a phone.
+
 ### HADD2 and HMUL2 with an immediate
 
 - **Symptom:** the GPU hangs (`kIOGPUCommandBufferCallbackErrorHang`) from the first 3D scene on, or frames of about 88 ms, in a shader with a half-float loop.

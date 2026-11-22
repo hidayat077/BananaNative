@@ -452,6 +452,36 @@ int main(void) {
         if (dir) closedir(dir);
         printf("t_android_spvpatch: %d of %d modules in %s read the pool and were rewritten\n", nrw, nmod, pd);
     }
+    {   // InverseSqrt of a scalar is preceded by NMax with the smallest normal float (vka_spv_safe_rsqrt). Inject one into the triangle's vertex shader
+        const uint32_t *src = SPV_TRI_VERT; size_t sn = sizeof SPV_TRI_VERT / 4;
+        uint32_t *m = malloc(sn * 4 + 6 * 4); size_t mn = sn;
+        memcpy(m, src, sn * 4);
+        size_t at = 0; uint32_t bound = m[3];
+        for (size_t i = 5; i < sn;) { uint32_t len = m[i] >> 16; if (!len) break; if ((m[i] & 0xffff) == 62) { at = i; break; } i += len; }
+        CHECK(at != 0, "test module has a store to inject before");
+        if (at) {
+            memmove(m + at + 6, m + at, (sn - at) * 4);
+            uint32_t inv[] = {6u << 16 | 12, 6, bound, 1, 32, 0x39};   // float InverseSqrt of a scalar constant, GLSL.std.450 set 1
+            memcpy(m + at, inv, sizeof inv); m[3] = bound + 1; mn = sn + 6;
+            size_t cn = 0; int ch = 0; uint32_t *r = vka_spv_safe_rsqrt(m, mn, &cn, &ch, err, sizeof err);
+            CHECK(r && ch && !err[0], "scalar InverseSqrt clamped: %s", err);
+            if (r) {
+                int tiny = 0, nmax = 0, safe = 0;
+                for (size_t i = 5; i < cn;) { uint32_t op = r[i] & 0xffff, len = r[i] >> 16; if (!len) break;
+                    if (op == 43 && r[i + 3] == 0x00800000) tiny = 1;
+                    if (op == 12 && len == 7 && r[i + 4] == 80 && r[i + 6] == bound + 1) nmax = 1;
+                    if (op == 12 && len == 6 && r[i + 4] == 32 && r[i + 5] == bound + 2) safe = 1;
+                    i += len; }
+                CHECK(tiny && nmax && safe, "tiny constant, NMax and InverseSqrt of its result present");
+                CHECK(r[3] == bound + 3, "bound grew by the constant and one result id");
+                if (val) CHECK(validate(r, cn, "safe rsqrt"), "safe rsqrt module valid");
+                free(r);
+            }
+            uint32_t *same = vka_spv_safe_rsqrt(src, sn, &cn, &ch, err, sizeof err);
+            CHECK(!same && ch == 0 && !err[0], "a module without InverseSqrt is left alone: %s", err);
+        }
+        free(m);
+    }
     printf("t_android_spvpatch: %s%s\n", g_fail ? "FAILED" : "ok", val ? "" : " (no spirv-val: structure only)");
     return g_fail != 0;
 }

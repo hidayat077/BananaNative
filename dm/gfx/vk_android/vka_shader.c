@@ -412,10 +412,19 @@ static void gs_fill(uint64_t key, int stage, uint32_t **w, size_t *nb) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("geometry shader %016llx: emits a degenerate primitive where it would emit none (DM_VK_GS_FILL)", (unsigned long long)key);
     free(*w); *w = o; *nb = on * 4;
 }
+// GLSL.std.450's InverseSqrt of a zero normal gives Inf on Vulkan and the next 0*Inf is NaN; clamp the operand (vka_spv_safe_rsqrt)
+static void safe_rsqrt(uint64_t key, uint32_t **w, size_t *nb) {
+    size_t on = 0; int ch = 0; char e[256] = "";
+    uint32_t *o = vka_spv_safe_rsqrt(*w, *nb / 4, &on, &ch, e, sizeof e);
+    if (!o) { if (e[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("shader %016llx: inverse square roots not made safe: %s", (unsigned long long)key, e); } return; }
+    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("shader %016llx: inverse square roots of scalars clamped before the divide (Maxwell RSQ)", (unsigned long long)key);
+    free(*w); *w = o; *nb = on * 4;
+}
 // The library's words for a module, made ready for this device: subgroups of one lane where the stage has none (single_lane), a geometry shader's empty runs filled (gs_fill)
 static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_t *nb) {
     if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
     gs_fill(key, e->stage, w, nb);
+    safe_rsqrt(key, w, nb);
 }
 // A library module's words. With the mesh draws drawn through compute (V.memu, vka_memu.c), a pixel shader of per-primitive inputs is only ever drawn behind the generated
 // vertex shader: every module of it is made from its words with those inputs flat (vka_memu_fs_flat), so the variants and retypes made from them are too

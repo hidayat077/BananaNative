@@ -1443,3 +1443,53 @@ fail:
     free(loc); free(ptr_sc); free(ptr_to); free(var_ty); free(kind); free(o.w);
     return NULL;
 }
+
+// Vulkan's GLSL.std.450 InverseSqrt(0) gives Inf, and a later 0*Inf is NaN; Maxwell's RSQ gives a finite result. Clamp the scalar operand to the smallest normal
+// float first, so a degenerate normal (dot 0) produces a large finite inverse instead. Vector operands are left as they are: the degenerate-normal case is scalar.
+// shortcut: no same-shape constant for vector operands; add an OpConstantComposite to cover them if a game shows NaN from one.
+uint32_t *vka_spv_safe_rsqrt(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn) {
+    *changed = 0; if (err) err[0] = 0;
+    if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3], set = 0, ftype = 0; size_t first_fn = nw;
+    static const char glsl[] = "GLSL.std.450";
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) { snprintf(err, errn, "bad instruction at word %zu", i); return NULL; }
+        if (op == 11 && len == 6 && !memcmp(w + i + 2, glsl, sizeof glsl - 1)) set = w[i + 1];
+        else if (op == OpTypeFloat && len >= 3 && w[i + 2] == 32) ftype = w[i + 1];
+        else if (op == OpFunction && first_fn == nw) first_fn = i;
+        i += len;
+    }
+    if (!set || !ftype || first_fn == nw) return NULL;
+    size_t *sites = NULL, ns = 0;
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if ((w[i] & 0xffff) == OpExtInst && len == 6 && w[i + 1] == ftype && w[i + 3] == set && w[i + 4] == 32 && w[i + 5] < bound) {
+            size_t *p = realloc(sites, (ns + 1) * sizeof *sites); if (!p) { free(sites); snprintf(err, errn, "out of memory"); return NULL; }
+            sites = p; sites[ns++] = i;
+        }
+        i += len;
+    }
+    if (!ns) { free(sites); return NULL; }
+    uint32_t cid = bound, nb = bound + 1 + (uint32_t)ns;
+    vec_t o = {0}; size_t si = 0;
+    if (!put_n(&o, w, 5)) goto oom;   // the five header words are not instructions
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if (i == first_fn) { uint32_t c[] = {4u << 16 | 43, ftype, cid, 0x00800000u}; if (!put_n(&o, c, 4)) goto oom; }
+        if (si < ns && sites[si] == i) {
+            uint32_t rid = cid + 1 + (uint32_t)si;
+            uint32_t mx[] = {7u << 16 | OpExtInst, ftype, rid, set, 80, w[i + 5], cid};   // NMax(x, smallest normal)
+            uint32_t rs[] = {w[i], w[i + 1], w[i + 2], w[i + 3], w[i + 4], rid};
+            if (!put_n(&o, mx, 7) || !put_n(&o, rs, 6)) goto oom;
+            si++;
+        } else if (!put_n(&o, w + i, len)) goto oom;
+        i += len;
+    }
+    free(sites);
+    o.w[3] = nb;   // the new constant and one result id per site
+    *out_nw = o.n; *changed = 1;
+    return o.w;
+oom:
+    free(sites); free(o.w); snprintf(err, errn, "out of memory"); return NULL;
+}
