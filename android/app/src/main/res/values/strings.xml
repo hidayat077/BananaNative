@@ -209,6 +209,8 @@
     <string name="settings_to_install_the_update_allow">To install the update, allow Banana Native to install apps (\"Install unknown apps\"), then come back.</string>
     <string name="settings_update">Update</string>
     <string name="settings_updates">Updates</string>
+    <string name="settings_group_general">General</string>
+    <string name="settings_group_system">System</string>
     <string name="settings_what_s_new">What\'s new</string>
     <string name="settings_while_home_shows_a_game">While Home shows a game being prepared</string>
     <string name="settings_xbox_button_label_swap">Xbox button label swap</string>

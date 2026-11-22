@@ -223,23 +223,23 @@ final class TouchControls extends View {
         // a tablet) they stay where the thumbs are, in the bottom corners, instead of spreading over its height
         float y0 = Math.max(0, h - 380 * d), bh = h - y0;
         float bar = picX * w;   // the width of each letterbox bar
-        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
+        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rClick = 17 * d, off = 1.65f * rFace;
         n = 0;
-        // Shoulders in the band's top corners, ZL / ZR outside, L / R inside, minus / plus next to them
-        float shY = y0 + m + 0.7f * rSh;
-        add(BUTTON, ZL, 0, SHAPE_SHOULDER, m + rSh, shY, rSh, "ZL");
-        add(BUTTON, L, 0, SHAPE_SHOULDER, m + 3 * rSh + 10 * d, shY, rSh, "L");
-        add(BUTTON, ZR, 0, SHAPE_SHOULDER, w - m - rSh, shY, rSh, "ZR");
-        add(BUTTON, R, 0, SHAPE_SHOULDER, w - m - 3 * rSh - 10 * d, shY, rSh, "R");
-        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 22 * d + rSmall, shY, rSmall, "−");
-        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 22 * d - rSmall, shY, rSmall, "+");
+        // Six separate round buttons across the top, each the size of A B X Y: − L ZL on the left, + R ZR on the right
+        float shY = y0 + m + rSh, gap = 2 * rSh + 6 * d;
+        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + rSh, shY, rSh, "−");
+        add(BUTTON, L, 0, SHAPE_ROUND, m + rSh + gap, shY, rSh, "L");
+        add(BUTTON, ZL, 0, SHAPE_ROUND, m + rSh + 2 * gap, shY, rSh, "ZL");
+        add(BUTTON, ZR, 0, SHAPE_ROUND, w - m - rSh - 2 * gap, shY, rSh, "ZR");
+        add(BUTTON, R, 0, SHAPE_ROUND, w - m - rSh - gap, shY, rSh, "R");
+        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - rSh, shY, rSh, "+");
         // Left: the stick high, the D-pad low, centred in the bar when it is wide enough
         float top = shY + rSh + 10 * d;
         float lx = Math.max(m + rStick, bar / 2), ly = Math.max(y0 + bh * 0.45f, top + rStick);
-        int ls = add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
+        add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
         add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2), h - m - rPad, rPad, "");
-        float diag = (rStick + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, LS, 0, SHAPE_ROUND, lx + diag, ly + diag, rClick, "L3");
+        // L3 sits clear of the stick, not on top of it
+        add(BUTTON, LS, 0, SHAPE_ROUND, lx + rStick + rClick + 8 * d, ly, rClick, "L3");
         // Right: the face buttons high (A right, B bottom, X top, Y left, as on a Switch), the right stick low
         float fx = Math.min(w - m - rFace - off, w - bar / 2), fy = ly;
         add(BUTTON, A, 0, SHAPE_ROUND, fx + off, fy, rFace, "A");
@@ -248,8 +248,8 @@ final class TouchControls extends View {
         add(BUTTON, Y, 0, SHAPE_ROUND, fx - off, fy, rFace, "Y");
         float rx = Math.min(w - m - rRight, w - bar / 2), ry = h - m - rRight;
         add(STICK, 0, 1, SHAPE_ROUND, rx, ry, rRight, "");
-        float diagR = (rRight + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, RS, 0, SHAPE_ROUND, rx - diagR, ry - diagR, rClick, "R3");
+        // R3 sits clear of the right stick, on its left
+        add(BUTTON, RS, 0, SHAPE_ROUND, rx - rRight - rClick - 8 * d, ry, rClick, "R3");
         // Push apart what still overlaps (a large size on a small screen): the later control moves towards the middle
         for (int pass = 0; pass < 4; pass++)
             for (int j = 0; j < n; j++)

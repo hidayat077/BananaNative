@@ -260,7 +260,7 @@ final class Ui {
     static LinearLayout card(Context c) {
         LinearLayout l = new LinearLayout(c);
         l.setOrientation(LinearLayout.VERTICAL);
-        l.setBackground(round(col(c, R.color.bn_card), dp(c, 24), col(c, R.color.bn_card_stroke), dp(c, 1)));
+        l.setBackground(round(col(c, R.color.bn_card), dp(c, 20), col(c, R.color.bn_card_stroke), dp(c, 1)));
         int p = dp(c, 14);
         l.setPadding(p, p, p, p);
         return l;
@@ -766,18 +766,12 @@ final class Ui {
             boolean on = k == sel;
             LinearLayout tab = new LinearLayout(c);
             tab.setOrientation(LinearLayout.VERTICAL);
-            TextView t = text(c, labels[k], 14, on ? R.color.bn_accent : R.color.bn_text_2, on ? 700 : 600);
+            TextView t = text(c, labels[k], 14, on ? R.color.bn_on_banana : R.color.bn_text_2, on ? 700 : 600);
             t.setSingleLine(true);
             t.setGravity(Gravity.CENTER);
-            t.setPadding(dp(c, 7), dp(c, 10), dp(c, 7), dp(c, 8));
+            t.setPadding(dp(c, 14), dp(c, 7), dp(c, 14), dp(c, 7));
             tab.addView(t);
-            View bar = new View(c);
-            bar.setBackground(round(col(c, R.color.bn_accent), dp(c, 2), 0, 0));
-            bar.setVisibility(on ? View.VISIBLE : View.INVISIBLE);
-            LinearLayout.LayoutParams bl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(c, 3));
-            bl.leftMargin = bl.rightMargin = dp(c, 8);
-            tab.addView(bar, bl);
-            tab.setBackground(ripple(c, round(Color.TRANSPARENT, dp(c, 10), 0, 0)));
+            tab.setBackground(ripple(c, round(on ? col(c, R.color.bn_banana) : col(c, R.color.bn_tint), dp(c, 999), 0, 0)));
             tab.setClickable(true);
             tab.setFocusable(true);
             tab.setSelected(on);

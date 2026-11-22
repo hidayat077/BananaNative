@@ -73,6 +73,20 @@ class PerGameInput(unittest.TestCase):
         self.assertIn('As in Settings: %1$s', g)
 
 
+class SeparateButtons(unittest.TestCase):
+    def test_top_row_is_round_and_spaced(self):
+        tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
+        for b in ('MINUS', 'L', 'ZL', 'ZR', 'R', 'PLUS'):
+            self.assertRegex(tc, r'add\(BUTTON, %s, 0, SHAPE_ROUND, [^\n]*, rSh, "' % b)
+        self.assertIn('gap = 2 * rSh + 6 * d', tc)
+        self.assertNotIn('SHAPE_SHOULDER, m + rSh', tc)   # no shoulder pills any more
+
+    def test_clicks_clear_of_the_sticks(self):
+        tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
+        self.assertIn('lx + rStick + rClick + 8 * d, ly, rClick, "L3"', tc)
+        self.assertIn('rx - rRight - rClick - 8 * d, ry, rClick, "R3"', tc)
+
+
 def setUpModule():
     javatext.install()   # the launcher text is in strings.xml: this module reads the Java source with its English
 
