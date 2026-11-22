@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The Polar bear (polar.png) inside the 108 dp safe area, clear of the variant's badge (src/variant-test or src/variant-play, picked by -PnxPlay in build.gradle) -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:width="108dp" android:height="108dp">
-        <bitmap android:src="@drawable/ic_polar_bear" android:gravity="fill" android:filter="true" />
-    </item>
+    <item android:drawable="@drawable/ic_polar_bear" />
     <item android:drawable="@drawable/ic_launcher_badge" />
 </layer-list>

@@ -341,7 +341,7 @@ public final class MainActivity extends Activity {
         refresh();
     }
 
-    /** The dock: round buttons in a pill. The first is the user (the console's users, what games start with): its letter is the current user's, as the profile icon of a console's home */
+    /** The dock: round buttons in a pill (the wiki and Settings) */
     private View dock() {
         dockRow = new LinearLayout(this);
         dockRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -355,19 +355,6 @@ public final class MainActivity extends Activity {
         gloss.setStroke(dp(1), 0x40FFFFFF);
         dockRow.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{fill, gloss}));
         dockRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-        userButton = Ui.text(this, "", 16, R.color.bn_on_leaf, 800);
-        userButton.setGravity(Gravity.CENTER);
-        userButton.setIncludeFontPadding(false);
-        styleUserButton();
-        userButton.setForeground(ring(999, false));
-        userButton.setContentDescription(Tx.s(R.string.common_users));
-        userButton.setTooltipText(Tx.s(R.string.common_users));
-        userButton.setFocusable(true);
-        userButton.setClickable(true);
-        userButton.setOnClickListener(v -> openUsers());
-        LinearLayout.LayoutParams up = new LinearLayout.LayoutParams(dp(36), dp(36));
-        up.leftMargin = up.rightMargin = dp(3);
-        dockRow.addView(userButton, up);
         dockRow.addView(dockButton(R.drawable.ic_wiki, Tx.s(R.string.settings_player_wiki), false, v -> openLink(WIKI_URL)));
         dockRow.addView(dockButton(R.drawable.ic_settings, Tx.s(R.string.home_settings), false, v -> page(true)));
         return dockRow;
