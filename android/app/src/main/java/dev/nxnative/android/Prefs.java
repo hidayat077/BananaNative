@@ -29,7 +29,7 @@ final class Prefs {
     static java.util.List<String> gameOrder(Context c) { return GameOrder.decode(of(c).getString("game_order", "")); }
     static void gameOrder(Context c, java.util.List<String> ids) { of(c).edit().putString("game_order", GameOrder.encode(ids)).commit(); }
     /** Home's layout (HomeLayout): 0 the sideways row of tiles (default), 1 a grid with the names, 2 a list */
-    static int homeLayout(Context c) { return of(c).getInt("home_layout", 0); }
+    static int homeLayout(Context c) { return of(c).getInt("home_layout", 1); }   // the card grid is the default
     static void homeLayout(Context c, int v) { of(c).edit().putInt("home_layout", v).commit(); }
     /** Docked mode for every game: the host's DM_OPMODE (1 docked, 0 handheld); on by default, as most profiles start docked */
     static boolean dockedMode(Context c) { return of(c).getBoolean("docked_mode", true); }
@@ -672,6 +672,6 @@ final class Prefs {
     // ---- Look: theme (Settings › Appearance) ----
     static final String[] THEME_NAMES = {"Follow the system", "Light", "Dark"};
     /** The launcher's theme: 0 follows the system, 1 light, 2 dark (NxApp.applyTheme) */
-    static int theme(Context c) { return of(c).getInt("ui_theme", 0); }
+    static int theme(Context c) { return of(c).getInt("ui_theme", 2); }   // dark by default; the choice still offers system / light / dark
     static void theme(Context c, int v) { of(c).edit().putInt("ui_theme", v).commit(); }
 }

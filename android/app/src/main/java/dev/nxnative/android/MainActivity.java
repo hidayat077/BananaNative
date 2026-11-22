@@ -333,9 +333,9 @@ public final class MainActivity extends Activity {
         holder.setClipChildren(false);
         holder.addView(gameBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         addFab = addButton();
-        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.END | Gravity.BOTTOM);
-        fl.setMarginEnd(dp(4));
-        fl.bottomMargin = dp(10);
+        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.END | Gravity.BOTTOM);
+        fl.setMarginEnd(dp(12));
+        fl.bottomMargin = dp(16);
         holder.addView(addFab, fl);
         content.addView(holder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         refresh();
@@ -604,13 +604,23 @@ public final class MainActivity extends Activity {
         return row;
     }
 
+    /** A big group caption over the small section labels (General / System), without the "section" tag the wide-screen split uses */
+    private void groupLabel(LinearLayout content, int res) {
+        TextView t = Ui.text(this, Tx.s(res), 12, R.color.bn_accent, 700);
+        t.setAllCaps(true);
+        t.setLetterSpacing(0.08f);
+        t.setPadding(Ui.dp(this, 4), 0, 0, 0);
+        Ui.add(content, t, Ui.SECTION_GAP);
+    }
+
     private void buildSettingsInto(LinearLayout content) {
         accessCard = null;
         gameBox = null;
         content.addView(Ui.header(this, Ui.back(this, v -> page(false)), Tx.s(R.string.settings_settings), null));
 
+        groupLabel(content, R.string.settings_group_general);
         // Updates first, so the version and the check are easy to find (Updater: the release app also checks at every fresh start)
-        Ui.add(content, Ui.section(this, Tx.s(R.string.settings_updates)), 16);
+        Ui.add(content, Ui.section(this, Tx.s(R.string.settings_updates)), 12);
         LinearLayout upd = settingsCard(content);
         updateRow = new Ui.Setting(this, "🔄", Tx.s(R.string.common_check_for_updates), v -> Updater.checkNow(this)).chevron(this);
         upd.addView(updateRow.view);
@@ -643,7 +653,8 @@ public final class MainActivity extends Activity {
         LinearLayout play = settingsCard(content);
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_controls)), Ui.SECTION_GAP);
         LinearLayout ctl = settingsCard(content);
-        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), Ui.SECTION_GAP);
+        groupLabel(content, R.string.settings_group_system);
+        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), 12);
         LinearLayout sys = settingsCard(content);
         // Every default a game inherits and its own page can override: one collapsed group, after the settings that only exist here
         LinearLayout perf = defaultsGroup(content);
@@ -744,9 +755,11 @@ public final class MainActivity extends Activity {
 
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_about)), Ui.SECTION_GAP);
         LinearLayout about = Ui.add(content, Ui.card(this), 8);
+        TextView appName = Ui.text(this, Tx.s(R.string.home_banana_native) + " v" + BuildConfig.VERSION_NAME, 16, R.color.bn_text, 700);
+        about.addView(appName, Ui.wrap());
         TextView tag = Ui.chip(this, Prefs.buildTag(this));   // which build this is (also the first line of every log)
         tag.setTextIsSelectable(true);
-        about.addView(tag, Ui.wrap());
+        Ui.add(about, tag, 8, Ui.wrap());
         StringBuilder ids = new StringBuilder();   // the games this build includes, so a player can tell whether it has theirs (Profile.missing points here)
         for (Profile p : Profile.all()) ids.append("\n· ").append(p.name).append(" (").append(p.titleId).append(")");   // names and title IDs, not text   // names and title IDs, not text
         TextView t = Ui.small(this, Tx.s(R.string.settings_about_games, ids) + (BuildConfig.NX_LSFG ? "" : Tx.s(R.string.settings_built_without_lsfg)));
@@ -1019,7 +1032,7 @@ public final class MainActivity extends Activity {
      * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi)
      * and Remove game (GameDelete). A tile being prepared keeps its job sheet on a long press (workTile)
      */
-    private void optionsMenu(Game g) {
+    void optionsMenu(Game g) {
         if (moveId != null) return;
         List<String> labels = new ArrayList<>();
         List<Runnable> acts = new ArrayList<>();
@@ -1236,10 +1249,10 @@ public final class MainActivity extends Activity {
     private View addButton() {
         ImageView b = new ImageView(this);
         b.setImageDrawable(Ui.icon(this, R.drawable.ic_add, R.color.bn_on_banana));
-        b.setPadding(dp(13), dp(13), dp(13), dp(13));
+        b.setPadding(dp(16), dp(16), dp(16), dp(16));
         b.setBackground(Ui.round(Ui.col(this, R.color.bn_banana), dp(999), 0, 0));
         b.setForeground(ring(999, false));
-        b.setElevation(dp(4));
+        b.setElevation(dp(8));
         b.setContentDescription(Tx.s(R.string.home_add_game));
         b.setTooltipText(Tx.s(R.string.home_add_game));
         b.setClickable(true);
@@ -1327,8 +1340,9 @@ public final class MainActivity extends Activity {
         st.setTag(ST_HIDDEN);
         LinearLayout meta = new LinearLayout(this);
         meta.setOrientation(LinearLayout.VERTICAL);
-        FrameLayout c = artTile(g.name, st, meta, v -> { if (moveId != null) tapMove(g); else manage(g); });   // in move mode a tap places the lifted game
-        c.setOnLongClickListener(v -> { optionsMenu(g); return true; });   // the game's options (workTile puts the job's sheet back on the tile being prepared)
+        // A tap starts the game (launch runs all the pack / shader checks); holding opens its page, where ⋯ keeps Move / cover / Remove reachable
+        FrameLayout c = artTile(g.name, st, meta, v -> { if (moveId != null) tapMove(g); else launch(g); });
+        c.setOnLongClickListener(v -> { manage(g); return true; });
         TextView tile = (TextView) c.getChildAt(0);
         boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
         GameMeta.loadControl(new File(g.gameDir), Edition.control(this, g), m -> {

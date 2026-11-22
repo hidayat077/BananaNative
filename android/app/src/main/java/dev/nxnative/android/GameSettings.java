@@ -589,11 +589,40 @@ final class GameSettings {
      * Play ends the bar (a wide window has it in the left column)
      */
     private static void topBar(MainActivity a, LinearLayout outer, Game g, boolean play, Runnable close) {
+        // A cover banner, with Back and Play over it and the name and version under it
+        android.widget.FrameLayout hero = new android.widget.FrameLayout(a);
+        hero.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View v, android.graphics.Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(a, 20)); }
+        });
+        hero.setClipToOutline(true);
+        hero.setBackground(Ui.round(Ui.col(a, R.color.bn_card), Ui.dp(a, 20), 0, 0));
+        ImageView banner = new ImageView(a);
+        banner.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        hero.addView(banner, new android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ImageView shade = new ImageView(a);
+        shade.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x55000000, 0xDD000000}));
+        hero.addView(shade, new android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        android.widget.FrameLayout.LayoutParams backLp = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.START);
+        backLp.setMargins(Ui.dp(a, 10), Ui.dp(a, 10), 0, 0);
+        hero.addView(Ui.back(a, v -> close.run()), backLp);
+        if (play) {   // Play: a round blue button on the banner
+            ImageView b = new ImageView(a);
+            b.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_banana));
+            b.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 6), Ui.dp(a, 10));   // the triangle looks centred a little right of its box
+            b.setBackground(Ui.round(Ui.col(a, R.color.bn_banana), Ui.dp(a, 999), 0, 0));
+            b.setContentDescription(Tx.s(R.string.common_play));
+            b.setTooltipText(Tx.s(R.string.common_play));
+            b.setClickable(true);
+            b.setFocusable(true);
+            b.setOnClickListener(v -> a.launch(g));
+            android.widget.FrameLayout.LayoutParams pl = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.END);
+            pl.setMargins(0, Ui.dp(a, 10), Ui.dp(a, 10), 0);
+            hero.addView(b, pl);
+        }
+        outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 132)));
         LinearLayout bar = Ui.row(a);
-        bar.addView(Ui.back(a, v -> close.run()), new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44)));
         TextView tile = Ui.tile(a, g.name, 40);
         tile.setTextSize(18);
-        ((LinearLayout.LayoutParams) tile.getLayoutParams()).setMarginStart(Ui.dp(a, 12));
         bar.addView(tile);
         LinearLayout names = new LinearLayout(a);
         names.setOrientation(LinearLayout.VERTICAL);
@@ -609,24 +638,12 @@ final class GameSettings {
         meta.setVisibility(View.GONE);
         names.addView(meta);
         bar.addView(names, Ui.weight());
-        if (play) {   // Play: a round banana button, so the name keeps the room
-            ImageView b = new ImageView(a);
-            b.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_banana));
-            b.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 6), Ui.dp(a, 10));   // the triangle looks centred a little right of its box
-            b.setBackground(Ui.round(Ui.col(a, R.color.bn_banana), Ui.dp(a, 999), 0, 0));
-            b.setContentDescription(Tx.s(R.string.common_play));
-            b.setTooltipText(Tx.s(R.string.common_play));
-            b.setClickable(true);
-            b.setFocusable(true);
-            b.setOnClickListener(v -> a.launch(g));
-            LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44));
-            pl.setMarginStart(Ui.dp(a, 8));
-            bar.addView(b, pl);
-        }
+        bar.addView(Ui.more(a, Tx.s(R.string.game_game_options), v -> a.optionsMenu(g)), new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44)));
         outer.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 48)));
-        boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
+        boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
+        Covers.show(tile, g);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
-            if (m.icon != null && !ownCover) Ui.tileIcon(tile, m.icon);
+            if (m.icon != null && !ownCover) { Ui.tileIcon(tile, m.icon); banner.setImageBitmap(m.icon); }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }
         });

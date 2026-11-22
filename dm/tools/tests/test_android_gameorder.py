@@ -1,6 +1,6 @@
 """Home's tile order (Reorder games) on the JVM: javac compiles GameOrder with android/app/src/jvmtest's GameOrderJvmTest (sorting by id, new games last, removed
-games dropped, stable on repeat, a merged entry keeping its place). Also a source check: a long press on a game's tile opens the Move left / Move right menu
-(a preparing tile keeps its job sheet), and a controller's Y does the same on the focused tile. Skipped without a JDK (the JVM part)."""
+games dropped, stable on repeat, a merged entry keeping its place). Also a source check: a tap on a game's tile launches it, a long press opens its page
+(where ⋯ opens the Move / cover / Remove menu), and a controller's Y does the same on the focused tile. Skipped without a JDK (the JVM part)."""
 import re
 import shutil
 import subprocess
@@ -30,11 +30,14 @@ class GameOrderJvm(unittest.TestCase):
 class GameOrderSource(unittest.TestCase):
     main = (SRC / 'MainActivity.java').read_text()
 
-    def test_long_press_opens_the_menu(self):
+    def test_tap_launches_hold_opens_the_page(self):
         card = self.main[self.main.index('private View gameCard(Game g)'):]
         card = card[:card.index('private View emptyCard') if 'private View emptyCard' in card else 3000]
-        self.assertRegex(card, r'setOnLongClickListener\(v -> \{ optionsMenu\(g\)')
-        menu = self.main[self.main.index('private void optionsMenu(Game g)'):]
+        self.assertRegex(card, r'else launch\(g\);')
+        self.assertRegex(card, r'c\.setOnLongClickListener\(v -> \{ manage\(g\);')
+        gs = (SRC / 'GameSettings.java').read_text()
+        self.assertIn('Ui.more(a, Tx.s(R.string.game_game_options), v -> a.optionsMenu(g))', gs)   # Move / cover / Remove stay reachable from the page
+        menu = self.main[self.main.index('void optionsMenu(Game g)'):]
         menu = menu[:menu.index('// ---- Move')]
         for key in ('home_move_game', 'game_cover_set', 'home_delete_game_menu'):
             self.assertIn('R.string.' + key, menu)

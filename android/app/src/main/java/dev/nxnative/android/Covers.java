@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.util.LruCache;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -94,6 +95,15 @@ final class Covers {
         Bitmap b = bitmap(tile.getContext(), g);
         if (b == null) return false;
         Ui.tileIcon(tile, b);
+        return true;
+    }
+
+    /** The cover as a wide banner (centre-cropped) for a game's page; false when the game has none */
+    static boolean hero(ImageView v, Game g) {
+        Bitmap b = bitmap(v.getContext(), g);
+        if (b == null) return false;
+        v.setImageBitmap(b);
+        v.setScaleType(ImageView.ScaleType.CENTER_CROP);
         return true;
     }
 

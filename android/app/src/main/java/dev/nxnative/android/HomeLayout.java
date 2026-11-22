@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -99,7 +100,25 @@ final class HomeLayout {
             it.setBackground(Ui.round(Ui.col(a, R.color.bn_card), Ui.dp(a, 18), 0, 0));
             it.setGravity(Gravity.CENTER_VERTICAL);
             it.setPadding(Ui.dp(a, 8), Ui.dp(a, 8), Ui.dp(a, 12), Ui.dp(a, 8));
-        } else it.setPadding(0, 0, 0, Ui.dp(a, 6));
+        } else {
+            // A card per game: the cover fills its top, the name and state sit under it, a blue play dot says a tap starts the game
+            it.setBackground(Ui.round(Ui.col(a, R.color.bn_card), Ui.dp(a, 20), Ui.col(a, R.color.bn_card_stroke), Ui.dp(a, 1)));
+            it.setPadding(Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 10));
+            tile.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                @Override public void getOutline(View v, android.graphics.Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(a, 14)); }
+            });
+            tile.setClipToOutline(true);
+            ImageView play = new ImageView(a);
+            play.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_banana));
+            play.setBackground(Ui.round(Ui.col(a, R.color.bn_banana), Ui.dp(a, 999), 0, 0));
+            play.setPadding(Ui.dp(a, 8), Ui.dp(a, 8), Ui.dp(a, 6), Ui.dp(a, 8));
+            play.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            play.setClickable(true);
+            play.setOnClickListener(v -> tile.performClick());
+            FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(Ui.dp(a, 32), Ui.dp(a, 32), Gravity.BOTTOM | Gravity.END);
+            pp.setMargins(0, 0, Ui.dp(a, 8), Ui.dp(a, 8));
+            tile.addView(play, pp);
+        }
         it.setOnClickListener(v -> tile.performClick());
         it.setOnLongClickListener(v -> tile.performLongClick());
         it.setOnTouchListener((v, e) -> { if (e.getActionMasked() == MotionEvent.ACTION_DOWN) a.selectTile(it, false); return false; });
