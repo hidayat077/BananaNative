@@ -16,10 +16,6 @@ Update 2.0.2 (v393216) over the base game, SDK 19.3.11 (NVN 55). Game Freak's Tr
 
 `render_cond` stays off: it changes nothing in this game.
 
-## Android on-screen controls
-
-`TouchControls.setGame` gives this title its own thumb-first layout and look; every other game keeps the Switch-like one. The host still receives the same `DM_BTN_*` bits, so this is presentation only. Talk (A) is the large primary button; Dash (B), Roll (Y) and Menu (X) sit around it, with the camera stick and Mega (R3) below. Focus (ZL), Ball (ZR) and Rotate (R) / Reset (L) are the shoulders, Photo (−) and Map (+) the small buttons, Crouch (L3) rides the move stick, and the D-pad calls out SEND / RECALL / PREV / NEXT for the game's D-pad actions. Its labels are drawn in English; the layout editor and the game's saved offsets still apply on top of it. Not yet checked on a phone.
-
 ## Memory
 
 - With virtual address memory (a 16 MB system resource), `nninitStartup` (`main+0x1b2e650`) initializes its StandardAllocator over 12 GB of address space, `StandardAllocator::Initialize(nullptr, 0x300000000)` (`main+0x1b3e3ec`), as the Switch's 64 GB alias region allows.

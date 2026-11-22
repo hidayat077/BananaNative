@@ -38,8 +38,6 @@ final class TouchControls extends View {
             PLUS = 1 << 10, MINUS = 1 << 11, LEFT = 1 << 12, UP = 1 << 13, RIGHT = 1 << 14, DOWN = 1 << 15;
     private static final int BUTTON = 0, STICK = 1, DPAD = 2, MAX = 24;   // input_map.h NXT_*, NXT_MAX
     private static final int SHAPE_ROUND = 0, SHAPE_SHOULDER = 1;
-    private static final String ZA_TITLE = "0100F43008C44000";   // Pokémon Legends: Z-A
-    private boolean za;
 
     private final boolean input;   // the host takes touches (nxhost_input_touch)
     private SharedPreferences prefs() { return Prefs.open(getContext(), "touch_controls"); }   // read again when the other process wrote it (Prefs.open)
@@ -111,8 +109,6 @@ final class TouchControls extends View {
         setHapticFeedbackEnabled(true);
     }
 
-    /** Pokémon Legends: Z-A gets a thumb-first layout named for its actions; every other game keeps the Switch-like one. Call before the view is sized. */
-    void setGame(String titleId) { za = ZA_TITLE.equals(titleId); }
 
     /** A gamepad connected (the controls hide) or the last one gone (they come back, unless the user hid them) */
     void setGamepad(boolean connected) {
@@ -227,10 +223,33 @@ final class TouchControls extends View {
         // a tablet) they stay where the thumbs are, in the bottom corners, instead of spreading over its height
         float y0 = Math.max(0, h - 380 * d), bh = h - y0;
         float bar = picX * w;   // the width of each letterbox bar
+        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rClick = 17 * d, off = 1.65f * rFace;
         n = 0;
-        float shY = y0 + m + 0.7f * 25 * d;
-        if (za) layoutZA(w, h, d, m, shY, bar);
-        else layoutDefault(w, h, d, m, y0, bh, bar, shY);
+        // Six separate round buttons across the top, each the size of A B X Y: − L ZL on the left, + R ZR on the right
+        float shY = y0 + m + rSh, gap = 2 * rSh + 6 * d;
+        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + rSh, shY, rSh, "−");
+        add(BUTTON, L, 0, SHAPE_ROUND, m + rSh + gap, shY, rSh, "L");
+        add(BUTTON, ZL, 0, SHAPE_ROUND, m + rSh + 2 * gap, shY, rSh, "ZL");
+        add(BUTTON, ZR, 0, SHAPE_ROUND, w - m - rSh - 2 * gap, shY, rSh, "ZR");
+        add(BUTTON, R, 0, SHAPE_ROUND, w - m - rSh - gap, shY, rSh, "R");
+        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - rSh, shY, rSh, "+");
+        // Left: the stick high, the D-pad low, centred in the bar when it is wide enough
+        float top = shY + rSh + 10 * d;
+        float lx = Math.max(m + rStick, bar / 2), ly = Math.max(y0 + bh * 0.45f, top + rStick);
+        add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
+        add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2), h - m - rPad, rPad, "");
+        // L3 sits clear of the stick, not on top of it
+        add(BUTTON, LS, 0, SHAPE_ROUND, lx + rStick + rClick + 8 * d, ly, rClick, "L3");
+        // Right: the face buttons high (A right, B bottom, X top, Y left, as on a Switch), the right stick low
+        float fx = Math.min(w - m - rFace - off, w - bar / 2), fy = ly;
+        add(BUTTON, A, 0, SHAPE_ROUND, fx + off, fy, rFace, "A");
+        add(BUTTON, B, 0, SHAPE_ROUND, fx, fy + off, rFace, "B");
+        add(BUTTON, X, 0, SHAPE_ROUND, fx, fy - off, rFace, "X");
+        add(BUTTON, Y, 0, SHAPE_ROUND, fx - off, fy, rFace, "Y");
+        float rx = Math.min(w - m - rRight, w - bar / 2), ry = h - m - rRight;
+        add(STICK, 0, 1, SHAPE_ROUND, rx, ry, rRight, "");
+        // R3 sits clear of the right stick, on its left
+        add(BUTTON, RS, 0, SHAPE_ROUND, rx - rRight - rClick - 8 * d, ry, rClick, "R3");
         // Push apart what still overlaps (a large size on a small screen): the later control moves towards the middle
         for (int pass = 0; pass < 4; pass++)
             for (int j = 0; j < n; j++)
@@ -256,65 +275,6 @@ final class TouchControls extends View {
                 n, w, h, h / dp, u, y0, prof, custom() ? ", the user's layout" : "", picX, picY, scale, opacity, active() ? "shown" : "hidden")
                 + (stretch || pictureSize < PictureFit.SIZE_MAX ? ", picture " + (stretch ? "stretched" : "fitted") + " at " + pictureSize + " %" : ""));
         apply();
-    }
-
-    /** The Switch-like layout every other game gets */
-    private void layoutDefault(float w, float h, float d, float m, float y0, float bh, float bar, float shY) {
-        float rStick = 60 * d, rRight = 54 * d, rPad = 50 * d, rFace = 25 * d, rSh = 25 * d, rSmall = 17 * d, rClick = 17 * d, off = 1.65f * rFace;
-        // Shoulders in the band's top corners, ZL / ZR outside, L / R inside, minus / plus next to them
-        add(BUTTON, ZL, 0, SHAPE_SHOULDER, m + rSh, shY, rSh, "ZL");
-        add(BUTTON, L, 0, SHAPE_SHOULDER, m + 3 * rSh + 10 * d, shY, rSh, "L");
-        add(BUTTON, ZR, 0, SHAPE_SHOULDER, w - m - rSh, shY, rSh, "ZR");
-        add(BUTTON, R, 0, SHAPE_SHOULDER, w - m - 3 * rSh - 10 * d, shY, rSh, "R");
-        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 22 * d + rSmall, shY, rSmall, "−");
-        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 22 * d - rSmall, shY, rSmall, "+");
-        // Left: the stick high, the D-pad low, centred in the bar when it is wide enough
-        float top = shY + rSh + 10 * d;
-        float lx = Math.max(m + rStick, bar / 2), ly = Math.max(y0 + bh * 0.45f, top + rStick);
-        add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
-        add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2), h - m - rPad, rPad, "");
-        float diag = (rStick + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, LS, 0, SHAPE_ROUND, lx + diag, ly + diag, rClick, "L3");
-        // Right: the face buttons high (A right, B bottom, X top, Y left, as on a Switch), the right stick low
-        float fx = Math.min(w - m - rFace - off, w - bar / 2), fy = ly;
-        add(BUTTON, A, 0, SHAPE_ROUND, fx + off, fy, rFace, "A");
-        add(BUTTON, B, 0, SHAPE_ROUND, fx, fy + off, rFace, "B");
-        add(BUTTON, X, 0, SHAPE_ROUND, fx, fy - off, rFace, "X");
-        add(BUTTON, Y, 0, SHAPE_ROUND, fx - off, fy, rFace, "Y");
-        float rx = Math.min(w - m - rRight, w - bar / 2), ry = h - m - rRight;
-        add(STICK, 0, 1, SHAPE_ROUND, rx, ry, rRight, "");
-        float diagR = (rRight + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, RS, 0, SHAPE_ROUND, rx - diagR, ry - diagR, rClick, "R3");
-    }
-
-    /** Pokémon Legends: Z-A, laid out for thumbs and named after the game's actions. The bits are unchanged: the host still gets a standard Switch pad. */
-    private void layoutZA(float w, float h, float d, float m, float shY, float bar) {
-        float rSh = 26 * d, rSmall = 17 * d, rClick = 17 * d;
-        add(BUTTON, ZL, 0, SHAPE_SHOULDER, m + rSh, shY, rSh, "Focus");
-        add(BUTTON, L, 0, SHAPE_SHOULDER, m + 3 * rSh + 12 * d, shY, rSh, "Reset");
-        add(BUTTON, ZR, 0, SHAPE_SHOULDER, w - m - rSh, shY, rSh, "Ball");
-        add(BUTTON, R, 0, SHAPE_SHOULDER, w - m - 3 * rSh - 12 * d, shY, rSh, "Rotate");
-        add(BUTTON, MINUS, 0, SHAPE_ROUND, m + 4 * rSh + 24 * d + rSmall, shY, rSmall, "Photo");
-        add(BUTTON, PLUS, 0, SHAPE_ROUND, w - m - 4 * rSh - 24 * d - rSmall, shY, rSmall, "Map");
-        // Move stick and, above it, a D-pad that sends / recalls / selects Pokémon
-        float rStick = 62 * d, rPad = 44 * d;
-        float lx = Math.max(m + rStick, bar / 2), ly = h - m - rStick - 8 * d;
-        add(STICK, 0, 0, SHAPE_ROUND, lx, ly, rStick, "");
-        float dLS = (rStick + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, LS, 0, SHAPE_ROUND, lx + dLS, ly + dLS, rClick, "Crouch");
-        add(DPAD, UP | DOWN | LEFT | RIGHT, 0, SHAPE_ROUND, Math.max(m + rPad, bar / 2), ly - rStick - rPad - 6 * d, rPad, "");
-        // Camera stick and Mega near the right thumb, with a Talk-first action diamond above them
-        float rRight = 56 * d;
-        float rx = Math.min(w - m - rRight, w - bar / 2), ry = h - m - rRight - 8 * d;
-        add(STICK, 0, 1, SHAPE_ROUND, rx, ry, rRight, "");
-        float dRS = (rRight + rClick + 6 * d) * 0.7071f;
-        add(BUTTON, RS, 0, SHAPE_ROUND, rx - dRS, ry - dRS, rClick, "Mega");
-        float rA = 38 * d, rF = 28 * d, off = Math.max(36 * d, 1.45f * rF);   // clear the diagonal neighbours on a narrow screen
-        float cx = Math.min(w - m - rA - off, w - bar / 2 - 10 * d), cy = ry - rRight - off - rF - (rClick + 4 * d);
-        add(BUTTON, A, 0, SHAPE_ROUND, cx + off, cy, rA, "Talk");
-        add(BUTTON, B, 0, SHAPE_ROUND, cx, cy + off, rF, "Dash");
-        add(BUTTON, X, 0, SHAPE_ROUND, cx, cy - off, rF, "Menu");
-        add(BUTTON, Y, 0, SHAPE_ROUND, cx - off, cy, rF, "Roll");
     }
 
     // ---- The user's layout: groups moved and scaled, the picture placed, kept per screen shape ----
@@ -607,7 +567,6 @@ final class TouchControls extends View {
     }
 
     private void drawControls(Canvas c) {
-        if (za) { drawControlsZA(c); return; }
         for (int i = 0; i < n; i++) {
             boolean held = pressed[i] != 0;
             fill.setColor(held ? Color.argb(alpha(0.55f), 255, 255, 255) : Color.argb(alpha(0.35f), 0, 0, 0));
@@ -696,75 +655,6 @@ final class TouchControls extends View {
             path.close();
             fill.setColor(held ? Color.argb(alpha(0.9f), 255, 255, 255) : Color.argb(alpha(0.35f), 255, 255, 255));
             c.drawPath(path, fill);
-        }
-    }
-
-    // ---- Pokémon Legends: Z-A's look: dark translucent pads, one cyan accent, the action named on every button ----
-    private static final int ZA_DARK = 0x000000, ZA_EDGE = 0xFFFFFF, ZA_ACCENT = 0x56D6E8;
-    private int za(int rgb, float a) { return Color.argb(alpha(a), Color.red(rgb), Color.green(rgb), Color.blue(rgb)); }
-
-    /** Draw a label shrunk to fit the pad, since these are words where the other layout has one letter */
-    private void zaText(Canvas c, String s, float x, float y, float maxW, float size, int color) {
-        text.setColor(color);
-        text.setTextSize(size);
-        float w = text.measureText(s);
-        if (w > maxW) text.setTextSize(size * maxW / w);
-        c.drawText(s, x, y - (text.descent() + text.ascent()) / 2, text);
-    }
-
-    private void drawControlsZA(Canvas c) {
-        for (int i = 0; i < n; i++) {
-            boolean held = pressed[i] != 0;
-            if (kind[i] == STICK) {
-                float sx = sticks[2 * stick[i]], sy = sticks[2 * stick[i] + 1];
-                fill.setColor(za(ZA_DARK, held ? 0.4f : 0.28f));
-                c.drawCircle(cx[i], cy[i], r[i], fill);
-                line.setColor(za(ZA_ACCENT, 0.85f));
-                c.drawCircle(cx[i], cy[i], r[i], line);
-                float k = r[i] * 0.55f, kx = cx[i] + sx * k, ky = cy[i] - sy * k;
-                fill.setColor(za(ZA_ACCENT, held ? 0.9f : 0.55f));
-                c.drawCircle(kx, ky, r[i] * 0.45f, fill);
-                line.setColor(za(ZA_EDGE, 0.8f));
-                c.drawCircle(kx, ky, r[i] * 0.45f, line);
-            } else if (kind[i] == DPAD) {
-                drawDpadZA(c, i);
-            } else if (shape[i] == SHAPE_SHOULDER) {
-                rect.set(cx[i] - r[i], cy[i] - r[i] * 0.62f, cx[i] + r[i], cy[i] + r[i] * 0.62f);
-                fill.setColor(za(ZA_DARK, held ? 0.75f : 0.55f));
-                line.setColor(za(ZA_EDGE, 0.7f));
-                c.drawRoundRect(rect, r[i] * 0.5f, r[i] * 0.5f, fill);
-                c.drawRoundRect(rect, r[i] * 0.5f, r[i] * 0.5f, line);
-                zaText(c, label[i], cx[i], cy[i], r[i] * 1.7f, r[i] * 0.5f, za(ZA_EDGE, 1f));
-            } else {
-                boolean primary = buttons[i] == A;   // Talk is the big one the thumb comes back to
-                fill.setColor(primary ? za(ZA_ACCENT, held ? 0.9f : 0.62f) : za(ZA_DARK, held ? 0.75f : 0.5f));
-                line.setColor(za(primary ? ZA_EDGE : ZA_ACCENT, 0.95f));
-                c.drawCircle(cx[i], cy[i], r[i], fill);
-                c.drawCircle(cx[i], cy[i], r[i], line);
-                zaText(c, label[i], cx[i], cy[i], r[i] * 1.55f, r[i] * (label[i].length() > 3 ? 0.32f : 0.5f),
-                        primary ? za(0, 1f) : za(ZA_EDGE, 1f));
-            }
-        }
-    }
-
-    /** Four named pads instead of the Switch D-pad's arrows: send out, call back, cycle either way */
-    private void drawDpadZA(Canvas c, int i) {
-        float x = cx[i], y = cy[i], rr = r[i];
-        fill.setColor(za(ZA_DARK, 0.5f));
-        line.setColor(za(ZA_ACCENT, 0.7f));
-        c.drawCircle(x, y, rr, fill);
-        c.drawCircle(x, y, rr, line);
-        long[] dirs = {UP, RIGHT, DOWN, LEFT};
-        float[] dx = {0, 1, 0, -1}, dy = {-1, 0, 1, 0};
-        String[] names = {"SEND", "NEXT", "RECALL", "PREV"};
-        for (int k = 0; k < 4; k++) {
-            boolean held = (pressed[i] & dirs[k]) != 0;
-            float px = x + dx[k] * rr * 0.52f, py = y + dy[k] * rr * 0.52f;
-            fill.setColor(held ? za(ZA_ACCENT, 0.95f) : za(ZA_DARK, 0.75f));
-            line.setColor(za(ZA_ACCENT, 0.85f));
-            c.drawCircle(px, py, rr * 0.38f, fill);
-            c.drawCircle(px, py, rr * 0.38f, line);
-            zaText(c, names[k], px, py, rr * 0.62f, rr * 0.2f, held ? za(0, 1f) : za(ZA_EDGE, 1f));
         }
     }
 

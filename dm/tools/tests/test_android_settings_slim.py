@@ -73,22 +73,18 @@ class PerGameInput(unittest.TestCase):
         self.assertIn('As in Settings: %1$s', g)
 
 
-class ZAOnScreenControls(unittest.TestCase):
-    def test_only_za_gets_the_custom_layout(self):
-        a = (SRC / 'GameActivity.java').read_text(encoding='utf-8')
-        self.assertIn('controls.setGame(id);', a)
+class SeparateButtons(unittest.TestCase):
+    def test_top_row_is_round_and_spaced(self):
         tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
-        self.assertIn('ZA_TITLE = "0100F43008C44000"', tc)
-        self.assertIn('void setGame(String titleId) { za = ZA_TITLE.equals(titleId); }', tc)
-        self.assertIn('if (za) layoutZA(', tc)
-        self.assertIn('if (za) { drawControlsZA(c); return; }', tc)
-        self.assertIn('else layoutDefault(', tc)
+        for b in ('MINUS', 'L', 'ZL', 'ZR', 'R', 'PLUS'):
+            self.assertRegex(tc, r'add\(BUTTON, %s, 0, SHAPE_ROUND, [^\n]*, rSh, "' % b)
+        self.assertIn('gap = 2 * rSh + 6 * d', tc)
+        self.assertNotIn('SHAPE_SHOULDER, m + rSh', tc)   # no shoulder pills any more
 
-    def test_za_action_labels(self):
+    def test_clicks_clear_of_the_sticks(self):
         tc = (SRC / 'TouchControls.java').read_text(encoding='utf-8')
-        for s in ('"Focus"', '"Reset"', '"Ball"', '"Rotate"', '"Photo"', '"Map"', '"Crouch"', '"Mega"',
-                  '"Talk"', '"Dash"', '"Menu"', '"Roll"', '"SEND"', '"NEXT"', '"RECALL"', '"PREV"'):
-            self.assertIn(s, tc)
+        self.assertIn('lx + rStick + rClick + 8 * d, ly, rClick, "L3"', tc)
+        self.assertIn('rx - rRight - rClick - 8 * d, ry, rClick, "R3"', tc)
 
 
 def setUpModule():
