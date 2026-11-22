@@ -1016,7 +1016,7 @@ public final class MainActivity extends Activity {
     private List<Game> shownGames() { return GameOrder.sort(games, Prefs.gameOrder(this), Game::orderId); }
 
     /**
-     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below), Set cover image (and Reset cover when it has one: CoverUi)
+     * A game's options, from a long press on its tile (Hold X or Y on a controller): Move (a reorder mode, below)
      * and Remove game (GameDelete). A tile being prepared keeps its job sheet on a long press (workTile)
      */
     void optionsMenu(Game g) {
@@ -1024,8 +1024,6 @@ public final class MainActivity extends Activity {
         List<String> labels = new ArrayList<>();
         List<Runnable> acts = new ArrayList<>();
         if (shownGames().size() > 1) { labels.add(Tx.s(R.string.home_move_game)); acts.add(() -> startMove(g)); }
-        labels.add(Tx.s(R.string.game_cover_set)); acts.add(() -> CoverUi.start(this, g));
-        if (CoverUi.has(this, g)) { labels.add(Tx.s(R.string.game_cover_reset)); acts.add(() -> CoverUi.reset(this, g)); }
         labels.add(Tx.s(R.string.home_delete_game_menu)); acts.add(() -> GameDelete.ask(this, g));
         new PadFocus.Builder(this).setTitle(g.name).setItems(labels.toArray(new String[0]), (d, w) -> acts.get(w).run()).show();
     }
@@ -1332,12 +1330,19 @@ public final class MainActivity extends Activity {
         c.setOnLongClickListener(v -> { manage(g); return true; });
         TextView tile = (TextView) c.getChildAt(0);
         boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
+        java.util.concurrent.atomic.AtomicBoolean hasLocalIcon = new java.util.concurrent.atomic.AtomicBoolean();
         GameMeta.loadControl(new File(g.gameDir), Edition.control(this, g), m -> {
-            if (m.icon != null && !ownCover) Ui.tileIcon(tile, m.icon);
+            if (m.icon != null && !ownCover) {
+                hasLocalIcon.set(true);
+                Ui.tileIcon(tile, m.icon);
+            }
             TileInfo ti = (TileInfo) c.getTag();
             ti.version = m.version;
             HomeLayout.caption(ti);   // the grid's and the list's second line
         });   // with the edition switch on, program 1's icon
+        if (!ownCover) CoverFetch.fetchIfMissing(this, g, hasLocalIcon, b -> {
+            if (!hasLocalIcon.get()) Ui.tileIcon(tile, b);
+        });
         if (Profile.of(g.titleId) == null) {   // no profile in this APK: it cannot run here (Profile.missing says why); the page still has its folders, saves and Remove
             state(st, Tx.s(R.string.common_not_in_this_app_version), R.color.bn_danger, 0);
             return c;
