@@ -321,7 +321,7 @@ typedef struct vka_img {
     uint8_t pool_fit;        // its memory requirements fit its storage in the pool (vka_tex_alias_stats): type, size and alignment
     // pool: the texture's pool at the image's creation, pgen its Initialize serial then (hle_nvn.c nvn_pool_live; 0: none or not live); pfin: nvn_pool_fin at the last check;
     // pdead: that pool was finalized since (vka_tex.c img_pool_dead): its storage is not read again
-    const void *pool; uint64_t pgen, pfin; int pdead;
+    const void *pool; uint64_t pgen, pfin; int pdead; uint8_t cpu_vis;
     uint8_t dcap;            // a sparse texture's dense image whose finer levels DM_VK_SPARSE_DENSE_MB left out (vka_tex.c dense_floor)
     struct vka_img *zold;    // the zero-shared image it left while a holder had it (vka_tex.c img_own): destroyed once holds drop to 0
     // Large images (DM_VK_BIGIMG_MB, vka_tex.c "Large images"): draws that bound it for sampling, other textures found over its storage (the first serials)
@@ -361,7 +361,10 @@ void vka_tex_soft_stats(char *b, size_t n);          // soft textures now: how m
 void vka_tex_big_stats(char *b, size_t n);           // the largest images the GPU has not written, with what sampled them and what lies over their storage (DM_VK_BIGIMG_MB)
 void vka_tex_kind_log(void);                          // log lines: the live images by content and by why the cache keeps them, and the largest (the ctl stats)
 int vka_rp_is_open(void);                            // a render pass is open in the replay's command buffer (vka_draw.c)
-void vka_tex_writeback(VkCommandBuffer cb);   // mtl_sub_commit, after the last pass
+void vka_tex_rt_wb(vka_img *im, uint32_t lv, uint32_t l0, uint32_t nl);   // vka_draw.c: block-linear colour target in a CPU-visible pool, mirrored back into guest storage
+int vka_tex_blwb_pending(void);
+void vka_tex_blwb_done(uint64_t fence);
+void vka_tex_writeback(VkCommandBuffer cb, uint64_t fence);   // mtl_sub_commit, after the last pass
 // Texture pool reads (vka_tex.c, DM_VK_POOL_FB): the texture IDs shaders read through the pool, reported by the GPU, so their images are made and kept while read
 // The bitmap, a storage buffer of 2^20 bits, in a set of its own after the pool's: on Qualcomm's driver a storage buffer in the pool's set, after its 2^20 sampled images,
 // is never written (docs/reference/rendering.md "Texture pool reads report nothing on Qualcomm's driver")

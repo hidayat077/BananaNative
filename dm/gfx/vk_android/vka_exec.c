@@ -334,7 +334,7 @@ static uint64_t sh_get(uint32_t qi, uint32_t use, PFN_vkGetQueryPoolResults get)
 }
 static void post_run(void *ops_, int n) {   // the completion thread, in submission order, before the fence reads as done
     pop *ops = ops_;
-    for (int i = 0; i < n; i++) if (ops[i].kind < 1 || ops[i].kind > 7) {   // (diagnostic: an op array that is not one, see vka_dev.c's checks of the post records)
+    for (int i = 0; i < n; i++) if (ops[i].kind < 1 || ops[i].kind > 8) {   // (diagnostic: an op array that is not one, see vka_dev.c's checks of the post records)
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("completion effects: op %d of %d has kind %d (address %#llx): not an op array (freed or overwritten); its effects are dropped (not freed)",
                                                                    i, n, ops[i].kind, (unsigned long long)ops[i].addr);
         return;
@@ -363,6 +363,7 @@ static void post_run(void *ops_, int n) {   // the completion thread, in submiss
         if (ops[i].kind == 4) { atomic_store(&g_rc_done, ops[i].addr); continue; }   // DM_VK_RC_LOG: this submission's reports up to here are written
         if (ops[i].kind == 5 || ops[i].kind == 6) { oq_done(&ops[i], ticks); continue; }   // a counted samples-passed report, queries given back (Occlusion queries)
         if (ops[i].kind == 7) { atomic_store(&g_cal_post[(ops[i].q0 - 1) % 8], now_ns()); continue; }   // this slot's submission had its completion processed now
+        if (ops[i].kind == 8) { vka_tex_blwb_done(ops[i].addr); continue; }   // block-linear colour targets mirrored back into guest storage
         if (ops[i].kind == 3) {   // the frame's span to here (the adaptive GPU clock floor)
             uint64_t f = ops[i].addr; unsigned k = f % 64;
             vka_floor_done(ops[i].v);
@@ -833,6 +834,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
         unsigned kc = (g_slot_i - 1) % NSLOT; post((pop){7, 0, 0, 0, 0, kc + 1});
         if (tscal()) { g_cal_on[kc] = 1; g_cal_draws[kc] = (uint32_t)(g_stat_draws - g_sub_draws0); g_cal_sig[kc] = signal; }
     }
+    if (g_cb && vka_tex_blwb_pending()) post((pop){8, 0, 0, 0, fence, 0});
     pop *ops = g_npost ? malloc((size_t)g_npost * sizeof *ops) : NULL; if (ops) memcpy(ops, g_post, (size_t)g_npost * sizeof *ops);
     int n = g_npost; g_npost = 0;
     ops = carry_take(fence, signal, ops, &n);
@@ -841,7 +843,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
     if (VKA_ENV("DM_VK_PARTLOG", 0) && g_nx) { char zb[400]; vka_rp_zstats(zb, sizeof zb); VLOG("last part of the submission of frame %llu: %llu draws%s", (unsigned long long)g_frame, (unsigned long long)(g_stat_draws - g_chunk_d0), zb); }
     vka_disp_settle(g_cb);   // the submission's last dispatches before the steps below and the next submission's (vka_draw.c "Dispatch order")
     vka_rw_point(g_cb, 'e', 0, 0, 0); vka_rw_commit(fence);   // DM_VK_RANGE_WATCH: the bytes at the submission's end, logged once it is done
-    vka_tex_writeback(g_cb);   // linear textures the GPU wrote, back into their storage for the CPU
+    vka_tex_writeback(g_cb, fence);   // linear and CPU-visible block-linear targets the GPU wrote, back into their storage for the CPU
     vka_tex_pfb_commit(g_cb, fence);   // the texture IDs its shaders read through the pool: copied out for the host (the barrier below) and cleared
     VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT};
     vk.vkCmdPipelineBarrier(g_cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
