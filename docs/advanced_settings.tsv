@@ -741,7 +741,7 @@ DM_VK_TSCAL	developer	Diagnostics			text			both
 DM_VK_TS_LOG	developer	Diagnostics			text			both							
 DM_VK_TS_TICK	developer	Graphics			text			both							
 DM_VK_TU_UBWC_HINT	developer	Graphics			text			both							
-DM_VK_UBWC	developer	Graphics			text			both							
+DM_VK_UBWC	developer	Graphics			text		Off with Turnip, on with other drivers	both							
 DM_VK_UB_DEFER	developer	Graphics			text			both							
 DM_VK_UB_PEEK	developer	Diagnostics			text			both							
 DM_VK_UB_PEEK_AT	developer	Diagnostics			text			both							

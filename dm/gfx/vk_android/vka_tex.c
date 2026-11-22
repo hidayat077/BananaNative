@@ -539,8 +539,9 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
     // Views in another format: only an 8-bit / BC / ASTC UNORM image as its sRGB twin (NVN sRGB formats are stored as UNORM, and UNORM textures have sRGB views; the
     // only reinterpretation DKB's level makes). A two-entry format list instead of a bare MUTABLE_FORMAT keeps Adreno's UBWC compression on the image; every other image
     // takes views of its own format only
-    // DM_VK_UBWC=0: every colour image MUTABLE_FORMAT without a list, as before (any view format; no UBWC on Adreno)
-    int ubwc = VKA_ENV("DM_VK_UBWC", 1);   // live: images made from now on
+    // DM_VK_UBWC=0: every colour image MUTABLE_FORMAT without a list, as before (any view format; no UBWC on Adreno).
+    // Off by default on Turnip (driver_id 18): UBWC on colour images left neon pink/cyan/blue/black specks along TOTK's terrain seams on Adreno 650.
+    int ubwc = VKA_ENV("DM_VK_UBWC", V.driver_id == VK_DRIVER_ID_MESA_TURNIP ? 0 : 1);   // live: images made from now on
     VkFormat alt = f->kind == 0 && srgb_twin(f->vk) != f->vk ? srgb_twin(f->vk) :
                    f->kind == 0 && raw_unorm_twin(f->vk) != f->vk ? raw_unorm_twin(f->vk) : VK_FORMAT_UNDEFINED;
     im->fl = (vkfl){0};

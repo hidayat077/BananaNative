@@ -24,9 +24,10 @@ int main(void) {
     CHECK((v = val(r, n, "DM_VK_FSR3_WAVE")) && !strcmp(v, "1"), "Turnip: FSR 3.1 quad shuffles");
     CHECK((v = val(r, n, "DM_VK_SUBGROUP_GS")) && !strcmp(v, "0"), "Turnip: one-lane geometry subgroups");
     CHECK((v = val(r, n, "DM_VK_SHUFFLE_LDS")) && !strcmp(v, "1"), "Turnip: shuffles through workgroup memory");
+    CHECK((v = val(r, n, "DM_VK_UBWC")) && !strcmp(v, "0"), "Turnip: no colour UBWC format lists");
     CHECK(!val(r, n, "DM_VK_MESH") && !val(r, n, "DM_VK_GS_FILL") && !val(r, n, "DM_VK_ONE_LANE") && !val(r, n, "DM_VK_OQ_SPLIT_PASS") && !val(r, n, "DM_VK_PREWARM"),
           "Turnip: no Qualcomm rule");
-    CHECK(n == 6, "Turnip: 6 rules, got %d", n);
+    CHECK(n == 7, "Turnip: 7 rules, got %d", n);
 
     // Qualcomm's driver (512.800 or later), mesh draws through compute, profile with every key
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .memu = 1, .vin_dyn_ext = 1, .prof_one_lane = 2, .prof_prepass_cut = 3, .prof_oq_split = 1}, r, 16);
