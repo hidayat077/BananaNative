@@ -23,9 +23,14 @@ modules	main subsdk0 sdk
 zip_store	.sdfdata
 romfs_marker	camel/sdf/nx/data/_FileList.txt
 
-# ---- Memory (from the survey, not measured yet) ----
-mem_reserve	0x140000000
-mem_alias	0x118000000
+# ---- Memory ----
+# Snowdrop reserves its page pools unchanged; the 5 GB / 4.375 GB survey guess left the first
+# AllocateAddressRegion without space and the unchecked reservation crashed in DT_INIT.
+# A Switch-sized 64 GB alias region is what the engine expects (the same layout DM_ALIAS_SIZE
+# used to give it while bringing this game up); the block is 66 GB so the stacks and heap keep
+# their offsets below it.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
 mem_stack	0x10000000
 app_pool	0xCD500000
 sys_resource	0x1000000
