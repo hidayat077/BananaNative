@@ -635,21 +635,51 @@ def snowdrop_shaders(d, label, wrapped=True):
 
 
 SDF_D4 = bytes.fromhex('d400cdab')
+SDF_CHUNK = 0x10000
+
+def _sdf_zlib_chunk(view, pos, limit=1 << 23):
+    """Inflate one complete zlib stream starting at pos in view. Returns (raw, consumed) or (None, 0)."""
+    if pos + 2 > len(view) or (view[pos] & 0xf) != 8 or int.from_bytes(view[pos:pos + 2], 'big') % 31:
+        return None, 0
+    dec = zlib.decompressobj()
+    end = pos; parts = []; got = 0
+    try:
+        while not dec.eof and end < len(view):
+            nxt = min(end + 0x10000, len(view))
+            chunk = dec.decompress(view[end:nxt], limit - got + 1)
+            parts.append(chunk); got += len(chunk); end = nxt
+            if got > limit or dec.unconsumed_tail: return None, 0
+    except zlib.error:
+        return None, 0
+    if not dec.eof: return None, 0
+    return b''.join(parts), (end - pos) - len(dec.unused_data)
 
 def snowdrop_sdf_zlib_shaders(d, label):
-    """A second Snowdrop SDF asset framing (South Park: The Fractured but Whole): a logical asset is one zlib stream whose inflated object starts with 0xabcd00d4, not the raw 0xabcd00c5 / c6 record of snowdrop_shaders(). The object holds the same GLSLC control + code pair, with its lengths at the control's +0x20 and +0x704. Scan zlib headers rather than names: other SDF assets are bare streams too."""
+    """A second Snowdrop SDF asset framing (South Park: The Fractured but Whole): a logical asset is zlib-compressed and its inflated object starts with 0xabcd00d4 (20-byte header with payload length at +12), not the raw 0xabcd00c5 / c6 record of snowdrop_shaders(). Assets larger than 64 KB (0x10000) are split into consecutive 64 KB zlib chunks; reassemble them to the header's payload length so shaders past the first 64 KB (or straddling a boundary) are not dropped. The object holds the same GLSLC control + code pair, with its lengths at the control's +0x20 and +0x704. Scan zlib headers rather than names: other SDF assets are bare streams too."""
     out = []
     view = memoryview(d)
+    skip = 0
     for m in re.finditer(rb'[\x18\x28\x38\x48\x58\x68\x78]', d):
         h = m.start()
-        if h + 2 > len(d) or int.from_bytes(view[h:h + 2], 'big') % 31: continue
+        if h < skip or h + 2 > len(d) or int.from_bytes(view[h:h + 2], 'big') % 31: continue
         # Only a 256-byte probe per candidate: inflating a whole 4 MB window for each
         # false header made a full SDF scan take hours instead of minutes.
         try: head = zlib.decompressobj().decompress(view[h:h + 256], 4)
         except zlib.error: continue
         if head != SDF_D4: continue
-        try: raw = zlib.decompressobj().decompress(d[h:h + (1 << 22)], 1 << 23)
-        except zlib.error: continue
+        raw, consumed = _sdf_zlib_chunk(view, h)
+        if raw is None: continue
+        p = h + consumed
+        if len(raw) == SDF_CHUNK and len(raw) >= 20:
+            want = struct.unpack_from('<I', raw, 12)[0] + 20
+            if SDF_CHUNK < want <= (1 << 23):
+                buf = bytearray(raw)
+                while len(buf) < want and p < len(d):
+                    nxt, nc = _sdf_zlib_chunk(view, p, want - len(buf))
+                    if nxt is None: break
+                    buf += nxt; p += nc
+                raw = bytes(buf)
+        skip = p
         for cm in re.finditer(re.escape(CTL_MAGIC), raw):
             c = cm.start()
             if c + 0x708 > len(raw): continue
