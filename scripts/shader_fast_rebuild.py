@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / 'scripts'))
 sys.path.insert(0, str(REPO / 'dm/games'))
 sys.path.insert(0, str(REPO / 'dm/gfx/tools'))
 
-import bananative_env  # noqa: E402
+import polar_env  # noqa: E402
 import dmsh_chain  # noqa: E402
 import game as game_mod  # noqa: E402
 import pack_dump  # noqa: E402
@@ -293,7 +293,7 @@ def _detect_from_work(work: Path) -> tuple[str, Path | None]:
 
 def inspect_source(path_str: str | Path) -> GameContext:
     """Inspect a .nup file, dump folder, or <id>-work directory."""
-    bananative_env.apply()
+    polar_env.apply()
     p = Path(path_str).expanduser().resolve()
     if not p.exists():
         raise FileNotFoundError(f'Path not found: {p}')
@@ -651,7 +651,7 @@ def sync_to_pack_manual(work_dir: Path, pack_dir: Path, title_id: str, target_vk
 
 def build_vk_command(ctx: GameContext, threads: int, require_all: bool = True) -> tuple[list[str], dict[str, str]]:
     """Build command and environment for vk_android_win.py (cross-platform dotnet/spirv-val)."""
-    bananative_env.apply()
+    polar_env.apply()
     env = os.environ.copy()
     env['DM_GAME'] = ctx.title_id
     env['J'] = str(max(1, threads))
@@ -668,7 +668,7 @@ def build_pack_command(ctx: GameContext, threads: int, version: int | None = Non
     """Build command for scripts/pack_android.py (handles first-time split, code rewrite, shader build, pack.tsv)."""
     if not ctx.game_source:
         raise RuntimeError('Select a dump folder or .nup file; pack_android.py requires it')
-    bananative_env.apply()
+    polar_env.apply()
     env = os.environ.copy()
     cmd = [sys.executable, str(PACK_ANDROID), str(ctx.game_source), '--out', str(ctx.pack_dir), '-J', str(max(1, threads))]
     if version is not None:

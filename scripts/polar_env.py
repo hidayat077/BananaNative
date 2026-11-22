@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# The packer's environment (android/environment.yml, made by scripts/bananative.command or scripts/bananative.bat): where its tools are and whether they work.
+# The packer's environment (android/environment.yml, made by scripts/polar.command or scripts/polar.bat): where its tools are and whether they work.
 # apply() puts the environment's programs first on PATH and points DOTNET_ROOT at its .NET runtime, so the packer's subprocesses (the rewriter, shader_split.py,
 # vk_android_build.py with the translator and spirv-val) find them without the environment being activated; pack_gui.py calls it at start.
-# Usage: <env python> scripts/bananative_env.py [--quiet]   check the tools of the environment this Python belongs to; exit 1 when one is missing or does not run
+# Usage: <env python> scripts/polar_env.py [--quiet]   check the tools of the environment this Python belongs to; exit 1 when one is missing or does not run
 import os, shutil, subprocess, sys
 from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]

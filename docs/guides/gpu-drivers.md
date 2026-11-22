@@ -1,7 +1,7 @@
 # GPU drivers
 
 The game's graphics run on a Vulkan driver: the phone's own Qualcomm driver (**System**) or a custom driver such as
-Turnip (the open-source Mesa driver for Adreno GPUs). Banana Native is tested with both, on a Snapdragon 8 Elite Gen 5.
+Turnip (the open-source Mesa driver for Adreno GPUs). Polar is tested with both, on a Snapdragon 8 Elite Gen 5.
 Back to the [guides](README.md).
 
 ## Which one to use

@@ -2892,7 +2892,7 @@ def frame_size(f):
 def lz4_frame(f):
     """An LZ4 frame (lz4's Frame format) decompressed block by block with lz4.block, which every packing Python has: the phone's carries python-lz4's block module
     only (android/ondevice/build.sh), and the frame module's absence left the .cmp containers closed, among them the 9,092 of Kirby and the Forgotten Land's
-    add-on that hold its Switch 2 Edition's shaders (BananaNative #356). A linked block decodes with the frame's last 64 KiB as its dictionary. The checksums are
+    add-on that hold its Switch 2 Edition's shaders (Polar #356). A linked block decodes with the frame's last 64 KiB as its dictionary. The checksums are
     not verified: unsized checks the size against its prefix"""
     import lz4.block
     flg, bd = f[4], f[5]

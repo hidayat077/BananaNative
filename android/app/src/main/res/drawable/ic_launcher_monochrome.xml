@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The Polar bear silhouette for themed icons, with the variant's badge cut out -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@drawable/ic_banana_happy_mono" />
+    <item>
+        <bitmap android:src="@drawable/ic_polar_bear_mono" android:gravity="center" android:width="108dp" android:height="108dp" />
+    </item>
     <item android:drawable="@drawable/ic_launcher_badge_mono" />
 </layer-list>

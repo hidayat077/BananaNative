@@ -121,7 +121,7 @@ public final class LayerService extends Service {
         try {
             android.app.NotificationManager nm = getSystemService(android.app.NotificationManager.class);
             nm.createNotificationChannel(new android.app.NotificationChannel(CHANNEL, "Checking shaders", android.app.NotificationManager.IMPORTANCE_LOW));
-            android.app.Notification n = new android.app.Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_banana_mono).setOnlyAlertOnce(true)
+            android.app.Notification n = new android.app.Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_polar_mono).setOnlyAlertOnce(true)
                     .setCategory(android.app.Notification.CATEGORY_PROGRESS).setContentTitle("Checking shaders").setContentText("A quick check of the shaders after an update").build();
             startForeground(NOTE, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
             return true;

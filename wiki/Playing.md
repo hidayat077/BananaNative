@@ -27,12 +27,12 @@ On-screen controls with a layout editor, gamepad support, and phone motion are a
 
 ## Starting from a frontend or home screen
 
-Banana Native starts a game for emulator frontends such as ES-DE, Daijisho, Beacon and Pegasus, which list your `.nup` files and send the one you pick to the app. All files access must be on.
+Polar starts a game for emulator frontends such as ES-DE, Daijisho, Beacon and Pegasus, which list your `.nup` files and send the one you pick to the app. All files access must be on.
 
 - A game that is ready to play starts at once, with no launcher screen. When you stop it, the frontend comes back.
 - If something needs you (no pack, Prepare, shaders to update, file access), Home opens with the game; fix it, then start again from the frontend.
 - A game's menu on Home has **Add to home screen**, which pins a shortcut with its name and tile.
-- Frontends need no change of their own, but until one ships Banana Native in its emulator list you add it once by hand with the component `dev.bananative.android/dev.bananative.android.Launch`. Examples for ES-DE are in the project's FRONTENDS note in the repository (`android/FRONTENDS.md`).
+- Frontends need no change of their own, but until one ships Polar in its emulator list you add it once by hand with the component `dev.polar.android/dev.polar.android.Launch`. Examples for ES-DE are in the project's FRONTENDS note in the repository (`android/FRONTENDS.md`).
 
 ## First starts can be slow
 

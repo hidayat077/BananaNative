@@ -104,7 +104,7 @@ final class ReleaseImages {
             if (!UpdateCheck.allowedImage(cur, source)) throw new IOException("host not allowed");
             HttpURLConnection c = (HttpURLConnection) new URL(cur).openConnection();
             try {
-                c.setRequestProperty("User-Agent", "BananaNative-updater");
+                c.setRequestProperty("User-Agent", "Polar-updater");
                 c.setRequestProperty("Accept", "image/*");
                 c.setConnectTimeout(CONNECT_MS);
                 c.setReadTimeout(READ_MS);

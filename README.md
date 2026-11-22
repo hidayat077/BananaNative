@@ -1,9 +1,9 @@
-<p align="center"><img src="android/images/logo.svg" alt="Banana Native logo" width="128"></p>
+<p align="center"><img src="android/images/logo.svg" alt="Polar logo" width="128"></p>
 
-# Banana Native
+# Polar
 
-Banana Native runs Switch 2 games from your own dumps on Android phones. Like Wine, it emulates no hardware: the
-game's own ARM64 code runs on the phone's CPU, Banana Native supplies the system services it calls and translates its
+Polar runs Switch 2 games from your own dumps on Android phones. Like Wine, it emulates no hardware: the
+game's own ARM64 code runs on the phone's CPU, Polar supplies the system services it calls and translates its
 graphics to Vulkan. It is an Android port of [nxnative](https://github.com/seedds/nxnative) by seedds.
 
 > [!NOTE]
@@ -50,7 +50,7 @@ First install the APK from [Releases](https://github.com/moceure/BananaNative/re
 **PC (Windows) or Mac** ([guide](docs/guides/pc-mac-packing.md)). Mac: tested. Windows: new and not yet tested on a
 real PC — please report how it goes.
 
-1. Download this repository and double-click `scripts\bananative.bat` (Windows) or `scripts/bananative.command`
+1. Download this repository and double-click `scripts\polar.bat` (Windows) or `scripts/polar.command`
    (Mac). The first time, it installs its tools (about 400 MB) into a folder you pick.
 2. Pick the game (its folder or `.nup` file) and click **Prepare**.
 3. Copy the game folder to the phone, and the pack next to it: `<title ID>-work/android-pack`.
@@ -70,7 +70,7 @@ only rewrite code when its key changes (a few minutes). A computer is recommende
   [Discussions](https://github.com/moceure/BananaNative/discussions). More: [Troubleshooting](docs/guides/troubleshooting.md).
 
 > [!IMPORTANT]
-> The official places for Banana Native are this GitHub repository and its mirror on
+> The official places for Polar are this GitHub repository and its mirror on
 > [git.eden-emu.dev](https://git.eden-emu.dev/moceure/BananaNative): download the APK only from their releases. Nobody
 > from the project will ask you for money, keys or game files.
 

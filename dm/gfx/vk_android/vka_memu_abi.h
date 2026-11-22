@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Hokkaido contributors (the compute mesh emulation: pavelgajdo/Hokkaido #569, #642)
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native (this port)
+// SPDX-FileCopyrightText: Copyright 2026 Polar (this port)
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // NVN2 task and mesh draws through compute on a device without VK_EXT_mesh_shader (vka_memu_spv.c, vka_memu.c; docs/reference/rendering.md "Mesh draws through

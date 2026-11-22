@@ -5,7 +5,7 @@ it in its own storage, `Android/data/<app>/files/packs/<title ID>`. Back to the 
 
 ## Export pack…
 
-The game's ⋯ button › **Export pack…** writes the pack as one `.zip` (`banana-pack-<title ID>-<version>.zip`) into a
+The game's ⋯ button › **Export pack…** writes the pack as one `.zip` (`polar-pack-<title ID>-<version>.zip`) into a
 folder you pick, and checks it file by file. Use it to keep a pack before you uninstall, or to move it to another
 phone without preparing again.
 

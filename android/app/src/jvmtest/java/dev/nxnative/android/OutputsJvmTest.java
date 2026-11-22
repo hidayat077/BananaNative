@@ -7,7 +7,7 @@ import java.nio.file.Files;
 
 /**
  * Outputs on the JVM: a step's outputs written in place in their folder count as complete only once Outputs.finish wrote the marker, and a new run, a stop
- * at any point before the marker, or a delete never leaves them accepted; a step recorded done whose outputs went runs again (Outputs.redo, BananaNative
+ * at any point before the marker, or a delete never leaves them accepted; a step recorded done whose outputs went runs again (Outputs.redo, Polar
  * issue #3). {@code <empty folder>}: prints "ok" lines, exits 1 on the first failed check.
  * Run by dm/tools/tests/test_android_outputs.py.
  */
@@ -52,7 +52,7 @@ public final class OutputsJvmTest {
     }
 
     /**
-     * BananaNative issue #3: job.json (beside the dump, on shared storage) recorded the rewrite done; the pack folder (the app's own storage) went with an
+     * Polar issue #3: job.json (beside the dump, on shared storage) recorded the rewrite done; the pack folder (the app's own storage) went with an
      * uninstall, so the pack step stopped at "no complete main". A step recorded done whose outputs are gone runs again; finished shaders stay.
      */
     private static void stepsRecordedDone(File root) throws IOException {

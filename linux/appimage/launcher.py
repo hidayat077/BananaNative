@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# BananaNative's game window for the AppImage (PyQt6; AppRun falls back to zenity dialogs without it). One card per game: what it needs next, in words, and
+# Polar's game window for the AppImage (PyQt6; AppRun falls back to zenity dialogs without it). One card per game: what it needs next, in words, and
 # only the buttons that apply. A game is ready when it has a pack made for this AppImage's shader version and its game file (.nup) is found.
-# AppRun starts it with NX_APPDIR, NX_SELF (the AppImage), NX_CONF (~/.config/banananative). It plays a game by starting the AppImage with the pack folder
+# AppRun starts it with NX_APPDIR, NX_SELF (the AppImage), NX_CONF (~/.config/polar). It plays a game by starting the AppImage with the pack folder
 # (and quits, so the game has the memory), and prepares one with linux/tools/linux-pack.sh from the source this AppImage was built from.
 #   launcher.py                 the window
 #   launcher.py --prepare <nup> prepare one game with a progress window only (for tests)
@@ -16,17 +16,17 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QVBoxLa
 
 APPDIR = os.environ.get('NX_APPDIR', os.path.dirname(os.path.abspath(__file__)) + '/../../..')
 SELF = os.environ.get('NX_SELF', os.path.join(APPDIR, 'AppRun'))
-CONF = os.environ.get('NX_CONF', os.path.expanduser('~/.config/banananative'))
+CONF = os.environ.get('NX_CONF', os.path.expanduser('~/.config/polar'))
 HOME = os.path.expanduser('~')
 GAMES = os.path.join(HOME, 'Games')
-PACKS = os.path.join(GAMES, 'BananaNative', 'packs')
-PE = os.path.join(os.environ.get('XDG_DATA_HOME', os.path.join(HOME, '.local/share')), 'banananative', 'packer')
+PACKS = os.path.join(GAMES, 'Polar', 'packs')
+PE = os.path.join(os.environ.get('XDG_DATA_HOME', os.path.join(HOME, '.local/share')), 'polar', 'packer')
 ID_RE = re.compile(r'\[([0-9A-Fa-f]{16})\]')
 
 def source():
     d = {}
     try:
-        for l in open(os.path.join(APPDIR, 'usr/share/banananative/source')):
+        for l in open(os.path.join(APPDIR, 'usr/share/polar/source')):
             k, _, v = l.strip().partition(' '); d[k] = v
     except OSError: pass
     return d
@@ -89,7 +89,7 @@ def games():
     return g
 
 def yes(parent, text):   # NX_LAUNCHER_YES=1: every question answered yes (unattended tests)
-    return os.environ.get('NX_LAUNCHER_YES') == '1' or QMessageBox.question(parent, 'BananaNative', text) == QMessageBox.StandardButton.Yes
+    return os.environ.get('NX_LAUNCHER_YES') == '1' or QMessageBox.question(parent, 'Polar', text) == QMessageBox.StandardButton.Yes
 
 def tilde(p): return '~' + p[len(HOME):] if p and p.startswith(HOME + '/') else p
 
@@ -156,7 +156,7 @@ def env_write(path, values, header):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'; open(tmp, 'w', encoding='utf-8').write('\n'.join(lines) + '\n'); os.replace(tmp, path)
 
-GAME_ENV_HEADER = """# BananaNative settings for one game (the title ID in this file's name). They win over settings.env.
+GAME_ENV_HEADER = """# Polar settings for one game (the title ID in this file's name). They win over settings.env.
 # Written by the game window's Options; lines KEY=VALUE as in settings.env. A line starting with '#' is switched off."""
 
 class OptionsDialog(QDialog):
@@ -211,7 +211,7 @@ class OptionsDialog(QDialog):
 
     def save(self):
         try: env_write(self.path, {k: cb.currentData() for k, cb in self.boxes.items()}, GAME_ENV_HEADER if self.game else '')
-        except OSError as e: QMessageBox.warning(self, 'BananaNative', f'Could not save {tilde(self.path)}: {e}'); return
+        except OSError as e: QMessageBox.warning(self, 'Polar', f'Could not save {tilde(self.path)}: {e}'); return
         self.accept()
 
     def edit_file(self):
@@ -239,16 +239,16 @@ QProgressBar::chunk { background: #2f6fde; border-radius: 6px; }
 
 class Window(QWidget):
     def __init__(self):
-        super().__init__(); self.setObjectName('root'); self.setWindowTitle('BananaNative'); self.resize(1100, 760)
+        super().__init__(); self.setObjectName('root'); self.setWindowTitle('Polar'); self.resize(1100, 760)
         self.proc = None; self.busy = None
         v = QVBoxLayout(self); v.setContentsMargins(24, 18, 24, 18); v.setSpacing(14)
-        top = QHBoxLayout(); t = QLabel('BananaNative'); t.setObjectName('title'); top.addWidget(t); top.addStretch(1)
+        top = QHBoxLayout(); t = QLabel('Polar'); t.setObjectName('title'); top.addWidget(t); top.addStretch(1)
         for text, fn in (('Add a game file…', self.add_nup), ('Settings', self.settings), ('Open the Games folder', self.open_games)):
             b = QPushButton(text); b.clicked.connect(fn); top.addWidget(b)
         v.addLayout(top)
         help_ = QFrame(); help_.setObjectName('help'); h = QVBoxLayout(help_); h.setContentsMargins(16, 12, 16, 12)
         hl = QLabel('<b>How it works</b> &nbsp;1. Put the game file (<i>.nup</i>) in <i>~/Games</i>. &nbsp;2. <b>Prepare</b> it once (15-40 minutes; the '
-                    'first time also downloads the tools). &nbsp;3. <b>Play</b>.<br>Preparing again is only needed when a game says so (after a BananaNative '
+                    'first time also downloads the tools). &nbsp;3. <b>Play</b>.<br>Preparing again is only needed when a game says so (after a Polar '
                     'update that changed the shaders). Saves are kept either way.')
         hl.setWordWrap(True); h.addWidget(hl); v.addWidget(help_)
         self.area = QScrollArea(); self.area.setWidgetResizable(True); self.area.setFrameShape(QFrame.Shape.NoFrame)
@@ -288,7 +288,7 @@ class Window(QWidget):
             self.step = QLabel('Starting'); self.step.setObjectName('detail'); left.addWidget(self.step)
             button('Stop preparing', self.stop)
         elif not runnable:
-            st.setText('This BananaNative cannot run this game yet'); st.setObjectName('bad')
+            st.setText('This Polar cannot run this game yet'); st.setObjectName('bad')
             det.setText(det.text() + '<br>A newer AppImage that includes it is needed.')
         elif not nup:
             st.setText('Game file not found'); st.setObjectName('bad')
@@ -297,7 +297,7 @@ class Window(QWidget):
             st.setText('Needs preparing (once)'); st.setObjectName('todo')
             button('Prepare', lambda: self.prepare(nup), 'primary')
         elif chain and e.get('chain') and e['chain'] != chain:
-            st.setText('Needs preparing again: BananaNative was updated'); st.setObjectName('todo')
+            st.setText('Needs preparing again: Polar was updated'); st.setObjectName('todo')
             button('Prepare again', lambda: self.prepare(nup), 'primary')
         else:
             st.setText('Ready to play'); st.setObjectName('ok')
@@ -329,7 +329,7 @@ class Window(QWidget):
         f, _ = QFileDialog.getOpenFileName(self, 'A game file to prepare', GAMES, 'Game file (*.nup)')
         if not f: return
         m = ID_RE.search(os.path.basename(f))
-        if not m: QMessageBox.warning(self, 'BananaNative', 'Its name has no [title ID] (16 hexadecimal digits in square brackets).'); return
+        if not m: QMessageBox.warning(self, 'Polar', 'Its name has no [title ID] (16 hexadecimal digits in square brackets).'); return
         i = m.group(1).upper(); os.makedirs(CONF, exist_ok=True); open(os.path.join(CONF, i + '.nup'), 'w').write(f + '\n')
         self.refresh()
         if i in hosts() and yes(self, 'Prepare it now? (15-40 minutes)'): self.prepare(f)
@@ -343,9 +343,9 @@ class Window(QWidget):
             if yes(self, f'Steam has to close for a moment to add {name} (it starts again by itself). Close Steam now?'): return self.add_steam(i, name, True)
             return
         if r.returncode == 0:
-            QMessageBox.information(self, 'BananaNative', f'{name} is in Steam now: in Game Mode, Library, Non-Steam.\n\n{out}')
+            QMessageBox.information(self, 'Polar', f'{name} is in Steam now: in Game Mode, Library, Non-Steam.\n\n{out}')
         else:
-            QMessageBox.warning(self, 'BananaNative', f'{name} was not added to Steam.\n\n{out}')
+            QMessageBox.warning(self, 'Polar', f'{name} was not added to Steam.\n\n{out}')
         self.refresh()
 
     def options(self, i, e): OptionsDialog(self, i, e.get('name', i), e.get('pack')).exec()
@@ -356,14 +356,14 @@ class Window(QWidget):
     def prepare(self, nup):
         i = ID_RE.search(os.path.basename(nup)).group(1).upper()
         if subprocess.run(['pgrep', '-f', '[u]sr/bin/nxhost_'], stdout=subprocess.DEVNULL).returncode == 0:
-            QMessageBox.warning(self, 'BananaNative', 'A game is running. Close it first: preparing needs the memory.'); return
+            QMessageBox.warning(self, 'Polar', 'A game is running. Close it first: preparing needs the memory.'); return
         for tool in ('spirv-val', 'curl'):
-            if not shutil.which(tool): QMessageBox.warning(self, 'BananaNative', f'{tool} is missing (spirv-val: the spirv-tools package).'); return
-        if 'commit' not in SRC: QMessageBox.warning(self, 'BananaNative', 'This AppImage does not say which source it was built from: it cannot prepare.'); return
+            if not shutil.which(tool): QMessageBox.warning(self, 'Polar', f'{tool} is missing (spirv-val: the spirv-tools package).'); return
+        if 'commit' not in SRC: QMessageBox.warning(self, 'Polar', 'This AppImage does not say which source it was built from: it cannot prepare.'); return
         self.src = os.path.join(PE, 'src-' + SRC['commit'][:12])
         need_tools = not (os.access(os.path.join(self.src, 'linux/tools/linux-pack.sh'), os.X_OK) and os.access(os.path.join(PE, 'venv/bin/python'), os.X_OK)
                           and os.access(os.path.join(PE, 'dotnet/dotnet'), os.X_OK))
-        if need_tools and not yes(self, 'Preparing needs the pack tools of this BananaNative version, once:\n• its source (about 130 MB)\n'
+        if need_tools and not yes(self, 'Preparing needs the pack tools of this Polar version, once:\n• its source (about 130 MB)\n'
                                                '• Python packages and the .NET 10 runtime (first time only)\n\nAbout 10 minutes. Download them now?'):
             return
         self.busy, self.nup, self.out = i, nup, os.path.join(PACKS, i)
@@ -376,7 +376,7 @@ class Window(QWidget):
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.logf = open(self.log, 'a'); self.proc.readyReadStandardOutput.connect(self.output)
         self.proc.finished.connect(lambda code, st: done(code == 0 and st == QProcess.ExitStatus.NormalExit))
-        inh = ['kde-inhibit', '--power', '--screenSaver'] if shutil.which('kde-inhibit') else (['systemd-inhibit', '--what=idle:sleep', '--why=BananaNative'] if shutil.which('systemd-inhibit') else [])
+        inh = ['kde-inhibit', '--power', '--screenSaver'] if shutil.which('kde-inhibit') else (['systemd-inhibit', '--what=idle:sleep', '--why=Polar'] if shutil.which('systemd-inhibit') else [])
         args = inh + ['sh', '-c', script]; self.proc.start(args[0], args[1:])
 
     def run_tools(self):
@@ -420,18 +420,18 @@ class Window(QWidget):
         print(f'prepared: {name}', flush=True)
         if os.environ.get('NX_LAUNCHER_YES') != '1':
             if steam_shortcut and name + STEAM_SUFFIX not in in_steam() and \
-               QMessageBox.question(self, 'BananaNative', f'{name} is ready to play.\n\nAdd it to Steam too, to play it from Game Mode?') == QMessageBox.StandardButton.Yes:
+               QMessageBox.question(self, 'Polar', f'{name} is ready to play.\n\nAdd it to Steam too, to play it from Game Mode?') == QMessageBox.StandardButton.Yes:
                 self.add_steam(self.out and os.path.basename(self.out), name)
-            else: QMessageBox.information(self, 'BananaNative', f'{name} is ready to play.')
+            else: QMessageBox.information(self, 'Polar', f'{name} is ready to play.')
 
     def failed(self, what):
         tail = [l for l in open(self.log, errors='replace').read().splitlines() if not l.startswith('progress')][-8:]
         self.busy = None; self.proc = None; self.refresh()
         print('failed: ' + what, flush=True)
-        if os.environ.get('NX_LAUNCHER_YES') != '1': QMessageBox.warning(self, 'BananaNative', what + f'\n\nThe last lines of its log ({tilde(self.log)}):\n\n' + '\n'.join(tail))
+        if os.environ.get('NX_LAUNCHER_YES') != '1': QMessageBox.warning(self, 'Polar', what + f'\n\nThe last lines of its log ({tilde(self.log)}):\n\n' + '\n'.join(tail))
 
     def stop(self):
-        if self.proc and QMessageBox.question(self, 'BananaNative', 'Stop preparing? The game keeps its current pack.') == QMessageBox.StandardButton.Yes:
+        if self.proc and QMessageBox.question(self, 'Polar', 'Stop preparing? The game keeps its current pack.') == QMessageBox.StandardButton.Yes:
             self.proc.finished.disconnect(); pid = self.proc.processId()
             try: os.killpg(os.getpgid(pid), signal.SIGTERM)
             except OSError: self.proc.kill()
@@ -439,7 +439,7 @@ class Window(QWidget):
             shutil.rmtree(self.out + '.new', ignore_errors=True); self.busy = None; self.proc = None; self.refresh()
 
     def closeEvent(self, ev):
-        if self.proc and QMessageBox.question(self, 'BananaNative', 'A game is being prepared. Close anyway? Preparing stops.') != QMessageBox.StandardButton.Yes:
+        if self.proc and QMessageBox.question(self, 'Polar', 'A game is being prepared. Close anyway? Preparing stops.') != QMessageBox.StandardButton.Yes:
             ev.ignore(); return
         if self.proc: self.busy = 'x'; self.stop_now()
         ev.accept()
@@ -449,7 +449,7 @@ class Window(QWidget):
         except TypeError: pass
         subprocess.run(['pkill', '-TERM', '-f', '[s]cripts/pack_android.py']); self.proc.kill()
 
-STEAM_SUFFIX = steam_shortcut.SUFFIX if steam_shortcut else ' (BananaNative)'
+STEAM_SUFFIX = steam_shortcut.SUFFIX if steam_shortcut else ' (Polar)'
 
 def in_steam():
     try: return steam_shortcut.shortcut_names() if steam_shortcut else set()

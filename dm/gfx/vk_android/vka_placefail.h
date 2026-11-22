@@ -1,5 +1,5 @@
 // Whether a driver's placed maps work at all (vka_mem.c place): a driver can advertise VK_EXT_map_memory_placed (readiness passes) and still fail every placed map, as
-// PanVK builds do on a Mali-G77 (vkMapMemory2 returns VK_ERROR_MEMORY_MAP_FAILED, BananaNative #92, #20). Nothing is then placed, the GPU sees none of the game's memory
+// PanVK builds do on a Mali-G77 (vkMapMemory2 returns VK_ERROR_MEMORY_MAP_FAILED, Polar #92, #20). Nothing is then placed, the GPU sees none of the game's memory
 // and the picture stays black while the log repeats one line per pool. This counts the outcomes so the host can say it once: after VKP_LIMIT failures in a row with no
 // placement ever made, the driver is declared not to place. Pure counters, free of Android and Vulkan so the Mac's unit test (dm/host/tests/t_android_placefail.c) can
 // check them. A single failure (one pool at an address another mapping holds) says nothing, and one success clears the verdict for good: the driver places, a later failure is

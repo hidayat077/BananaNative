@@ -1,6 +1,6 @@
 # Games
 
-Banana Native runs Nintendo Switch 2 games from a dump folder you made from your own console, or from a `.nup` package of one. This page lists every game the app has a profile for, how well each one runs, and which settings are specific to it. The table below is generated from the game profiles in the source, so it follows the app version.
+Polar runs Nintendo Switch 2 games from a dump folder you made from your own console, or from a `.nup` package of one. This page lists every game the app has a profile for, how well each one runs, and which settings are specific to it. The table below is generated from the game profiles in the source, so it follows the app version.
 
 ## What the status means
 

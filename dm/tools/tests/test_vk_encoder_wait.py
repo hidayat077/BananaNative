@@ -1,6 +1,6 @@
 """Run the production encoder ring and futex handshake on Linux; mock only driver calls and AArch64 WFE.
 
-By Nociif, from 71f6a73a on branch fix/mkw of inazuma2k8/BananaNative, without its DM_VK_ENC_WAKE part (not in this change).
+By Nociif, from 71f6a73a on branch fix/mkw of inazuma2k8/Polar, without its DM_VK_ENC_WAKE part (not in this change).
 """
 from pathlib import Path
 import shutil

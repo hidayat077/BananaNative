@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Hokkaido contributors (the compute mesh emulation: pavelgajdo/Hokkaido #569 per-submission arena, #642 descriptor budget)
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native (this port)
+// SPDX-FileCopyrightText: Copyright 2026 Polar (this port)
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // NVN2 task and mesh draws through compute (docs/reference/rendering.md "Mesh draws through compute"), the Vulkan side that is not a draw: each task / mesh shader's

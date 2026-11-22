@@ -37,7 +37,7 @@ Open an [issue](https://git.eden-emu.dev/moceure/BananaNative/issues/new/choose)
 - what happened, and what you did just before;
 - the phone, its chip and RAM, and the Android version;
 - the GPU driver (Settings › **GPU driver**) and its version if it is a custom one;
-- the game's title ID and version, and the Banana Native release;
+- the game's title ID and version, and the Polar release;
 - the Readiness check result (**Copy report**);
 - the log (**Share log**).
 

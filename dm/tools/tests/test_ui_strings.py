@@ -16,7 +16,7 @@ class A {
         new Ui.Setting(c, "x", "Theme choice", v -> g("some_key")).value("Light or dark").badge("Experimental");
         new AlertDialog.Builder(c).setTitle("Delete the copy?").setPositiveButton("Delete", null).setNegativeButton(R.string.cancel, null);
         Toast.makeText(c, flag ? "Saved it" : "Not saved", Toast.LENGTH_SHORT).show();
-        view.setContentDescription("Banana Native");
+        view.setContentDescription("Polar");
         Ui.small(c, "Installed: " + name);
         Ui.small(c, Tx.s(R.string.home_ready));
         Log.i("TAG", "a log line that stays");
@@ -36,7 +36,7 @@ class Inventory(unittest.TestCase):
 
     def test_finds_the_listed_calls(self):
         got = self.scan(SAMPLE)
-        for want in ('Appearance', 'Theme choice', 'Light or dark', 'Experimental', 'Delete the copy?', 'Delete', 'Saved it', 'Not saved', 'Banana Native',
+        for want in ('Appearance', 'Theme choice', 'Light or dark', 'Experimental', 'Delete the copy?', 'Delete', 'Saved it', 'Not saved', 'Polar',
                      'Installed: ', 'Large screen'):
             self.assertIn(want, got)
 

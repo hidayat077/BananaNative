@@ -95,14 +95,14 @@ static void quit(const char *why) { fprintf(stderr, "[front] %s: the host is ask
 
 static void *front_thread(void *arg) {
     (void)arg;
-    SDL_SetAppMetadata("Banana Native", NULL, "dev.bananative.linux");
+    SDL_SetAppMetadata("Polar", NULL, "dev.polar.linux");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     int ok = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD);
     if (ok) {
         const char *ws = getenv("NX_WINDOW");   // NX_WINDOW=1280x720: a window of that size instead of the whole screen
         int w = 1280, h = 720; SDL_WindowFlags fl = SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
         if (ws && sscanf(ws, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) fl |= SDL_WINDOW_RESIZABLE; else { w = 1280; h = 720; fl |= SDL_WINDOW_FULLSCREEN; }
-        g_win = SDL_CreateWindow("Banana Native", w, h, fl);
+        g_win = SDL_CreateWindow("Polar", w, h, fl);
     }
     pthread_mutex_lock(&g_mu);
     if (g_win) { size_update(); g_anw.surface = g_win; g_anw.kind = 1; g_ready = 1; fprintf(stderr, "[front] SDL %s window %dx%d\n", SDL_GetCurrentVideoDriver(), g_anw.width, g_anw.height); }

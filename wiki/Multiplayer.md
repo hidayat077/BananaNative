@@ -1,6 +1,6 @@
 # Multiplayer
 
-Pokémon Pokopia (`0400A3A01EE4C000`) has multiplayer: you can visit another player's world. On Banana Native this is **Link Play**, an experimental way to join a game hosted on a PC. It does not use Nintendo online services, and a phone can join a PC host or host a world itself (experimental; hosting has not been tried with two phones yet).
+Pokémon Pokopia (`0400A3A01EE4C000`) has multiplayer: you can visit another player's world. On Polar this is **Link Play**, an experimental way to join a game hosted on a PC. It does not use Nintendo online services, and a phone can join a PC host or host a world itself (experimental; hosting has not been tried with two phones yet).
 
 ## What works
 

@@ -21,7 +21,7 @@ typedef struct {
 } vkskip;
 
 // A NULL pipeline counts as the device's only when it was refused: one still being made on the asynchronous threads (DM_VK_PSO_ASYNC, DM_VK_CS_ASYNC: the draw waits for it) is the
-// game's cold cache, not a driver fault, and counted in the notice it showed "40 % skipped" while a cold start filled in (BananaNative phone tests 2026-11-16, OoT on Turnip)
+// game's cold cache, not a driver fault, and counted in the notice it showed "40 % skipped" while a cold start filled in (Polar phone tests 2026-11-16, OoT on Turnip)
 static inline int vks_pipeline_counts(int making) { return !making; }
 
 // Called with the cumulative counters each frame: work = draws and dispatches that ran, dev = the counted skips by cause (above), other = every other skip. Returns 1 once, at

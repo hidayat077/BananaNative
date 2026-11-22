@@ -1,6 +1,6 @@
 # Settings overview
 
-Banana Native has settings in three places: the **Settings** page on the home screen, each game's own page (the **...** button on its card, or a long press), and the **in-game panel** that slides over a running game. This page says which place holds what, and which value wins when the same setting is set in more than one.
+Polar has settings in three places: the **Settings** page on the home screen, each game's own page (the **...** button on its card, or a long press), and the **in-game panel** that slides over a running game. This page says which place holds what, and which value wins when the same setting is set in more than one.
 
 <!-- TODO screenshot: Home screen with the Settings button and a game card with its ... button -->
 

@@ -39,7 +39,7 @@ static void SDLCALL feed(void *ctx, SDL_AudioStream *as, int additional, int tot
 aaudio_result_t AAudioStreamBuilder_openStream(AAudioStreamBuilder *b, AAudioStream **out) {
     *out = NULL;
     static _Atomic int inited;
-    if (!atomic_exchange(&inited, 1)) { SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512"); SDL_SetHint(SDL_HINT_AUDIO_DEVICE_STREAM_NAME, "Banana Native"); }
+    if (!atomic_exchange(&inited, 1)) { SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512"); SDL_SetHint(SDL_HINT_AUDIO_DEVICE_STREAM_NAME, "Polar"); }
     if (!SDL_WasInit(SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO)) return AAUDIO_ERROR_NO_SERVICE;
     AAudioStream *s = calloc(1, sizeof *s); if (!s) return AAUDIO_ERROR_NO_MEMORY;
     s->rate = b->rate ? b->rate : 48000; s->ch = b->ch; s->buffer = 4 * BURST; s->data = b->data; s->data_ctx = b->data_ctx;

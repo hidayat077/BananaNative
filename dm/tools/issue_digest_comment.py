@@ -8,8 +8,8 @@ run by hand (Actions › issue-digest › Run workflow); --dry-run prints the co
 The comment carries BOT_MARK; issue_digest.py leaves such comments out, and a run edits the one it made before (found by the mark and the token's user)
 instead of adding another, and does nothing when the text would not change. An issue without a log gets no comment (an earlier one stays).
 Each digest is log_digest.py's, redacted as it is (home and app folders shortened, key-like lines dropped). The text is cut to fit Forgejo's limit.
-Environment: FORGEJO_TOKEN (a token that may comment on the repository's issues), BN_FORGEJO, BN_FORGEJO_REPO (as issue_digest.py), BN_DOCS_BRANCH
-(the branch the doc links point at, default android), BN_ISSUES_DIR (where the logs are fetched to; the workflow gives a temporary folder).
+Environment: FORGEJO_TOKEN (a token that may comment on the repository's issues), POLAR_FORGEJO, POLAR_FORGEJO_REPO (as issue_digest.py), POLAR_DOCS_BRANCH
+(the branch the doc links point at, default android), POLAR_ISSUES_DIR (where the logs are fetched to; the workflow gives a temporary folder).
 Exit code: 0 (also when nothing is posted), 2 the issue cannot be read or the comment cannot be written."""
 import argparse
 import json
@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 import issue_digest as I   # noqa: E402
 
-BRANCH = os.environ.get('BN_DOCS_BRANCH', 'android')
+BRANCH = os.environ.get('POLAR_DOCS_BRANCH', 'android')
 LIMIT = 60000   # Forgejo keeps comments up to 65,535 bytes; room left for the parts around the digests
 
 
@@ -102,7 +102,7 @@ def where_label(log):
 def summary_line(log):
     d = log['digest']; h, v, s, p = d.get('header') or {}, d['verdict'], d.get('stage') or {}, d.get('perf') or {}
     who = [f"**{log['poster']}**" if log.get('poster') else None, where_label(log),
-           f"Banana Native {h['app_version'].split(' ')[0]}" if h.get('app_version') else None,
+           f"Polar {h['app_version'].split(' ')[0]}" if h.get('app_version') else None,
            ', '.join(x for x in (device_label(h.get('device')), (h.get('gpu') or '').split(',')[0].replace(' (TM)', '')) if x) or None,
            driver_label(h), game_label(h)]
     line = ' · '.join(x for x in who if x)

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native
+// SPDX-FileCopyrightText: Copyright 2026 Polar
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The mesh emulation's setup pass (vka_memu.c): one invocation per record of the batch. A task draw gets its task payloads and counts in the arena and its task
 // dispatch (the distribution pass places its mesh output); a draw without a task gets its mesh output placed at once. Not game code

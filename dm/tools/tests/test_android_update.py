@@ -41,7 +41,7 @@ class UpdateCheckJvm(unittest.TestCase):
     def test_real_notes(self):
         text, rest = self.java('notes', str(BODY)).split('\n--\n')
         kinds, spans = rest.strip().split('\n')
-        self.assertTrue(text.startswith('Banana Native v0.1.3\nInstall over v0.1.2: saves, packs and settings are kept.\n• 040074A01BF12000: 30 fps on Turnip'), text)
+        self.assertTrue(text.startswith('Polar v0.1.3\nInstall over v0.1.2: saves, packs and settings are kept.\n• 040074A01BF12000: 30 fps on Turnip'), text)
         self.assertEqual(kinds, 'HEADING2 PARAGRAPH0 BULLET0 BULLET0 BULLET0 PARAGRAPH0 PARAGRAPH0')
         for marker in ('**', '`', '## '): self.assertNotIn(marker, text)
         self.assertIn('BOLD:One shader update after installing.;', spans)

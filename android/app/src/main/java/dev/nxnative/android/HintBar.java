@@ -36,10 +36,10 @@ final class HintBar extends LinearLayout {
         for (int k = 0; k < hints.length; k++) {
             String chip = hints[k][0], words = hints[k][1];
             if (chip != null) {
-                TextView t = Ui.text(c, chip, 11, R.color.bn_on_banana, 800);
+                TextView t = Ui.text(c, chip, 11, R.color.bn_on_polar, 800);
                 t.setGravity(Gravity.CENTER);
                 t.setIncludeFontPadding(false);
-                t.setBackground(Ui.round(Ui.col(c, R.color.bn_banana), Ui.dp(c, 999), 0, 0));
+                t.setBackground(Ui.round(Ui.col(c, R.color.bn_polar), Ui.dp(c, 999), 0, 0));
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, d * 20);
                 t.setMinWidth(d * 20);
                 t.setPadding(d * 5, 0, d * 5, 0);

@@ -1,6 +1,6 @@
 # Device reports
 
-Players have sent logs and reports for Banana Native from many phones and handhelds. This page lists them by GPU, with what each one reached, so you can see how a phone like yours did. It is a record of what was reported, not a promise: the same phone can behave differently on another app version, driver or game save.
+Players have sent logs and reports for Polar from many phones and handhelds. This page lists them by GPU, with what each one reached, so you can see how a phone like yours did. It is a record of what was reported, not a promise: the same phone can behave differently on another app version, driver or game save.
 
 For the short list of devices, see [Tested devices](Tested-Devices). For what to do when something fails, see [Troubleshooting](Troubleshooting) and [GPU drivers](GPU-Drivers).
 
@@ -9,7 +9,7 @@ For the short list of devices, see [Tested devices](Tested-Devices). For what to
 - **Result.** *Runs* means the log reached the game's frame loop and ends with no error line (the player stopped the game, or the log was cut). *Runs, slow* is the same with a log median under about 20 fps. *Fails* names what the app's log digest said: the GPU driver stopped responding (**driver lost**), a **crash** (a SIGSEGV or abort), **out of memory** (Android closed the game), or a **game abort** (the game stopped itself). *Unclear* means the log is too short or stops before the game starts drawing.
 - **fps (log median).** The median of the frame rates in the log, one reading every five seconds, from the log digest. It includes loading and stalls, so it is not the frame rate of steady play. Where the reporter wrote a number in the issue, the notes say so. Anything not in a log or an issue is "not measured yet".
 - **Driver.** *system* is the phone's own Qualcomm driver. Other names are the Turnip (or other) driver file the player picked, as written in the log. See [GPU drivers](GPU-Drivers).
-- **App version.** The Banana Native release in the log. Older versions had bugs fixed since; a failure on 0.2.x may not happen on the current release.
+- **App version.** The Polar release in the log. Older versions had bugs fixed since; a failure on 0.2.x may not happen on the current release.
 - **Issue.** Opens the report on the project's issue tracker. Rows with several issue numbers were seen in more than one report.
 - Issues without a log digest (13 of the 63 issues this page was built from) are not listed.
 

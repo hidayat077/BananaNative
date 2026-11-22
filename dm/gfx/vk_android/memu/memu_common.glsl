@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Hokkaido contributors (the distribution pass: pavelgajdo/Hokkaido #569 EmitMeshEmulationDistribution)
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native (this port)
+// SPDX-FileCopyrightText: Copyright 2026 Polar (this port)
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The mesh emulation's helper passes (memu_setup.comp, memu_dist.comp): the batch's records, the arena's control words and the arena (vka_memu_abi.h). See vka_memu.c.
 #include "../vka_memu_abi.h"

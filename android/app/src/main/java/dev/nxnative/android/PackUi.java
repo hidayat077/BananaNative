@@ -12,7 +12,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * A game's Export pack… and Import pack… (its Manage sheet), over PackZip. Export writes the game's pack as one stored zip (banana-pack-&lt;id&gt;-&lt;version&gt;.zip)
+ * A game's Export pack… and Import pack… (its Manage sheet), over PackZip. Export writes the game's pack as one stored zip (polar-pack-&lt;id&gt;-&lt;version&gt;.zip)
  * into a folder the user picks; Import takes such a zip, or a pack folder, checks it (its title is this game's, its code fits the game build in the game folder:
  * PackCheck.blocking, a shader library is in it) and puts it into the app's packs/&lt;id&gt; (AppStorage), keeping the pack that was there until the new one is in.
  * The game's card then uses it (a picked pack folder is let go). An older library goes through the usual restamp or shader update at Play. Both refuse while the

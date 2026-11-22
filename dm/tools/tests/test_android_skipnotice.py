@@ -55,7 +55,7 @@ class Notice(unittest.TestCase):
         self.assertTrue(self.java('nomesh', '9 pipelines not made 50, mesh draws without VK_EXT_mesh_shader 5', 9).startswith('false'))
 
     def test_shaders_missing_from_the_pack(self):
-        # BananaNative #356: a pack without the add-on's shaders skipped 99 % of draws, and the notice sent the player after a driver; the pack's cause names no driver
+        # Polar #356: a pack without the add-on's shaders skipped 99 % of draws, and the notice sent the player after a driver; the pack's cause names no driver
         r = self.java('missing', '99 shaders missing from the pack 488394, shaders refused 12', 99)
         self.assertEqual(r, 'true Part of the picture is not drawn: this game\'s pack lacks shaders the game uses (99 % of draws skipped). Another GPU driver will not '
                             'change this. Prepare the game again from a complete dump: its page › Prepare again.')

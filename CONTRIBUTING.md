@@ -1,8 +1,8 @@
 # Contributing
 
-Issues and pull requests are welcome. This page says how a change gets into Banana Native, the Android compatibility layer. What the code does and where things are is in [AGENTS.md](AGENTS.md), [android/README.md](android/README.md) and [docs/development.md](docs/development.md).
+Issues and pull requests are welcome. This page says how a change gets into Polar, the Android compatibility layer. What the code does and where things are is in [AGENTS.md](AGENTS.md), [android/README.md](android/README.md) and [docs/development.md](docs/development.md).
 
-Banana Native maintains the Android path only: the launcher (`android/app`), the Android host (`android/host`, `dm/host`), the Vulkan backend (`dm/gfx/vk_android`), the shader chain and the tools. The Mac and iOS path (the Metal host, Mac apps and IPAs) is [nxnative](https://github.com/seedds/nxnative)'s: send changes and reports about it there. A change here must not break the Mac tools the shader chain uses, but it does not need to be built or tested on Mac or iOS.
+Polar maintains the Android path only: the launcher (`android/app`), the Android host (`android/host`, `dm/host`), the Vulkan backend (`dm/gfx/vk_android`), the shader chain and the tools. The Mac and iOS path (the Metal host, Mac apps and IPAs) is [nxnative](https://github.com/seedds/nxnative)'s: send changes and reports about it there. A change here must not break the Mac tools the shader chain uses, but it does not need to be built or tested on Mac or iOS.
 
 ## Reporting a problem
 

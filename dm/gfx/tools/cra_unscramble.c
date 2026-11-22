@@ -1,4 +1,4 @@
-/* Banana Native: libcra, the unscramble of Camelot's archive (Mario Tennis Fever's rom:/42) in C. dm/gfx/tools/cra.py loads it through ctypes (DM_CRA_LIB, or
+/* Polar: libcra, the unscramble of Camelot's archive (Mario Tennis Fever's rom:/42) in C. dm/gfx/tools/cra.py loads it through ctypes (DM_CRA_LIB, or
  * libcra.so on Android, where the APK's lib/ has it) and keeps the Python version for machines without it. The phone's shader split runs in the app's
  * process, one job after another, and the Python loop over 16-byte blocks was 77 % of its time.
  *

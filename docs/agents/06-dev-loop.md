@@ -2,7 +2,7 @@
 
 One page for people and agents: the tools this repository has for building, running, debugging, measuring and checking a change, when to use which, and what a pull request needs. It links to where each tool is described instead of repeating it. Game files, builds and runs stay outside the repository ([AGENTS.md](../../AGENTS.md)).
 
-Banana Native's target is Android: a change is checked with the unit tests, the Python tests and short runs on a phone ([Checking a change for Android](#checking-a-change-for-android)). The Mac tools in sections 1-5 are nxnative's upstream toolchain, used for bring-up, shader builds and debugging; they are not a required check.
+Polar's target is Android: a change is checked with the unit tests, the Python tests and short runs on a phone ([Checking a change for Android](#checking-a-change-for-android)). The Mac tools in sections 1-5 are nxnative's upstream toolchain, used for bring-up, shader builds and debugging; they are not a required check.
 
 ## Checking a change for Android
 
@@ -44,7 +44,7 @@ Start Mac runs with the Metal performance HUD (`DM_METAL_HUD=1`). A new title st
 
 ## 4. The upstream regression harness: `scripts/regress.py`
 
-nxnative's `scripts/regress.py` compares a baseline revision with a candidate on every game the Mac has a `--platform mac` build of: shader builds, a boot along each profile's `smoke.tsv` route, frame captures. It runs the Metal host, so it checks the Mac path, not Android: Banana Native does not require it for a pull request. `regress.py chain`, which compares each shader's translation, can still help after a change to the shared front half of the chain. Full description: [The regression harness](../development.md#the-regression-harness).
+nxnative's `scripts/regress.py` compares a baseline revision with a candidate on every game the Mac has a `--platform mac` build of: shader builds, a boot along each profile's `smoke.tsv` route, frame captures. It runs the Metal host, so it checks the Mac path, not Android: Polar does not require it for a pull request. `regress.py chain`, which compares each shader's translation, can still help after a change to the shared front half of the chain. Full description: [The regression harness](../development.md#the-regression-harness).
 
 ## 5. Which games a change can reach
 

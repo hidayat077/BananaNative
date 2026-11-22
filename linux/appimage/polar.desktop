@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=BananaNative
+Name=Polar
 Comment=Runs prepared Switch game packs natively on aarch64 Linux
 Exec=AppRun %f
-Icon=banananative
+Icon=polar
 Categories=Game;
 Terminal=false

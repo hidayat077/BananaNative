@@ -444,7 +444,7 @@ final class Job {
 
     /**
      * Steps recorded done whose outputs went while a later step still needs them (Outputs.redo) are set pending again, with the steps made from them: the
-     * rewrite when the pack folder lost its code (job.json is on shared storage beside the dump; the app's packs/&lt;id&gt; goes when the app is uninstalled, BananaNative
+     * rewrite when the pack folder lost its code (job.json is on shared storage beside the dump; the app's packs/&lt;id&gt; goes when the app is uninstalled, Polar
      * issue #3), the shaders step when its library is not in the folder the pack step copies from. Finished shader results (xlate/) stay: the shaders step rebuilds
      * the library from them. → the steps set pending, empty when every output is there
      */

@@ -1,24 +1,24 @@
-# Banana Native's packer on Windows: scripts\bananative.bat runs this. The same commands as scripts/bananative.command on macOS:
+# Polar's packer on Windows: scripts\polar.bat runs this. The same commands as scripts/polar.command on macOS:
 # on first use it finds a working environment (android/environment.yml: Python 3.14 with Tk, Capstone 5, lz4, zbic, spirv-val, the .NET 10 runtime) or makes one:
 # it downloads micromamba (github.com/mamba-org/micromamba-releases) when there is none on PATH, and the packages from conda-forge, about 400 MB in all,
-# into <folder>\bananative\ (asked once). The environment's path is remembered in .bananative-env in the repository (not committed). Usage:
-#   scripts\bananative.bat                       the window
-#   scripts\bananative.bat pack <game> [...]     scripts/pack_android.py <game folder | .nup file> [its options]
-#   scripts\bananative.bat check                 check the environment's tools
-#   scripts\bananative.bat setup [<folder>]      make (or remake) the environment in <folder>\bananative\
-#   scripts\bananative.bat python [...]          the environment's Python, set up as for the packer
-# Environment: BANANATIVE_ENV names the environment to use (the prefix of a conda environment made from android/environment.yml).
+# into <folder>\polar\ (asked once). The environment's path is remembered in .polar-env in the repository (not committed). Usage:
+#   scripts\polar.bat                       the window
+#   scripts\polar.bat pack <game> [...]     scripts/pack_android.py <game folder | .nup file> [its options]
+#   scripts\polar.bat check                 check the environment's tools
+#   scripts\polar.bat setup [<folder>]      make (or remake) the environment in <folder>\polar\
+#   scripts\polar.bat python [...]          the environment's Python, set up as for the packer
+# Environment: POLAR_ENV names the environment to use (the prefix of a conda environment made from android/environment.yml).
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
-$Conf = Join-Path $Repo '.bananative-env'
+$Conf = Join-Path $Repo '.polar-env'
 $Yml = Join-Path $Repo 'android\environment.yml'
-$Check = Join-Path $Repo 'scripts\bananative_env.py'
+$Check = Join-Path $Repo 'scripts\polar_env.py'
 
 function Say([string]$m) { [Console]::Error.WriteLine($m) }
 function Die([string]$m) { Say "[RED] $m"; exit 1 }
 function Remembered { if (Test-Path $Conf) { return (Get-Content $Conf -TotalCount 1).Trim() } return '' }
 
-function Test-Usable([string]$e) {   # an environment whose Python runs and whose tools pass bananative_env.py's check
+function Test-Usable([string]$e) {   # an environment whose Python runs and whose tools pass polar_env.py's check
     if (-not $e) { return $false }
     $py = Join-Path $e 'python.exe'
     if (-not (Test-Path $py)) { return $false }
@@ -26,14 +26,14 @@ function Test-Usable([string]$e) {   # an environment whose Python runs and whos
     return ($LASTEXITCODE -eq 0)
 }
 
-function Find-Env {   # BANANATIVE_ENV, the remembered one, an active conda environment, then a micromamba / conda environment named bananative*
-    foreach ($e in @($env:BANANATIVE_ENV, (Remembered), $env:CONDA_PREFIX)) { if (Test-Usable $e) { return $e } }
+function Find-Env {   # POLAR_ENV, the remembered one, an active conda environment, then a micromamba / conda environment named polar*
+    foreach ($e in @($env:POLAR_ENV, (Remembered), $env:CONDA_PREFIX)) { if (Test-Usable $e) { return $e } }
     foreach ($mm in 'micromamba', 'mamba', 'conda') {
         if (-not (Get-Command $mm -ErrorAction SilentlyContinue)) { continue }
         $list = & $mm env list 2>$null
         foreach ($line in $list) {
             $e = ($line -split '\s+' | Where-Object { $_ })[-1]
-            if ($e -match '\\bananative[^\\]*$' -and (Test-Usable $e)) { return $e }
+            if ($e -match '\\polar[^\\]*$' -and (Test-Usable $e)) { return $e }
         }
     }
     return $null
@@ -53,16 +53,16 @@ function Get-Micromamba([string]$base) {   # one on PATH, one downloaded earlier
     return $exe
 }
 
-function Invoke-Setup([string]$folder) {   # make the environment in <folder>\bananative\env (asked when no folder is given)
+function Invoke-Setup([string]$folder) {   # make the environment in <folder>\polar\env (asked when no folder is given)
     if (-not $folder) {
         $def = Split-Path -Parent $Repo
         Say 'The packer needs its tools (Python 3.14, spirv-val, the .NET 10 runtime: about 400 MB).'
-        Say 'They go into <folder>\bananative\. The drive with your game dumps is a good place.'
+        Say 'They go into <folder>\polar\. The drive with your game dumps is a good place.'
         $folder = Read-Host "Folder [$def]"
         if (-not $folder) { $folder = $def }
     }
     if (-not (Test-Path -PathType Container $folder)) { Die "no folder $folder" }
-    $base = Join-Path (Resolve-Path $folder).Path 'bananative'
+    $base = Join-Path (Resolve-Path $folder).Path 'polar'
     New-Item -ItemType Directory -Force $base | Out-Null
     $mm = Get-Micromamba $base
     $envDir = Join-Path $base 'env'
@@ -86,7 +86,7 @@ if ($envDir) {
 } else {
     $old = Remembered
     if ($old -and (Test-Path (Join-Path $old 'python.exe'))) { Say "the environment $old lacks a tool:"; & (Join-Path $old 'python.exe') $Check }
-    if ($old -match '\\bananative\\env$') { Say 'remaking it (its packages are cached)'; $envDir = Invoke-Setup (Split-Path -Parent (Split-Path -Parent $old)) }
+    if ($old -match '\\polar\\env$') { Say 'remaking it (its packages are cached)'; $envDir = Invoke-Setup (Split-Path -Parent (Split-Path -Parent $old)) }
     else { $envDir = Invoke-Setup '' }
 }
 $py = Join-Path $envDir 'python.exe'

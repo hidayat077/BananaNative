@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# Adds BananaNative games to Steam as non-Steam games (Steam's shortcuts.vdf), with the launch options they need, so nobody has to type them:
+# Adds Polar games to Steam as non-Steam games (Steam's shortcuts.vdf), with the launch options they need, so nobody has to type them:
 #   PATH=/usr/local/bin:/usr/bin:/bin %command% "<pack folder>"   (Steam starts non-Steam games with no PATH; the AppImage runtime needs fusermount)
 #   steam_shortcut.py [--close-steam] --exe <AppImage> [--icon <png>] <name>=<pack folder> ...
-# One shortcut per game, named "<name> (BananaNative)": an existing one of that name is updated (its artwork, play time and appid are kept).
+# One shortcut per game, named "<name> (Polar)": an existing one of that name is updated (its artwork, play time and appid are kept).
 # Every Steam user on this system (~/.local/share/Steam/userdata/<id>/config). Steam must not be running: it keeps its own copy and writes it back.
 # --close-steam: close Steam first (steam -shutdown) and start it again afterwards. Exit: 0 done, 2 no Steam user found, 3 Steam is running,
-# 4 Game Mode (Steam can't be closed from inside it), 1 other error. shortcuts.vdf.bak-banananative keeps the file as it was before each write.
+# 4 Game Mode (Steam can't be closed from inside it), 1 other error. shortcuts.vdf.bak-polar keeps the file as it was before each write.
 import os, sys, time, zlib, struct, shutil, subprocess
 
-SUFFIX = ' (BananaNative)'
+SUFFIX = ' (Polar)'
 PATHVAR = 'PATH=/usr/local/bin:/usr/bin:/bin'
 
 # ---- binary VDF: a map is a list of (type, key, value); types 0 map, 1 string, 2 int32, 3 float32, 7 uint64, end 8
@@ -110,8 +110,8 @@ def add(vdf, exe, icon, games):
             said.append(f'{"updated" if old != (exe_q, start_q, opts) else "already there"}: {label.decode()}')
     data = dump(root)
     if parse(data) != root: raise ValueError('shortcuts.vdf did not read back the same')   # (never write a file Steam could not read)
-    if os.path.exists(vdf): shutil.copy2(vdf, vdf + '.bak-banananative')
-    tmp = vdf + '.tmp-banananative'; open(tmp, 'wb').write(data); os.replace(tmp, vdf)
+    if os.path.exists(vdf): shutil.copy2(vdf, vdf + '.bak-polar')
+    tmp = vdf + '.tmp-polar'; open(tmp, 'wb').write(data); os.replace(tmp, vdf)
     return said
 
 def main(argv):

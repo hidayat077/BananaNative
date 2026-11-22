@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: Copyright 2026 Hokkaido contributors (the compute mesh emulation: pavelgajdo/Hokkaido #569)
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native (this port)
+// SPDX-FileCopyrightText: Copyright 2026 Polar (this port)
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // NVN2 task and mesh programs as compute shaders, and the vertex shaders that draw what they wrote (vka_memu_spv.c). Plain C, no Vulkan: unit-tested on the Mac

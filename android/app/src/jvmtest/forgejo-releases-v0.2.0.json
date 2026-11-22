@@ -4,7 +4,7 @@
   "tag_name": "v0.2.0",
   "target_commitish": "",
   "name": "v0.2.0",
-  "body": "> This is the temporary home of Banana Native while the GitHub repository is unavailable. The APK is the same signed v0.2.0 build as on GitHub; installing it over an earlier version keeps your games, packs and saves.\n\n## Before you update\n\n**Your shaders will be rebuilt.**",
+  "body": "> This is the temporary home of Polar while the GitHub repository is unavailable. The APK is the same signed v0.2.0 build as on GitHub; installing it over an earlier version keeps your games, packs and saves.\n\n## Before you update\n\n**Your shaders will be rebuilt.**",
   "url": "https://git.eden-emu.dev/api/v1/repos/moceure/BananaNative/releases/14838",
   "html_url": "https://git.eden-emu.dev/moceure/BananaNative/releases/tag/v0.2.0",
   "tarball_url": "https://git.eden-emu.dev/moceure/BananaNative/archive/v0.2.0.tar.gz",
@@ -24,7 +24,7 @@
   "assets": [
    {
     "id": 7375,
-    "name": "banana-native-v0.2.0.apk",
+    "name": "polar-v0.2.0.apk",
     "size": 44791088,
     "download_count": 2,
     "created_at": "2026-11-08T10:12:19+01:00",

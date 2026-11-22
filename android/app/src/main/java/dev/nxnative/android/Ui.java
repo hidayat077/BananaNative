@@ -25,8 +25,8 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 /**
- * The launcher's building blocks, in code like the rest of the launcher (no layouts, no AndroidX), in the banana palette (res/values/colors.xml, values-night for dark
- * mode; themes.xml's Theme.Banana). One small design system so every screen looks the same:
+ * The launcher's building blocks, in code like the rest of the launcher (no layouts, no AndroidX), in the polar palette (res/values/colors.xml, values-night for dark
+ * mode; themes.xml's Theme.Polar). One small design system so every screen looks the same:
  * <ul>
  * <li>Type: page title 24 sp heavy, heading 18 sp bold, body 15 sp, small 13 sp, section label 12 sp caps; buttons 15 sp semibold, one line.</li>
  * <li>Shapes: cards 20 dp corners with a hairline edge; buttons and icon buttons 14 dp corners (a card's big action 16 dp).</li>
@@ -148,7 +148,7 @@ final class Ui {
             addView(text, fill());
             copy = button(c, Tx.s(R.string.common_copy_details), Kind.QUIET, v -> {
                 android.content.ClipboardManager cm = c.getSystemService(android.content.ClipboardManager.class);
-                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Banana Native details", text.getText()));
+                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Polar details", text.getText()));
                 android.widget.Toast.makeText(c, Tx.s(R.string.common_details_copied), android.widget.Toast.LENGTH_SHORT).show();
             });
             copy.setPadding(dp(c, 4), 0, dp(c, 4), 0);
@@ -200,13 +200,13 @@ final class Ui {
         return t;
     }
 
-    /** A game's tile: the first letter of its name on banana yellow, rounded */
+    /** A game's tile: the first letter of its name on yellow, rounded */
     static TextView tile(Context c, String name, int sizeDp) {
         String n = name == null ? "" : name.trim();
-        TextView t = text(c, n.isEmpty() ? "?" : n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(java.util.Locale.ROOT), sizeDp * 0.4f, R.color.bn_on_banana, 800);
+        TextView t = text(c, n.isEmpty() ? "?" : n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(java.util.Locale.ROOT), sizeDp * 0.4f, R.color.bn_on_polar, 800);
         t.setGravity(Gravity.CENTER);
         t.setIncludeFontPadding(false);
-        t.setBackground(round(col(c, R.color.bn_banana), dp(c, 22), 0, 0));
+        t.setBackground(round(col(c, R.color.bn_polar), dp(c, 22), 0, 0));
         t.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         t.setLayoutParams(new LinearLayout.LayoutParams(dp(c, sizeDp), dp(c, sizeDp)));
         return t;
@@ -242,7 +242,7 @@ final class Ui {
     /** Shows a picture (the game's icon) in a tile made by tile(), in place of its letter and with the same rounded corners. Pass null to get the letter back */
     static void tileIcon(TextView t, android.graphics.Bitmap b) {
         Context c = t.getContext();
-        if (b == null) { t.setTextColor(col(c, R.color.bn_on_banana)); t.setBackground(round(col(c, R.color.bn_banana), dp(c, 22), 0, 0)); return; }
+        if (b == null) { t.setTextColor(col(c, R.color.bn_on_polar)); t.setBackground(round(col(c, R.color.bn_polar), dp(c, 22), 0, 0)); return; }
         if (b.hasAlpha()) b = visibleBox(b);   // a picture with a clear margin (rounded corners, an inset) is cut to what it shows, so it fills the tile
         android.graphics.drawable.Drawable d = new android.graphics.drawable.BitmapDrawable(c.getResources(), b);
         if (b.hasAlpha()) d = new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{new android.graphics.drawable.ColorDrawable(iconBase(b)), d});   // a picture with clear parts sits on its own colour, not on the page
@@ -370,7 +370,7 @@ final class Ui {
         return content;
     }
 
-    /** A page's header, the same on every screen: 56 dp high; a leading view (the banana badge, or a back button), the title, and an optional trailing button */
+    /** A page's header, the same on every screen: 56 dp high; a leading view (the Polar badge, or a back button), the title, and an optional trailing button */
     static LinearLayout header(Context c, View leading, CharSequence title, View trailing) { return header(c, leading, title, null, trailing); }
 
     /** The same, with a small line under the title in the accent yellow (Home: the build identifier, Prefs.buildId), or none when null */
@@ -409,7 +409,7 @@ final class Ui {
      */
     static void focusCard(Context c, LinearLayout card, View.OnClickListener l) {
         android.graphics.drawable.StateListDrawable s = new android.graphics.drawable.StateListDrawable();
-        s.addState(new int[]{android.R.attr.state_focused}, round(col(c, R.color.bn_card), dp(c, 24), col(c, R.color.bn_banana_deep), dp(c, 3.5f)));
+        s.addState(new int[]{android.R.attr.state_focused}, round(col(c, R.color.bn_card), dp(c, 24), col(c, R.color.bn_polar_deep), dp(c, 3.5f)));
         s.addState(new int[]{}, card.getBackground());
         card.setBackground(s);
         card.setFocusable(true);
@@ -438,7 +438,7 @@ final class Ui {
     private static void style(Context c, View b, Kind k, float radiusDp) {
         int fill, stroke = 0;
         switch (k) {
-            case PRIMARY: fill = col(c, R.color.bn_banana); break;
+            case PRIMARY: fill = col(c, R.color.bn_polar); break;
             case TONAL: fill = col(c, R.color.bn_tint); break;
             case SOFT: fill = Color.TRANSPARENT; stroke = col(c, R.color.bn_card_stroke); break;
             case DANGER: fill = col(c, R.color.bn_danger_tint); break;
@@ -449,7 +449,7 @@ final class Ui {
 
     private static int textColor(Kind k) {
         switch (k) {
-            case PRIMARY: return R.color.bn_on_banana;
+            case PRIMARY: return R.color.bn_on_polar;
             case DANGER: return R.color.bn_danger;
             case QUIET: return R.color.bn_accent;
             default: return R.color.bn_text;
@@ -458,7 +458,7 @@ final class Ui {
 
     /**
      * A button: 48 dp high, 14 dp corners, one line (labels are kept short; the button grows to fit its label, and a half-width one ellipsizes rather than wraps).
-     * PRIMARY banana yellow, TONAL the soft tint, SOFT an outline, DANGER red-orange on its tint, QUIET text only in the accent. Disabled ones fade
+     * PRIMARY yellow, TONAL the soft tint, SOFT an outline, DANGER red-orange on its tint, QUIET text only in the accent. Disabled ones fade
      */
     static Button button(Context c, CharSequence s, Kind k, View.OnClickListener l) {
         Button b = new Button(c) {
@@ -558,10 +558,10 @@ final class Ui {
         return r;
     }
 
-    /** The banana with a face in a leaf-green circle (Home's header) */
+    /** The polar with a face in a leaf-green circle (Home's header) */
     static ImageView badge(Context c, int sizeDp) {
         ImageView v = new ImageView(c);
-        v.setImageDrawable(new android.graphics.drawable.InsetDrawable(c.getDrawable(R.drawable.ic_banana_happy), -0.16f));   // the banana fills more of the circle
+        v.setImageDrawable(new android.graphics.drawable.InsetDrawable(c.getDrawable(R.drawable.ic_polar_logo), -0.16f));   // the polar fills more of the circle
         GradientDrawable g = new GradientDrawable();
         g.setShape(GradientDrawable.OVAL);
         g.setColor(0xFF1E5B3A);
@@ -574,7 +574,7 @@ final class Ui {
 
     static ProgressBar progress(Context c) {
         ProgressBar bar = new ProgressBar(c, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setProgressTintList(ColorStateList.valueOf(col(c, R.color.bn_banana_deep)));
+        bar.setProgressTintList(ColorStateList.valueOf(col(c, R.color.bn_polar_deep)));
         bar.setProgressBackgroundTintList(ColorStateList.valueOf(col(c, R.color.bn_card_stroke)));
         bar.setScaleY(1.6f);
         return bar;
@@ -709,7 +709,7 @@ final class Ui {
         }
     }
 
-    /** A choice of a few words side by side in one rounded track (Recommended | Custom): the picked one on banana yellow. pick gets the index when the player picks another */
+    /** A choice of a few words side by side in one rounded track (Recommended | Custom): the picked one on yellow. pick gets the index when the player picks another */
     static final class Segmented extends LinearLayout {
         private final TextView[] items;
         private int selected;
@@ -743,8 +743,8 @@ final class Ui {
             Context c = getContext();
             for (int i = 0; i < items.length; i++) {
                 boolean on = i == k;
-                items[i].setBackground(on ? round(col(c, R.color.bn_banana), dp(c, 11), 0, 0) : ripple(c, round(Color.TRANSPARENT, dp(c, 11), 0, 0)));
-                items[i].setTextColor(col(c, on ? R.color.bn_on_banana : R.color.bn_text_2));
+                items[i].setBackground(on ? round(col(c, R.color.bn_polar), dp(c, 11), 0, 0) : ripple(c, round(Color.TRANSPARENT, dp(c, 11), 0, 0)));
+                items[i].setTextColor(col(c, on ? R.color.bn_on_polar : R.color.bn_text_2));
                 items[i].setSelected(on);
             }
         }
@@ -766,12 +766,12 @@ final class Ui {
             boolean on = k == sel;
             LinearLayout tab = new LinearLayout(c);
             tab.setOrientation(LinearLayout.VERTICAL);
-            TextView t = text(c, labels[k], 14, on ? R.color.bn_on_banana : R.color.bn_text_2, on ? 700 : 600);
+            TextView t = text(c, labels[k], 14, on ? R.color.bn_on_polar : R.color.bn_text_2, on ? 700 : 600);
             t.setSingleLine(true);
             t.setGravity(Gravity.CENTER);
             t.setPadding(dp(c, 14), dp(c, 7), dp(c, 14), dp(c, 7));
             tab.addView(t);
-            tab.setBackground(ripple(c, round(on ? col(c, R.color.bn_banana) : col(c, R.color.bn_tint), dp(c, 999), 0, 0)));
+            tab.setBackground(ripple(c, round(on ? col(c, R.color.bn_polar) : col(c, R.color.bn_tint), dp(c, 999), 0, 0)));
             tab.setClickable(true);
             tab.setFocusable(true);
             tab.setSelected(on);

@@ -4,7 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 lsfg-vk
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Ported to C for Banana Native from Eden's src/video_core/renderer_vulkan/present/lsfg_{common,chain,mipmaps,alpha,beta,gamma,delta,generate}.cpp: the compute passes of
+// Ported to C for Polar from Eden's src/video_core/renderer_vulkan/present/lsfg_{common,chain,mipmaps,alpha,beta,gamma,delta,generate}.cpp: the compute passes of
 // Lossless Scaling's frame generation (performance set) over two input frames. Per game frame: mipmaps of the luminance-like flow input (7 levels), alpha (4 stages per
 // level, history of 3 frames), beta (5 stages); per generated frame: gamma at each level and delta at the 3 finest, then generate into the output image. The images,
 // descriptor sets and pass order are Eden's. Differences: every chain image is put in GENERAL layout once when the chain is made, so the barriers between passes are

@@ -91,7 +91,7 @@
     <string name="home_allow">允许</string>
     <string name="home_allow_file_access">允许文件访问</string>
     <string name="home_back_up_saves">备份存档</string>
-    <string name="home_banana_native">Banana Native</string>
+    <string name="home_polar">Polar</string>
     <string name="home_continue_preparing">继续准备</string>
     <string name="home_copy_into_the_app">复制到应用中</string>
     <string name="home_delete">删除</string>
@@ -191,7 +191,7 @@
     <string name="settings_theme">主题</string>
     <string name="settings_this_launcher_cannot_pin_shortcuts">此启动器无法固定快捷方式。</string>
     <string name="settings_this_release_has_no_notes">此版本没有更新说明。</string>
-    <string name="settings_to_install_the_update_allow">要安装更新，请允许 Banana Native 安装应用（“安装未知应用”），然后返回。</string>
+    <string name="settings_to_install_the_update_allow">要安装更新，请允许 Polar 安装应用（“安装未知应用”），然后返回。</string>
     <string name="settings_update">更新</string>
     <string name="settings_updates">更新</string>
     <string name="settings_what_s_new">新内容</string>
@@ -507,7 +507,7 @@
     <string name="err_save_busy">%1$s 的存档备份或恢复仍在进行：“开始游戏”将等待其完成。</string>
     <string name="err_pack_busy">%1$s 的游戏包导出或导入仍在进行：“开始游戏”将等待其完成。</string>
     <string name="err_no_app_can_open">没有应用可以打开 %1$s</string>
-    <string name="settings_adb_control_warning">开启后，adb 以及这部手机上的任何其他应用都可以通过 Banana Native 的启动器添加游戏、开始准备、安装或选择 GPU 驱动，而无需询问你。GPU 驱动是在游戏内部运行的代码。请仅在使用 adb 时开启，用完后再关闭。</string>
+    <string name="settings_adb_control_warning">开启后，adb 以及这部手机上的任何其他应用都可以通过 Polar 的启动器添加游戏、开始准备、安装或选择 GPU 驱动，而无需询问你。GPU 驱动是在游戏内部运行的代码。请仅在使用 adb 时开启，用完后再关闭。</string>
     <string name="home_pick_dump_folder_again">重新选择 %1$s 的转储文件夹</string>
     <string name="err_no_game_in_folder">%1$s 中没有 main.npdm（base/exefs/、updates/&lt;version&gt;/exefs/ 或 exefs/）、没有 .nup 文件，也没有游戏文件夹。请选择游戏自己的文件夹、其 .nup 文件，或存放你游戏的文件夹。</string>
     <string name="err_nup_rename">%1$s：请重命名，使其名称以“.nup”或“.nsp”结尾（小写）；游戏和工具只读取该名称。</string>
@@ -614,7 +614,7 @@
     <string name="game_no_zip_assets">%1$s：其发布版本中没有 .zip 资源</string>
     <string name="game_not_installed_reason">未安装：%1$s</string>
     <string name="game_installed_and_picked">已安装并选用 %1$s</string>
-    <string name="settings_banana_native_version">Banana Native %1$s</string>
+    <string name="settings_polar_version">Polar %1$s</string>
     <string name="settings_version_is_available">版本 %1$s 可用</string>
     <string name="settings_you_have_install_over">你当前的版本是 %1$s。直接覆盖安装：存档、游戏包和设置都会保留。</string>
     <string name="settings_apk_size_from">%1$s · %2$s · 来自 %3$s</string>
@@ -1055,7 +1055,7 @@
     <string name="prepare_simulated">（模拟）</string>
     <string name="prepare_starting">正在开始…</string>
     <string name="prepare_name_is_ready_title">%1$s 已可游玩</string>
-    <string name="prepare_open_and_tap_play">打开 Banana Native 并点按“开始游戏”。</string>
+    <string name="prepare_open_and_tap_play">打开 Polar 并点按“开始游戏”。</string>
     <string name="prepare_waiting_name">等待中：%1$s</string>
     <string name="prepare_could_not_prepare_name">无法准备 %1$s</string>
     <string name="prepare_paused_name">已暂停：%1$s</string>
@@ -1072,7 +1072,7 @@
     <string name="prepare_copying_progress">正在复制 %1$s：%2$s / %3$s GiB（%4$d %%）\n%5$s\n\n请保持应用打开。复制到应用自己的存储空间，因此不需要“所有文件”访问权限。</string>
     <string name="game_turnip_slow_note">Turnip 驱动运行此游戏较慢（性能低）。Qualcomm 驱动（如 891.14）或“系统”更快。</string>
     <string name="game_aspect_native_laid_out">（原生：镜头和菜单按 %1$s 布局）</string>
-    <string name="game_hold60_text">关：游戏无法维持 60 时降到 30 fps，与主机相同。开：游戏始终运行其 60 fps 模式，Banana Native 不会停帧，因此不会降到 30；帧率不够均匀，且低于 60 时游戏会稍慢一些。仅在使用 60 fps 上限时</string>
+    <string name="game_hold60_text">关：游戏无法维持 60 时降到 30 fps，与主机相同。开：游戏始终运行其 60 fps 模式，Polar 不会停帧，因此不会降到 30；帧率不够均匀，且低于 60 时游戏会稍慢一些。仅在使用 60 fps 上限时</string>
     <string name="game_present_only_note">此游戏为实验性：上限只限制画面显示的频率，不限制游戏本身。可能出现问题（例如游戏变慢或变快）。</string>
     <string name="prepare_save_default_earlier">（默认：你早期版本的存档，位于游戏旁边。游戏下次启动时会把它复制到应用存储 %1$s 中，并从那里游玩；此文件夹不会被更改）</string>
     <string name="prepare_save_default_in_app_copied">（默认：在应用存储中；从 %1$s 复制而来，原文件夹保持不变）。</string>
@@ -1208,7 +1208,7 @@
     <string name="settings_the_release_sources">发布来源</string>
     <string name="settings_is_not_a_release_version">）不是正式版本号：无法比较。</string>
     <string name="settings_this_build_s_version">此版本的版本号（</string>
-    <string name="settings_only_the_release_app_dev">只有正式版应用（dev.bananative.android）会检查更新。测试版应用在其 files 文件夹中的 update.txt 指定了 repo= 或 url= 时才会检查。</string>
+    <string name="settings_only_the_release_app_dev">只有正式版应用（dev.polar.android）会检查更新。测试版应用在其 files 文件夹中的 update.txt 指定了 repo= 或 url= 时才会检查。</string>
     <string name="settings_no_release_source">无发布来源</string>
     <string name="settings_did_not_answer_in_time">" 未及时响应）"</string>
     <string name="settings_s_answer_is_too_large">" 的响应过大"</string>

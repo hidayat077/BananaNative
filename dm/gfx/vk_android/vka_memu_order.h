@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 Banana Native
+// SPDX-FileCopyrightText: Copyright 2026 Polar
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Mesh draws through compute (vka_memu_draw.inc): which entry of a look-ahead's batch a draw being replayed takes. The batch holds the mesh draw records the look-ahead

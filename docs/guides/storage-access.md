@@ -12,7 +12,7 @@ The app reads your game in one of three ways. Back to the [guides](README.md).
 ## All files access
 
 With **All files access** on, the app reads your dump where it is and finds a pack next to it. Turn it on with the
-**Allow** button of the **Allow file access** card on Home, or in Android's settings (Apps › Banana Native › All files
+**Allow** button of the **Allow file access** card on Home, or in Android's settings (Apps › Polar › All files
 access, or Special app access › All files access, depending on the phone). Settings › **Readiness check** shows
 whether it is on and opens the setting. A dump folder read where it is needs it: the game opens thousands of files in
 it by path. Home shows the card only while a game on the list (or an empty list) needs it.

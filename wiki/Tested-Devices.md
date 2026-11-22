@@ -1,6 +1,6 @@
 # Tested devices
 
-Banana Native is developed on one phone and reported on by players with many others. This page says which phones the project itself tests on, and which devices players have reported so far. For each report in detail, see [Device reports](Device-Reports).
+Polar is developed on one phone and reported on by players with many others. This page says which phones the project itself tests on, and which devices players have reported so far. For each report in detail, see [Device reports](Device-Reports).
 
 ## What the project tests on
 

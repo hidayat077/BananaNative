@@ -24,7 +24,7 @@ import java.util.zip.ZipOutputStream;
  * dm/tools/tests/test_android_packzip.py) runs it on the Mac.
  * <ul>
  * <li><b>Export</b> writes the pack folder (pack.tsv at the zip's root, the modules, shaders/…) as one zip, STORED (the library and the code do not compress, and a
- *     stored zip reads back fast), named banana-pack-&lt;title ID&gt;-&lt;version&gt;.zip, into &lt;name&gt;.partial first, which is read back (every entry's size and CRC
+ *     stored zip reads back fast), named polar-pack-&lt;title ID&gt;-&lt;version&gt;.zip, into &lt;name&gt;.partial first, which is read back (every entry's size and CRC
  *     against the pack's file) and only then gets its name. The pack is only read. Left out ({@link #exported}): the shader layer (shaders/layer: the shaders this phone built
  *     while playing, gigabytes that a build may be writing as the zip is made, and that the game builds again where the pack goes) and files a stopped tool left half
  *     written (*.tmp, *.partial, the layer's .building marker).</li>
@@ -42,8 +42,8 @@ final class PackZip {
 
     private PackZip() {}
 
-    /** banana-pack-&lt;title ID&gt;-&lt;version&gt;.zip */
-    static String exportName(Pack p) { return "banana-pack-" + p.titleId + "-" + p.version.replaceAll("[^0-9A-Za-z._-]", "_") + ".zip"; }
+    /** polar-pack-&lt;title ID&gt;-&lt;version&gt;.zip */
+    static String exportName(Pack p) { return "polar-pack-" + p.titleId + "-" + p.version.replaceAll("[^0-9A-Za-z._-]", "_") + ".zip"; }
 
     /** Every file under a folder by its relative path ("/" between names), sorted; a link or anything but files and folders is refused */
     static TreeMap<String, File> files(File dir) throws IOException { return files(dir, false); }

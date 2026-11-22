@@ -83,7 +83,7 @@ works (`/proc/self/fd/<n>` reopened by path is not reliable on every provider). 
   a NUP view, so `shader_split.py`, `romfs_image.py` and `pack_dump.py` (scan, pack_version, pack_dlc) take `.nup` paths with
   no code of their own. `<file>.nup:` with an empty selector is the container root (folders `base`, `update/<v>`,
   `addon/<tid>`); a path naming a missing package is not found.
-- zstd module: `compression.zstd` (Python 3.14: bananative-env on the Mac, the phone's CPython 3.14.6), else
+- zstd module: `compression.zstd` (Python 3.14: polar-env on the Mac, the phone's CPython 3.14.6), else
   `backports.zstd`; imported at the first compressed file, so a raw-only `.nup` needs none.
 - The rewriter reads plain files: `pack_android.py` copies a NUP module into the pack's `.nup-src/<module>/` for
   `patch_nso.py` and deletes it after (`rewriter_src`). `nso.py` and the other `REWRITER` files are unchanged, so the rewrite
@@ -94,7 +94,7 @@ works (`/proc/self/fd/<n>` reopened by path is not reliable on every provider). 
 - A `.nup` has no `.listing` files (SPEC §6.3), so its file count differs from a folder dump's (DKB update: 77,342 against
   80,273); the shader split's output is the same.
 - `dm/tools/nup_pack.py`: a small clean-room writer, for test fixtures (a folder dump → `.nup`), not for users.
-- Tests: `python -m unittest dm/tools/tests/test_nup.py` (bananative-env). On DKB, `pack_android.py` from the folder and from
+- Tests: `python -m unittest dm/tools/tests/test_nup.py` (polar-env). On DKB, `pack_android.py` from the folder and from
   the `.nup` (`--in-process`, the phone's path) give byte-identical modules, tables and keys; `shader_split.py` gives the
   same package and tables (22,852 shaders).
 

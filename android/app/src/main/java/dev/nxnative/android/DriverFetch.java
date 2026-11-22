@@ -62,7 +62,7 @@ final class DriverFetch {
         URL u = new URL(url);
         if (!"https".equals(u.getProtocol())) throw new Failure("not an https link: " + url);
         HttpsURLConnection c = (HttpsURLConnection) u.openConnection();
-        c.setRequestProperty("User-Agent", "BananaNative-driver-fetch");
+        c.setRequestProperty("User-Agent", "Polar-driver-fetch");
         c.setRequestProperty("Accept", accept);
         c.setConnectTimeout(15000);
         c.setReadTimeout(30000);

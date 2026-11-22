@@ -1,4 +1,4 @@
-# Banana Native on aarch64 Linux (experimental, community / best effort)
+# Polar on aarch64 Linux (experimental, community / best effort)
 
 The Android host (`dm/host`, `dm/gfx/vk_android`) built as a native aarch64 glibc executable, for Snapdragon handhelds
 running a desktop Linux (SteamOS-like images). It plays the same packs as Android (`target android`): a pack made by the
@@ -91,7 +91,7 @@ ends with a `[RED]` line naming the display variables), `NX_VK_DISPLAY_TIMING=1`
 
 `linux/tools/linux-pack.sh <game.nup or dump folder>` runs the same packer as the Android app and the Mac
 (`scripts/pack_android.py`): the code rewrite and the Vulkan shader library. `linux/tools/linux-pack.sh setup` (also run
-by the first pack) puts what it needs in `~/.local/share/banananative/packer` with no root: a Python environment with
+by the first pack) puts what it needs in `~/.local/share/polar/packer` with no root: a Python environment with
 Capstone 5, lz4 and zbic (pip from its bootstrap script where the system Python has no `ensurepip`), the .NET 10 runtime
 (Microsoft's archive) for the translator's portable dlls (`dm/gfx/tools/dmsh_xlate_bin`; the apphost there
 is the Mac's, so a wrapper beside the dlls, `dmsh_xlate-linux`, is what `XLATE` names), and it needs `spirv-val` on
@@ -128,7 +128,7 @@ on the aarch64 handheld) with several GB free and an internet connection.
 2. Get the source, on the branch `android` (the one the releases come from):
 
        git clone -b android https://git.eden-emu.dev/moceure/BananaNative.git
-       cd BananaNative
+       cd Polar
 
    To build a release, check out its tag (`git checkout v0.3.26`).
 
@@ -147,10 +147,10 @@ on the aarch64 handheld) with several GB free and an internet connection.
        linux/appimage/build-appimage.sh 0400C3F00006E000 040074A01BF12000
 
    The first run also builds the Docker image and SDL3, so it takes longer; later runs only rebuild what changed. With no title ID it builds the games already built in `linux/build/`, else Mario Kart World. The result is
-   `linux/build/appimage/BananaNative-<version>-aarch64.AppImage`.
+   `linux/build/appimage/Polar-<version>-aarch64.AppImage`.
 
-5. Copy it to the handheld (a USB stick, `scp`, ...), for example to `~/Games/BananaNative-aarch64.AppImage`, and make
-   it executable: `chmod +x ~/Games/BananaNative-aarch64.AppImage`. Open it with a double-click: the game window shows
+5. Copy it to the handheld (a USB stick, `scp`, ...), for example to `~/Games/Polar-aarch64.AppImage`, and make
+   it executable: `chmod +x ~/Games/Polar-aarch64.AppImage`. Open it with a double-click: the game window shows
    each game whose `.nup` it finds in `~/Games` (its name must contain `[<title ID>]`) and offers
    **Prepare** to make its pack there (below). When it is ready, **Add to Steam** puts it in Steam's library for Game Mode
    (see "For Steam (Game Mode)" below).
@@ -158,7 +158,7 @@ on the aarch64 handheld) with several GB free and an internet connection.
 What the handheld needs: glibc 2.39 or newer, a Vulkan driver with `VK_EXT_map_memory_placed` (Mesa Turnip), FUSE
 (`fusermount`, to open any AppImage), and for the game window Python 3 with PyQt6 (else `zenity` for a simpler picker).
 **Prepare** also needs `curl` and `spirv-val` (Ubuntu / Debian: `spirv-tools`) and downloads, once, about 130 MB of
-source plus the .NET 10 runtime into `~/.local/share/banananative/packer`.
+source plus the .NET 10 runtime into `~/.local/share/polar/packer`.
 
 **Prepare** downloads the exact source the AppImage was built from (`<NX_SOURCE_URL>/archive/<commit>.tar.gz`), so the
 commit you built must be public there. The default is this repository, which is right for a clone of `android` or a
@@ -171,16 +171,16 @@ screen with the new AppImage. Press **Prepare** again for each game after updati
 
 ### What the script does
 
-`linux/appimage/build-appimage.sh [title ID ...]` builds `linux/build/appimage/BananaNative-<version>-aarch64.AppImage`
+`linux/appimage/build-appimage.sh [title ID ...]` builds `linux/build/appimage/Polar-<version>-aarch64.AppImage`
 on an x86_64 PC: one host per title ID in `usr/bin`, a fallback SDL3 (`build-sdl3.sh`: X11 only, used where the system
 has no `libSDL3.so.0`), and the launcher `AppRun`. It downloads `appimagetool` 1.9.1 and the aarch64 runtime (type2-runtime
 20251108) from the AppImage project's GitHub releases on first use, pinned at the top of the script with the sha256 their
 release pages list (bump: the version and that hash); the cached files are checked on every run and a mismatch stops the
 build. fontTools (for `nintendo_ext.ttf`) is an exact version, a wheel, not hash-checked. It needs `rsvg-convert`.
 
-    BananaNative-aarch64.AppImage <pack folder> [game file (.nup)]
-    BananaNative-aarch64.AppImage                    (no argument, from a desktop) a game picker
-    BananaNative-aarch64.AppImage --games | --install | --list | --selftest [title ID]
+    Polar-aarch64.AppImage <pack folder> [game file (.nup)]
+    Polar-aarch64.AppImage                    (no argument, from a desktop) a game picker
+    Polar-aarch64.AppImage --games | --install | --list | --selftest [title ID]
 
 Opened with no argument from a desktop (a double-click, no terminal), it shows the game window (`launcher.py`, PyQt6 from
 the system): one card per game found (a pack, a `.nup` named `[<title ID>]`, or both) with what it needs next and the buttons
@@ -191,14 +191,14 @@ keys as `settings.env` (picture, frame rate cap, dynamic resolution and 3D resol
 generation, overlay, window, RAM saver, CPU policy, Gamescope's layer); saving edits the file in place and keeps its other
 lines; **Edit the file...** opens it. Without PyQt6, or with `NX_ZENITY=1`, it shows a picker (zenity) instead: the prepared packs
 found under `~/Games` and removable media (`pack.tsv`, 5 levels down) and those added with **Add a pack folder...**
-(`~/.config/banananative/games.list`), and **Settings**, which opens `settings.env`. A game whose `.nup` is not found
+(`~/.config/polar/games.list`), and **Settings**, which opens `settings.env`. A game whose `.nup` is not found
 asks for it once (`<title ID>.nup` remembers it). Errors show as a dialog there. `--games` prints what the picker
-lists; `--install` writes menu entries to `~/.local/share/applications`: `BananaNative` (the picker) and one per game
+lists; `--install` writes menu entries to `~/.local/share/applications`: `Polar` (the picker) and one per game
 with a host here, which Steam's **Add a Non-Steam Game** also lists (they carry the `PATH` below already).
 
 The launcher reads the title ID from the pack's `pack.tsv`, looks for the `.nup` beside the pack or in `~/Games` when
-none is given, keeps saves, caches and logs in `~/.local/share/banananative/<title ID>/` and reads settings from
-`~/.config/banananative/settings.env` and `<title ID>.env` (`KEY=VALUE`; a variable already in the environment wins).
+none is given, keeps saves, caches and logs in `~/.local/share/polar/<title ID>/` and reads settings from
+`~/.config/polar/settings.env` and `<title ID>.env` (`KEY=VALUE`; a variable already in the environment wins).
 Its defaults: handheld mode at graphics scale 2, the RAM saver, a fixed texture cache limit of 2300 MiB on a system
 with no swap and 12 GB or less, texture cache evictions on a 3 ms budget a frame, and Gamescope's Vulkan layer off
 (`NX_GAMESCOPE_WSI=1` keeps it).
@@ -218,24 +218,24 @@ present times: four clean runs, one a full race. So the Linux host does not use 
 `NX_VK_DISPLAY_TIMING=1` (`vka_dev.c`), and with that the layer is safe to leave on; the launcher still turns it off by
 default because that path has had far more hours and the layer gave no measurable frame rate here.
 For Steam (Game Mode): press **Add to Steam** on a game's card in the game window (it is also offered when **Prepare**
-ends), or run `BananaNative-aarch64.AppImage --steam [--close-steam] [title ID ...]` (every prepared game when no title ID
-is given). It adds a non-Steam game named `<game> (BananaNative)` to Steam's `shortcuts.vdf` for every Steam user here,
+ends), or run `Polar-aarch64.AppImage --steam [--close-steam] [title ID ...]` (every prepared game when no title ID
+is given). It adds a non-Steam game named `<game> (Polar)` to Steam's `shortcuts.vdf` for every Steam user here,
 with the launch options below already filled in; pressed again it updates that shortcut (after moving the AppImage or the
 pack) and keeps its artwork. Steam must be closed while the file is written: the window offers to close it and starts it
 again, and in Game Mode it asks you to switch to Desktop Mode. The file as it was is kept as
-`shortcuts.vdf.bak-banananative`. By hand: add the AppImage as a non-Steam game with the launch options
+`shortcuts.vdf.bak-polar`. By hand: add the AppImage as a non-Steam game with the launch options
 `PATH=/usr/local/bin:/usr/bin:/bin %command% "<pack folder>"`. The `PATH` part matters where Steam starts non-Steam
 games without one (seen on a SteamOS-like Ubuntu image): the AppImage runtime then finds no `fusermount` and ends
 before the launcher runs, with nothing on screen. The launcher writes each start and the reason it stopped to
-`~/.local/share/banananative/launcher.log`; a host that cannot open a window logs the display environment and ends
+`~/.local/share/polar/launcher.log`; a host that cannot open a window logs the display environment and ends
 (`NX_NO_WINDOW_OK=1` runs on without a picture).
 
 ## CPU governor helper
 
 With the `ondemand` governor a core's clock rises only past 95 % load. The host's replay thread waits for the rest of
 the frame every frame, shows about 70 % load, and the clock settles near 70 % of its maximum.
-`sudo sh linux/tools/install-governor-helper.sh` (also in the AppImage under `usr/share/banananative/`) installs
-`/usr/local/sbin/banananative-governor` and a sudoers rule for its `on [schedutil|performance]` and `off` only. The
+`sudo sh linux/tools/install-governor-helper.sh` (also in the AppImage under `usr/share/polar/`) installs
+`/usr/local/sbin/polar-governor` and a sudoers rule for its `on [schedutil|performance]` and `off` only. The
 launcher then switches the CPU clusters while a game runs (`NX_GOVERNOR=schedutil`, the default, `performance` or `0`),
 and a root watcher the helper leaves behind puts back what they had once no host runs (Steam's "Exit game" kills the
 launcher with the game, so the launcher cannot).

@@ -551,7 +551,7 @@ public final class PackService extends Service {
                 break;
             }
             case "pack": {
-                // the code and the library it takes may have gone since their steps were recorded done (the pack folder went with an uninstalled app, BananaNative
+                // the code and the library it takes may have gone since their steps were recorded done (the pack folder went with an uninstalled app, Polar
                 // issue #3): those steps run again first, instead of pack_android.py --keep-code stopping at a missing module
                 List<String> gone = dropMissing(j, "before the pack step");
                 if (!gone.isEmpty()) {
@@ -597,7 +597,7 @@ public final class PackService extends Service {
         PackEngine.setenv("J", s.equals("split") ? "1" : String.valueOf(workers));   // the split's J is its process pool: 1 = in this process
         PackEngine.setenv("DM_SPLIT_RESUME", splitScan.getPath());   // the split's kept scan results (only shader_split.py reads it)
         // the dump the split's RomFS is of: a program n > 0 (a Switch 2 Edition's program 1) keeps its shaders in its application's add-ons, which the split then
-        // reads too, as pack_android.py does (scripts/pack_dump.py split_addons; BananaNative issue #356: only the base's RomFS was read)
+        // reads too, as pack_android.py does (scripts/pack_dump.py split_addons; Polar issue #356: only the base's RomFS was read)
         PackEngine.setenv("DM_SPLIT_DUMP", s.equals("split") ? dump.getPath() : "");
         // a profile with a selected set: the split keeps the code of only those shaders (and their pixel shaders), as the shaders step builds only them; a full
         // package of Pokopia held 4.3 GB and its scan ran out of memory (docs/reference/memory.md, A shader split that keeps every shader's code in memory)
@@ -899,7 +899,7 @@ public final class PackService extends Service {
 
     private Notification note(Job j) {
         Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        Notification.Builder b = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_banana_mono).setOnlyAlertOnce(true)
+        Notification.Builder b = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_polar_mono).setOnlyAlertOnce(true)
                 .setCategory(Notification.CATEGORY_PROGRESS).setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
                 .setContentIntent(PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
         String name = j == null ? Tx.s(R.string.prepare_a_game) : j.name();

@@ -20,7 +20,7 @@ import java.util.Locale;
  * a game that is ready starts at once, anything that needs the user (no pack, shaders to make, All files access) goes to Home with the game. The shortcut
  * holds only the title ID, so it follows the game's card when the game or pack is moved; if the card is gone the launch says so.
  * <p>
- * The icon is the card's tile (Ui.tile): the name's first letter on banana yellow, drawn as an adaptive icon so the launcher's shape applies.
+ * The icon is the card's tile (Ui.tile): the name's first letter on yellow, drawn as an adaptive icon so the launcher's shape applies.
  */
 final class Shortcuts {
     private Shortcuts() { }
@@ -64,11 +64,11 @@ final class Shortcuts {
         int size = 432;   // 108 dp at 4x
         Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
         Canvas cv = new Canvas(b);
-        cv.drawColor(c.getColor(R.color.bn_banana));
+        cv.drawColor(c.getColor(R.color.bn_polar));
         String n = name == null ? "" : name.trim();
         String letter = n.isEmpty() ? "?" : n.substring(0, n.offsetByCodePoints(0, 1)).toUpperCase(Locale.ROOT);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setColor(c.getColor(R.color.bn_on_banana));
+        p.setColor(c.getColor(R.color.bn_on_polar));
         p.setTypeface(Typeface.create(Typeface.DEFAULT, 800, false));
         p.setTextSize(size * 0.36f);
         p.setTextAlign(Paint.Align.CENTER);
