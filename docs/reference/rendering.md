@@ -193,6 +193,13 @@ The replay on Metal (`dm/gfx/nvn/nvn_mtl.m`) and the Vulkan and OpenGL layers. E
 - **Found on:** [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md): 8 texture IDs (1435, 1437, 1438, 1445, 1473, 2486, 2490, 2491) on the 2026-11-21 Android run, after [Texture slots picked at run time on Android](shaders.md#texture-slots-picked-at-run-time-on-android) made their shaders load.
 - **Check:** a replay of that run has no `not a multiple of the device's texel buffer alignment` line and the particles draw. Not checked yet: a GPU write to one of these buffers earlier in the same submission would not be in the CPU snapshot (the same gap as the Metal `tbuf_shadow`).
 
+### Buffer-texture image cache thrashing and redundant per-frame copies on Android
+
+- **Symptom:** (Android) sustained collapse to ~4 fps in outdoor 3D scenes (`replay recording` 150–196 ms/frame, `images+pass+key` 44–62 µs/draw, ~900 render passes, ~1,700 copies/clears and ~5,200 barriers per frame when the game itself issues only ~10 clears/copies per frame; GPU busy jumping from ~22 ms to ~52 ms).
+- **Cause:** `vka_tbuf.c` cached at most 256 sampled-image copies of buffer textures (`NIMG = 256`, `NVIEW = 256`) with linear scans, and `vka_tbuf_pending()` returned 1 on the first use of every buffer texture in every frame (`copied_frame != frame`) even when neither the CPU nor the GPU had modified its bytes. Each refresh ended the open render pass (`vka_rp_end()`) and recorded full barriers plus `vkCmdCopyBufferToImage`; once a scene bound more than 256 distinct buffer textures per frame, the 256-entry LRU cache thrashed 100%, calling `vkCreateImage` / `vkAllocateMemory` / `vkFreeMemory` hundreds of times every frame inside `images+pass+key`.
+- **Fix:** `dm/gfx/vk_android/vka_tbuf.c` raises `NIMG` and `NVIEW` from 256 to 4,096 with O(1) open-chain hash lookup (and an address-span bounding box in `vka_tbuf_wrote()`), and hashes buffer textures up to 64 KiB via `vka_tex_gw_read()` (outside `g_mu` to preserve `g_tmu -> g_mu` lock order; `DM_VK_TBUF_HASH=0` disables) so unchanged buffer textures stamp `copied_frame` in place without ending the render pass or recording a GPU copy.
+- **Found on:** [South Park: The Fractured but Whole](../../dm/games/01008F2005154000/README.md#found-on-this-game) (Adreno 650, TurnipZ 0.3.0, frame 5794+ outdoor scene: 20–26 fps → 3.8–4.7 fps when active buffer textures exceeded 256). Applies to every game that binds many buffer textures as sampled 2D/1D images on Android.
+
 ### Automatic block height truncates
 
 - **Symptom:** torn digits and a background in blue steps (Rhythm Heaven Groove's latency calibration).
