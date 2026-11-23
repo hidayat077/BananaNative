@@ -1351,4 +1351,5 @@
     <string name="settings_group_system">Sistem</string>
     <string name="game_info">Game Info</string>
     <string name="game_settings">Game Settings</string>
+    <string name="game_misc">Diğer</string>
 </resources>

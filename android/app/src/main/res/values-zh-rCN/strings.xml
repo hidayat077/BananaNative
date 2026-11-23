@@ -1344,4 +1344,5 @@
     <string name="settings_group_system">系统</string>
     <string name="game_info">Game Info</string>
     <string name="game_settings">Game Settings</string>
+    <string name="game_misc">其他</string>
 </resources>

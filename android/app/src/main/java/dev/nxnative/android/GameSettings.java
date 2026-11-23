@@ -19,21 +19,22 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * A game's page (MainActivity.gameSettings: ⋯ on its card, or a long press; Back returns to Home): the game's name with Play, then two tabs. **Game Info** holds
+ * A game's page (MainActivity.gameSettings: ⋯ on its card, or a long press; Back returns to Home): the game's name with Play, then three tabs. **Game Info** holds
  * what the dump and the public game database say (version, publisher, release date, description); **Game Settings** holds everything that can be changed for this
- * game: speed and picture, the profile's options, Game language and controls, the testers' settings, and the Saves and Storage actions (MainActivity.gameTab).
+ * game: speed and picture, the profile's options, Game language and controls, the testers' settings; **Misc** holds the Saves and Storage actions (MainActivity.gameTab)
+ * and Reset to defaults.
  * All are stored per title ID (Prefs.gameKey, GpuDriver.choice). Each starts as "Default", which follows the main screen's Settings (global), or this phone's
  * recommendation (Recommend); a value set here wins for this game only. The in-game panel's frame rate cap is this game's too. GameActivity reads them at start.
  * <p>
- * Game Settings: Recommended / Custom where the profile recommends settings for this phone, then the sections Picture, Speed, Game options, Controls and Advanced;
- * Saves and Storage follow. A phone shows them one under the other, Advanced folded; a wide window (an unfolded foldable, a
+ * Game Settings: Recommended / Custom where the profile recommends settings for this phone, then the sections Picture, Speed, Game options, Controls and Advanced.
+ * A phone shows them one under the other, Advanced folded; a wide window (an unfolded foldable, a
  * tablet, landscape) shows a rail of the sections at the left and the one picked at the right. A row is one line of title over a line that says its value (a
  * switch's line says what its state does: Ui.Setting.says).
  */
 final class GameSettings {
     private GameSettings() {}
 
-    static final String INFO = "info", SETTINGS = "settings";
+    static final String INFO = "info", SETTINGS = "settings", MISC = "misc";
 
     /** The tab, the section the rail shows on a wide window, and whether Advanced is open on a narrow one: kept while the app runs, so the page built again after a choice keeps its place */
     private static String tab = INFO;
@@ -260,7 +261,7 @@ final class GameSettings {
 
     /** A controller's L1 / R1: the next (+1) or previous (-1) tab of the game's page, round; false when there is nothing to switch to */
     static boolean stepTab(Game g, int delta) {
-        String[] keys = new String[] {INFO, SETTINGS};
+        String[] keys = new String[] {INFO, SETTINGS, MISC};
         int cur = Math.max(0, Arrays.asList(keys).indexOf(tab));
         int next = PadPanel.tab(cur, delta, keys.length);
         if (next == cur) return false;
@@ -288,8 +289,8 @@ final class GameSettings {
         if (!id.equals(customFor)) { customFor = id; custom = false; }
         boolean wide = a.getResources().getConfiguration().screenWidthDp >= 600;
         String missing = Profile.missing(id, g.name);
-        String[] keys = new String[] {INFO, SETTINGS};
-        String[] labels = new String[] {Tx.s(R.string.game_info), Tx.s(R.string.game_settings)};
+        String[] keys = new String[] {INFO, SETTINGS, MISC};
+        String[] labels = new String[] {Tx.s(R.string.game_info), Tx.s(R.string.game_settings), Tx.s(R.string.game_misc)};
         int t = Math.max(0, Arrays.asList(keys).indexOf(tab));
         tab = keys[t];
         final LinearLayout content;
@@ -309,9 +310,7 @@ final class GameSettings {
             ed.addView(s.view);
         }
         shaderUpdateCard(a, content, g, again);
-        if (!tab.equals(SETTINGS)) { infoTab(a, content, g); return; }
-        TextView hint = Ui.add(content, Ui.small(a, Tx.s(R.string.game_for_this_game_only_default)), 6);
-        hint.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
+        if (tab.equals(INFO)) { infoTab(a, content, g); return; }
 
         // Recommended settings for this phone (game.tsv recommend rows: Recommend, Prefs.recommended): Recommended / Custom over the recommended values in a line, and on each
         // row of such a setting a tag (Recommended, or Changed with a "Recommended: …" line), kept current by refresh after every toggle. Without a recommendation, no choice
@@ -319,6 +318,9 @@ final class GameSettings {
         Runnable[] refresh = {() -> {}};
         List<Recommend.State> states = Prefs.recStates(a, id);
         String recLine = Recommend.line(states, (s, v) -> Prefs.recCardName(a, id, s, v));
+        if (tab.equals(MISC)) { miscTab(a, content, g, recLine == null, again); return; }
+        TextView hint = Ui.add(content, Ui.small(a, Tx.s(R.string.game_for_this_game_only_default)), 6);
+        hint.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
         if (recLine != null) {
             // Recommended / Custom stays on the page so the rows it tags (Full vegetation) keep their Recommended / Changed tags
             LinearLayout card = Ui.add(content, Ui.card(a), 12);
@@ -534,10 +536,7 @@ final class GameSettings {
                 .value(envLines == 0 ? Tx.s(R.string.game_none) : Tx.n(R.plurals.game_n_lines, envLines, envLines, env.replace('\n', ' '))).chevron(a));
 
         Section[] all = new Section[] {picture, speed, options, controls, advanced};   // one Settings tab: picture, speed, the game's options and controls, then tester settings
-        View reset = recLine != null ? null : Ui.button(a, Tx.s(R.string.game_reset_to_defaults), Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.game_reset_to_defaults), g.name))
-                .setMessage(Tx.s(R.string.game_the_game_will_follow_global))
-                .setPositiveButton(Tx.s(R.string.game_reset), (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        column(a, content, all, reset, g);
+        column(a, content, all, g);
         refresh[0].run();   // the tags, the Recommended: lines and the choice's changed line
     }
 
@@ -572,7 +571,7 @@ final class GameSettings {
     }
 
     /** A phone: the sections one under the other, each a label over its card and its line; Advanced folded under its label until opened (Show / Hide) */
-    private static void column(MainActivity a, LinearLayout content, Section[] all, View reset, Game g) {
+    private static void column(MainActivity a, LinearLayout content, Section[] all, Game g) {
         for (Section s : all) {
             if (s.empty()) continue;
             if (!s.key.equals("advanced")) {
@@ -607,10 +606,16 @@ final class GameSettings {
             head.setOnClickListener(v -> { advancedOpen = !advancedOpen; show.run(); });
             show.run();
         }
-        // Saves and Storage were tabs of their own; here they are the last sections of the one Settings tab
+    }
+
+    /** Misc: the save backups and the storage actions that used to close the Settings tab, and Reset to defaults after them */
+    private static void miscTab(MainActivity a, LinearLayout content, Game g, boolean canReset, Runnable again) {
+        String id = g.titleId;
         a.gameTab(content, g, true);
         a.gameTab(content, g, false);
-        if (reset != null) Ui.add(content, reset, 20, Ui.wrap());
+        if (canReset) Ui.add(content, Ui.button(a, Tx.s(R.string.game_reset_to_defaults), Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.game_reset_to_defaults), g.name))
+                .setMessage(Tx.s(R.string.game_the_game_will_follow_global))
+                .setPositiveButton(Tx.s(R.string.game_reset), (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton(Tx.s(R.string.common_cancel), null).show()), 20, Ui.wrap());
     }
 
     /**
@@ -702,7 +707,7 @@ final class GameSettings {
         }
         for (int k = 0; k < keys.length; k++) {
             int i2 = k;
-            String e = keys[k].equals(INFO) ? "\u2139\uFE0F" : "\u2699\uFE0F";
+            String e = keys[k].equals(INFO) ? "\u2139\uFE0F" : keys[k].equals(MISC) ? "\uD83E\uDDF0" : "\u2699\uFE0F";
             TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; a.gameSettingsTop(); });
             n.setMinHeight(Ui.dp(a, 38));
             Ui.add(left, n, k == 0 ? 10 : 0);
