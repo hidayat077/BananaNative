@@ -83,10 +83,14 @@ final class CoverFetch {
     private static JSONObject search(String url) {
         byte[] bytes = httpGet(url, MAX_JSON_BYTES);
         if (bytes == null) return null;
-        JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-        JSONObject resp = root.optJSONObject("response");
-        JSONArray docs = resp != null ? resp.optJSONArray("docs") : null;
-        return docs != null && docs.length() > 0 ? docs.optJSONObject(0) : null;
+        try {
+            JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            JSONObject resp = root.optJSONObject("response");
+            JSONArray docs = resp != null ? resp.optJSONArray("docs") : null;
+            return docs != null && docs.length() > 0 ? docs.optJSONObject(0) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static final int CONNECT_MS = 8000;
