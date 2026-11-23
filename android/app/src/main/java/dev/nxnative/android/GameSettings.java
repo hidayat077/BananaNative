@@ -546,20 +546,20 @@ final class GameSettings {
         String id = g.titleId;
         Ui.add(content, Ui.section(a, Tx.s(R.string.game_info)), 12);
         LinearLayout card = Ui.add(content, Ui.listCard(a), 6);
-        Ui.Setting version = new Ui.Setting(a, "\uD83C\uDFF7️", Tx.s("Version"), null).value(Tx.s("Reading the game files…"));
-        Ui.Setting titleId = new Ui.Setting(a, "\uD83C\uDF9F️", Tx.s("Title ID"), null).value(id.toUpperCase(Locale.US));
+        Ui.Setting version = new Ui.Setting(a, "\uD83C\uDFF7️", "Version", null).value("Reading the game files…");
+        Ui.Setting titleId = new Ui.Setting(a, "\uD83C\uDF9F️", "Title ID", null).value(id.toUpperCase(Locale.US));
         Profile p = Profile.of(id);
         int shaders = p == null ? 0 : p.shaderTotal;
         File pack = g.packDir == null ? null : new File(g.packDir);
-        String lib = pack == null ? Tx.s("No pack") : Pack.libraryProblem(pack, id) == null ? BuildConfig.NX_DMSH_VK_CHAIN : Tx.s("Not current");
-        Ui.Setting sh = new Ui.Setting(a, "\uD83C\uDFA8", Tx.s("Shaders"), null).value(shaders > 0 ? Tx.s("%1$s shaders · library %2$s", shaders, lib) : lib);
-        Ui.Setting pub = new Ui.Setting(a, "\uD83C\uDFE2", Tx.s("Publisher"), null);
-        Ui.Setting released = new Ui.Setting(a, "\uD83D\uDCC5", Tx.s("Released"), null);
-        Ui.Setting about = new Ui.Setting(a, "\uD83D\uDCD6", Tx.s("About"), null);
-        Ui.Setting genres = new Ui.Setting(a, "\uD83C\uDFAD", Tx.s("Genres"), null);
+        String lib = pack == null ? "No pack" : Pack.libraryProblem(pack, id) == null ? BuildConfig.NX_DMSH_VK_CHAIN : "Not current";
+        Ui.Setting sh = new Ui.Setting(a, "\uD83C\uDFA8", "Shaders", null).value(shaders > 0 ? shaders + " shaders · library " + lib : lib);
+        Ui.Setting pub = new Ui.Setting(a, "\uD83C\uDFE2", "Publisher", null);
+        Ui.Setting released = new Ui.Setting(a, "\uD83D\uDCC5", "Released", null);
+        Ui.Setting about = new Ui.Setting(a, "\uD83D\uDCD6", "About", null);
+        Ui.Setting genres = new Ui.Setting(a, "\uD83C\uDFAD", "Genres", null);
         for (Ui.Setting s : new Ui.Setting[] {version, titleId, sh, pub, released, about, genres}) card.addView(s.view);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
-            version.value(m != null && m.version != null ? m.version : Tx.s("Unknown"));
+            version.value(m != null && m.version != null ? m.version : "Unknown");
             if (m != null && m.publisher != null) pub.value(m.publisher);
         });
         CoverFetch.info(id, g.name, info -> {   // null when offline or the game is not in the public database: the local rows stay
