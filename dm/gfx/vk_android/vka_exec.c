@@ -693,13 +693,16 @@ void vka_rp_sub_begin(void) {
                  vka_barrier(g_cb); }   // the re-uploads of CPU-written textures before the submission's draws read them
     vka_draw_sub_begin(g_cb, k);
     { void vka_pso_pause(int on); vka_pso_pause(0); }   // the game submits: resumed (mtl_drain paused the pipeline threads)
-    g_chunk_draws = VKA_ENV("DM_VK_CHUNK", 600);   // live: from the next submission
+    // 150 (was 600): the GPU starts on the first part while the rest is recorded; with 600 a game that submits frame N+1 only after frame N's GPU work left it idle
+    // about 3 ms a frame, below the clock governor's step-up. Breath of the Wild's field on the AYN Thor (Turnip): 47.2 -> 52.5 fps, idle 3.4 -> 1.9 ms,
+    // GPU clock 615 -> 680 MHz; 64 draws was worse (39 fps), 100 and 250 a little worse than 150 (Peanuts Native 213133f, 2026-11-21)
+    g_chunk_draws = VKA_ENV("DM_VK_CHUNK", 150);   // live: from the next submission
     g_nx = 0; g_chunk_d0 = g_stat_draws;
     g_t_begin += now_ns() - tb0;
 }
 
 // A long submission goes to the queue in parts, so the GPU starts on its first passes while the rest is recorded: before the first pass after DM_VK_CHUNK draws (default
-// 600; 0 = one part) of the part in progress, the part is ended and submitted without a signal, and the submission goes on in the slot's next command buffer. The parts run
+// 150; 0 = one part) of the part in progress, the part is ended and submitted without a signal, and the submission goes on in the slot's next command buffer. The parts run
 // in order on the one queue, and the barriers recorded in a part cover what later parts do (submission order); only the last part signals the submission's fence.
 // On the Adreno 840 phone, Donkey Kong Bananza's level recorded ~45 ms a frame before its GPU work (~30 ms) began, and the game waited for that frame's fence (@sync_ms ~64)
 typedef struct { VkCommandBuffer cb; uint32_t q; uint64_t gate; } part_arg;   // q: the part's bottom (part_submit) or top (part_begin) timestamp query, UINT32_MAX = none; gate: see g_gate_next
@@ -764,7 +767,7 @@ static void chunk(void) {
     vka_draw_cb_switch(g_cb); vka_gp_part(g_cb);
     g_chunk_d0 = g_stat_draws; g_n_chunks++;
 }
-// DM_VK_CHUNK_PASS=n (live; default 600, 0 = off): a pass that has had n draws in the part in progress is also ended there and the part submitted; the next draw opens it again over the
+// DM_VK_CHUNK_PASS=n (live; default 150, 0 = off): a pass that has had n draws in the part in progress is also ended there and the part submitted; the next draw opens it again over the
 // same targets (loadOp LOAD, after the pass end's barrier), so its contents and the draws' order are kept. A pass of 1,700 draws whose GPU work (14-18 ms) only began after
 // all of it was recorded then starts on the GPU while the rest is recorded. Donkey Kong Bananza's level (Adreno 840, DM_VK_GPUPROF): the extra splits cost no measurable GPU
 // time (20.2-20.5 ms a frame with them, 20.8-21.0 without); with the GPU clock floor the GPU finished 6-10 ms after recording instead of 10-33
@@ -780,7 +783,7 @@ static inline void chunk_check(void) {
     if (!g_cb || g_nx >= NCHUNK) return;   // no part left: chunk() would do nothing and leave the draw count, so every later draw would end its pass
     uint64_t in = g_stat_draws - g_chunk_d0;
     if (g_chunk_draws > 0 && in >= (uint64_t)g_chunk_draws && vka_rp_split_ok(&S.rt, S.has_rt)) { vka_rp_end(); chunk(); return; }
-    int cp = VKA_ENV("DM_VK_CHUNK_PASS", 600);
+    int cp = VKA_ENV("DM_VK_CHUNK_PASS", 150);   // 150 (was 600): see DM_VK_CHUNK
     if (cp > 0 && in >= (uint64_t)cp && vka_rp_open_for(&S.rt, S.has_rt)) {
         uint32_t w = 0, h = 0; int dep = vka_rp_depth(&w, &h);
         if ((uint64_t)w * h >= (16ull << 20)) return;   // a 6400x6400 ink map costs ~400 MB to store and load on a tiler: never split it mid-pass for chunking

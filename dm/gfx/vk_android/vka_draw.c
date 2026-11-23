@@ -893,7 +893,16 @@ static int cpu_read(uint64_t addr, void *out, size_t n) {   // guest bytes as th
     if (ok && UB.n) ub_apply(addr, out, n);
     return ok;
 }
-static int rd_cb(void *ctx, uint64_t addr, void *out, size_t n) { (void)ctx; return cpu_read(addr, out, n); }
+// A uniform word a binding resolves at record time (a storage buffer's address or a texture handle) is the word as the GPU will see it at the draw: guest RAM with the
+// copies, fills and inline updates recorded before it that the GPU has not done (vka_tex_gw_read), then the open pass's deferred updates. cpu_read overlays only the
+// latter, so an update made before a pass break (the 150-draw part split, a change of targets, or any update with DM_VK_UB_DEFER=0) had already gone to the GPU as a copy
+// and the read took the address memory held before it (Tears of the Kingdom's Depths caves, issue #316). DM_VK_RD_GW=0 (live) keeps the old read. Placed memory only:
+// inline updates land nowhere else.
+static int rd_cb(void *ctx, uint64_t addr, void *out, size_t n) {
+    (void)ctx;
+    if (n && VKA_ENV("DM_VK_RD_GW", 1) && vka_addr(addr, n, NULL, NULL, NULL) && vka_tex_gw_read(addr, n, out)) { if (UB.n) ub_apply(addr, out, n); return 1; }
+    return cpu_read(addr, out, n);
+}
 int vka_cpu_read(uint64_t addr, void *out, size_t n) { return cpu_read(addr, out, n); }
 // DM_VK_TEX_STATS_TABLE (vka_nanscan.c has the format): the bindless textures a draw reads through a record table of handles in a storage buffer, added to ims / bs / ts
 // (m used of cap); returns the new count. Words are read as the CPU sees them now (the records are the CPU's). Every texture is scanned once a frame (the draw's own inputs too)
