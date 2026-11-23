@@ -27,7 +27,7 @@ class GameSettingsPage(unittest.TestCase):
     def test_every_setting_reachable(self):
         for call in ('presets(a, g, again)', 'resolution(a, g, again)', 'scene(a, g, again)', 'upscaler(a, g, again)', 'sharpness(a, g, again)', 'dlssMode(a, g, again)',
                      'clarity(a, g, again)', 'dlssSharp(a, g, again)', 'display(a, g, again)', 'aspect(a, g, again)', 'cap(a, g, again)', 'drs(a, g, again)',
-                     'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'xbox(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
+                     'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
                      'Prefs.resetGame(a, id)', 'Prefs.backToRecommended(a, id)'):
             self.assertIn(call, self.gs, f'{call}: its row is gone')
         for setter in ('fullVegetation', 'skipLayers', 'hold60', 'decouple', 'instancedDraws', 'classicPasses', 'psoAsync', 'ramSaver', 'pauseOnReturn', 'pinThreads'):
@@ -47,7 +47,7 @@ class GameSettingsPage(unittest.TestCase):
             self.assertIn(f'"{key}", ', self.gs); self.assertIn(f'"{label}")', self.gs)
         self.assertIn('new Ui.Segmented(a, new String[] {"Recommended", "Custom"}', self.gs)
         self.assertIn('screenWidthDp >= 600', self.gs, 'a wide window gets the left column')
-        self.assertIn('Ui.navItem(a, e, labels[k]', self.gs, 'the left column lists the tabs'); self.assertIn('column(a, content, all, reset)', self.gs)
+        self.assertIn('Ui.navItem(a, e, labels[k]', self.gs, 'the left column lists the tabs'); self.assertIn('column(a, content, all, g)', self.gs)
         self.assertNotIn('Ui.sheet(a, "Game settings', self.gs, 'a page, not a dialog')
 
     def test_ui_helpers(self):
@@ -56,11 +56,12 @@ class GameSettingsPage(unittest.TestCase):
                   'Setting badge(CharSequence s)', 'Setting sub()'):
             self.assertIn(h, ui)
 
-    def test_one_page(self):   # ⋯ opens the game's page: Performance (the settings), Saves, Storage under tabs, Play in its header
+    def test_one_page(self):   # ⋯ opens the game's page: Game Info, Game Settings and Misc under three tabs, Play in its header
         ma = (SRC / 'MainActivity.java').read_text(encoding='utf-8')
         self.assertIn('private void manage(Game g) { GameSettings.open(this, g); }', ma, 'no floating menu')
         self.assertNotIn('Ui.sheet(this, null, box)', ma)
-        self.assertIn('{"Performance", "Game", "Saves", "Storage"}', self.gs)
+        self.assertIn('String[] keys = new String[] {INFO, SETTINGS, MISC}', self.gs)
+        self.assertIn('"Game Info", "Game Settings"', self.gs)
         self.assertIn('Ui.tabs(a, labels, t, ', self.gs)
         bar = self.gs.split('private static void topBar(')[1].split('\n    }\n')[0]
         self.assertIn('v -> a.launch(g)', bar, 'Play in the top bar (a round button on a narrow window, the left column has it on a wide one)')

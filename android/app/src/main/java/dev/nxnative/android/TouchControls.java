@@ -58,11 +58,12 @@ final class TouchControls extends View {
     private float tx, ty, tr;      // the show / hide button
     private float picX, picY, picW = 1, picH = 1;   // the game's picture in the view, normalized
 
-    // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): each group (the left stick with L3,
-    // the D-pad, the face buttons, the right stick with R3, the left and the right shoulders with − / +) moved by (gdx, gdy) units and scaled by gsc around its centre,
-    // and where the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred, 1 right / bottom; nxhost_picture_place)
-    private static final int GROUPS = 6;
-    private static final String[] GROUP_NAME = {"left stick", "D-pad", "A B X Y", "right stick", "ZL L −", "ZR R +"};
+    // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): every control is moved by
+    // (gdx, gdy) units and scaled by gsc around its own centre in the editor, and the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred,
+    // 1 right / bottom; nxhost_picture_place)
+    // Each control is its own group: the editor moves and scales one control at a time, so − L ZL and a
+    // stick with its click can be placed separately. Kept per screen shape in ctl<N>@<screen> keys.
+    private static final int GROUPS = MAX;
     private String prof;
     private final float[] gdx = new float[GROUPS], gdy = new float[GROUPS], gsc = new float[GROUPS];
     private float placeX = 0.5f, placeY = 0.5f;
@@ -83,6 +84,8 @@ final class TouchControls extends View {
     private boolean editing;
     private int dragG = -1, dragId = -1, pinchId = -1;   // dragG: a group, GROUPS for the picture
     private float lastX, lastY, pinchD0, pinchS0;
+    private int selected = -1;                 // the control the editor's size buttons act on
+    private final RectF[] sizeTool = new RectF[2];
     private final RectF[] tool = new RectF[5];   // the editor's buttons: Top, Centre, Bottom, Reset, Done
     private static final String[] TOOL = {"Top", "Centre", "Bottom", "Reset", "Done"};
 
@@ -259,6 +262,7 @@ final class TouchControls extends View {
                     float move = (float) Math.sqrt(Math.max(0, need * need - dy * dy)) - Math.abs(dx);
                     cx[j] += cx[j] < w / 2f ? move : -move;
                 }
+        if (selected >= n) selected = -1;
         groups(w, h, u);
         tr = 10 * u; tx = w / 2f; ty = m + tr;   // small and faint (onDraw); its touch area is larger (onToggle)
         // The host's units: centres normalized to the view, radii in units of its height; a stick's grab ring is its own (input_map.c)
@@ -278,15 +282,13 @@ final class TouchControls extends View {
     }
 
     // ---- The user's layout: groups moved and scaled, the picture placed, kept per screen shape ----
-    private int groupOf(int i) {
-        long b = buttons[i];
-        if (kind[i] == STICK) return stick[i] == 0 ? 0 : 3;
-        if (kind[i] == DPAD) return 1;
-        if (b == LS) return 0;
-        if (b == RS) return 3;
-        if ((b & (A | B | X | Y)) != 0) return 2;
-        if ((b & (ZL | L | MINUS)) != 0) return 4;
-        return 5;
+    private int groupOf(int i) { return i; }   // one editable control per group
+
+    private String nameOf(int i) {
+        if (label[i] != null && label[i].length() > 0) return label[i];
+        if (kind[i] == STICK) return stick[i] == 0 ? "L stick" : "R stick";
+        if (kind[i] == DPAD) return "D-pad";
+        return "control " + i;
     }
 
     /** Moves and scales each group as the user left it, around the centre of where the automatic layout put it, kept inside the view; gbox gets each group's bounds */
@@ -316,7 +318,7 @@ final class TouchControls extends View {
     private void load() {
         button = toggleButton(getContext());
         for (int g = 0; g < GROUPS; g++) {
-            String[] v = prefs().getString("group" + g + "@" + prof, "0 0 1").split(" ");
+            String[] v = prefs().getString("ctl" + g + "@" + prof, "0 0 1").split(" ");
             try { gdx[g] = Float.parseFloat(v[0]); gdy[g] = Float.parseFloat(v[1]); gsc[g] = Float.parseFloat(v[2]); }
             catch (RuntimeException e) { gdx[g] = 0; gdy[g] = 0; gsc[g] = 1; }
         }
@@ -326,7 +328,7 @@ final class TouchControls extends View {
 
     private void saveLayout() {
         SharedPreferences.Editor e = prefs().edit();
-        for (int g = 0; g < GROUPS; g++) e.putString("group" + g + "@" + prof, gdx[g] + " " + gdy[g] + " " + gsc[g]);
+        for (int g = 0; g < GROUPS; g++) e.putString("ctl" + g + "@" + prof, gdx[g] + " " + gdy[g] + " " + gsc[g]);
         e.putString("picture@" + prof, placeX + " " + placeY).commit();   // commit: the game process may end right after (Stop)
     }
 
@@ -358,13 +360,13 @@ final class TouchControls extends View {
     }
 
     private void endEditLayout() {
-        editing = false; dragG = -1; dragId = -1; pinchId = -1;
+        editing = false; dragG = -1; dragId = -1; pinchId = -1; selected = -1;
         saveLayout(); relayout();
         if (onEditEnd != null) onEditEnd.run();
     }
 
     private void resetLayout() {
-        Arrays.fill(gdx, 0); Arrays.fill(gdy, 0); Arrays.fill(gsc, 1); placeX = 0.5f; placeY = defY();
+        Arrays.fill(gdx, 0); Arrays.fill(gdy, 0); Arrays.fill(gsc, 1); placeX = 0.5f; placeY = defY(); selected = -1;
         relayout(); saveLayout();
     }
 
@@ -393,12 +395,13 @@ final class TouchControls extends View {
         float x = e.getX(i), y = e.getY(i);
         switch (act) {
             case MotionEvent.ACTION_DOWN: {
+                for (int k = 0; k < sizeTool.length; k++) if (sizeTool[k] != null && sizeTool[k].contains(x, y)) { resizeSelected(k == 0 ? 0.9f : 1.1f); return true; }
                 for (int k = 0; k < tool.length; k++) if (tool[k] != null && tool[k].contains(x, y)) { toolTap(k); return true; }
                 dragG = -1;
                 float pad = 10 * unit();
                 for (int g = 0; g < GROUPS; g++)
-                    if (gbox[g] != null && x >= gbox[g].left - pad && x <= gbox[g].right + pad && y >= gbox[g].top - pad && y <= gbox[g].bottom + pad) { dragG = g; break; }
-                if (dragG < 0 && x >= picX * getWidth() && x <= (picX + picW) * getWidth() && y >= picY * getHeight() && y <= (picY + picH) * getHeight()) dragG = GROUPS;
+                    if (gbox[g] != null && x >= gbox[g].left - pad && x <= gbox[g].right + pad && y >= gbox[g].top - pad && y <= gbox[g].bottom + pad) { dragG = selected = g; break; }
+                if (dragG < 0 && x >= picX * getWidth() && x <= (picX + picW) * getWidth() && y >= picY * getHeight() && y <= (picY + picH) * getHeight()) { dragG = GROUPS; selected = -1; }
                 dragId = id; lastX = x; lastY = y;
                 invalidate();
                 return true;
@@ -448,6 +451,19 @@ final class TouchControls extends View {
     private static float snapEnd(float v) {
         for (float t : new float[] {0, 0.5f, 1}) if (Math.abs(v - t) < 0.06f) return t;
         return v;
+    }
+
+    /** The editor's − / + buttons: resize the selected control, 10 % a tap, within the layout's 50-200 % range */
+    private void resizeSelected(float factor) {
+        if (selected < 0 || selected >= n) return;
+        float v = Math.max(0.5f, Math.min(2f, gsc[selected] * factor));
+        if (v == gsc[selected]) return;
+        gsc[selected] = v;
+        relayout();
+        saveLayout();
+        invalidate();
+        if (haptics) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+        Native.note(String.format(java.util.Locale.ROOT, "on-screen controls: %s resized to %d %%", nameOf(selected), Math.round(v * 100)));
     }
 
     private void toolTap(int k) {
@@ -599,9 +615,10 @@ final class TouchControls extends View {
         c.drawRect(rect, line);
         for (int g = 0; g < GROUPS; g++) {
             if (gbox[g] == null) continue;
-            line.setColor(g == dragG ? Color.argb(255, 255, 210, 60) : Color.argb(160, 255, 255, 255));
+            boolean picked = g == dragG || g == selected;
+            line.setColor(picked ? Color.argb(255, 255, 210, 60) : Color.argb(160, 255, 255, 255));
             rect.set(gbox[g]); rect.inset(-4 * u, -4 * u);
-            if (g == dragG) { fill.setColor(Color.argb(60, 255, 210, 60)); c.drawRoundRect(rect, 8 * u, 8 * u, fill); }
+            if (picked) { fill.setColor(Color.argb(60, 255, 210, 60)); c.drawRoundRect(rect, 8 * u, 8 * u, fill); }
             c.drawRoundRect(rect, 8 * u, 8 * u, line);
         }
         float bw = 74 * u, bh = 34 * u, gap = 8 * u, x = (w - (TOOL.length * bw + (TOOL.length - 1) * gap)) / 2, y = 14 * u;
@@ -617,11 +634,26 @@ final class TouchControls extends View {
             text.setColor(k == 4 || cur ? Color.BLACK : Color.WHITE);
             c.drawText(Tx.arr(dev.nxnative.android.R.array.arr_touch_tool)[k], tool[k].centerX(), tool[k].centerY() - (text.descent() + text.ascent()) / 2, text);
         }
+        // Size buttons on a second row: one tap resizes the selected control by 10 %; pinch still works
+        float sy = y + bh + 8 * u, sw = 74 * u;
+        for (int k = 0; k < sizeTool.length; k++) {
+            if (sizeTool[k] == null) sizeTool[k] = new RectF();
+            float sx = w / 2f + (k == 0 ? -sw - 4 * u : 4 * u);
+            sizeTool[k].set(sx, sy, sx + sw, sy + bh);
+            fill.setColor(selected >= 0 ? Color.argb(230, 255, 210, 60) : Color.argb(200, 40, 40, 40));
+            c.drawRoundRect(sizeTool[k], 8 * u, 8 * u, fill);
+            line.setColor(Color.argb(220, 255, 255, 255));
+            c.drawRoundRect(sizeTool[k], 8 * u, 8 * u, line);
+            text.setColor(selected >= 0 ? Color.BLACK : Color.WHITE);
+            text.setTextSize(18 * u);
+            c.drawText(k == 0 ? "−" : "+", sizeTool[k].centerX(), sizeTool[k].centerY() - (text.descent() + text.ascent()) / 2, text);
+        }
         text.setTextSize(13 * u);
         text.setColor(Color.argb(230, 255, 255, 255));
-        String hint = dragG >= 0 && dragG < GROUPS ? Tx.s(dev.nxnative.android.R.string.game_group_drag_to_move, GROUP_NAME[dragG], Math.round(gsc[dragG] * 100))
+        int cur = dragG >= 0 ? dragG : selected;
+        String hint = cur >= 0 && cur < GROUPS ? Tx.s(dev.nxnative.android.R.string.game_group_drag_to_move, nameOf(cur), Math.round(gsc[cur] * 100))
                 : dragG == GROUPS ? Tx.s(dev.nxnative.android.R.string.game_picture_drag_into_the_black) : Tx.s(dev.nxnative.android.R.string.game_drag_a_control_or_the);
-        c.drawText(hint, w / 2f, y + bh + 22 * u, text);
+        c.drawText(hint, w / 2f, sy + bh + 20 * u, text);
     }
 
     private void drawStick(Canvas c, int i) {

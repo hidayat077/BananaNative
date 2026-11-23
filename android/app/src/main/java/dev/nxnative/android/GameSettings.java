@@ -16,27 +16,28 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * A game's page (MainActivity.gameSettings: ⋯ on its card, or a long press; Back returns to Home): the game's name with Play, then tabs. **Performance** is the game's
- * settings for speed and picture: resolution, upscaler, frame rate cap, GPU driver and the testers' settings; **Game** the profile's options, Game language and
- * controls. All are stored per title ID (Prefs.gameKey,
- * GpuDriver.choice). Each starts as "Default", which follows the main screen's Settings (global), or this phone's recommendation (Recommend); a value set here wins
- * for this game only. The in-game panel's frame rate cap is this game's too. GameActivity reads them at start. **Saves** and **Storage** are the game's
- * actions (MainActivity.gameTab).
+ * A game's page (MainActivity.gameSettings: ⋯ on its card, or a long press; Back returns to Home): the game's name with Play, then three tabs. **Game Info** holds
+ * what the dump and the public game database say (version, publisher, release date, description); **Game Settings** holds everything that can be changed for this
+ * game: speed and picture, the profile's options, Game language and controls, the testers' settings; **Misc** holds the Saves and Storage actions (MainActivity.gameTab)
+ * and Reset to defaults.
+ * All are stored per title ID (Prefs.gameKey, GpuDriver.choice). Each starts as "Default", which follows the main screen's Settings (global), or this phone's
+ * recommendation (Recommend); a value set here wins for this game only. The in-game panel's frame rate cap is this game's too. GameActivity reads them at start.
  * <p>
- * Performance: a chip with the GPU and the driver the game starts with, Recommended / Custom where the profile recommends settings for this phone, then the
- * sections Picture, Speed and Advanced; Game has Game options and Controls. A phone shows them one under the other, Advanced folded; a wide window (an unfolded foldable, a
+ * Game Settings: Recommended / Custom where the profile recommends settings for this phone, then the sections Picture, Speed, Game options, Controls and Advanced.
+ * A phone shows them one under the other, Advanced folded; a wide window (an unfolded foldable, a
  * tablet, landscape) shows a rail of the sections at the left and the one picked at the right. A row is one line of title over a line that says its value (a
  * switch's line says what its state does: Ui.Setting.says).
  */
 final class GameSettings {
     private GameSettings() {}
 
-    static final String PERFORMANCE = "performance", GAME = "game", SAVES = "saves", STORAGE = "storage";
+    static final String INFO = "info", SETTINGS = "settings", MISC = "misc";
 
     /** The tab, the section the rail shows on a wide window, and whether Advanced is open on a narrow one: kept while the app runs, so the page built again after a choice keeps its place */
-    private static String tab = PERFORMANCE;
+    private static String tab = INFO;
     private static String shown = "picture";
     private static boolean advancedOpen;
     private static boolean custom;   // the player picked Custom while nothing was changed yet (else the choice follows the changed count)
@@ -44,7 +45,7 @@ final class GameSettings {
 
     /** Opens a game's page (a tap on its tile) at its first tab */
     static void open(MainActivity a, Game g) {
-        tab = Profile.missing(g.titleId, g.name) == null ? PERFORMANCE : SAVES;   // a game this app has no profile for has no settings
+        tab = INFO;
         a.gameSettings(g);
     }
 
@@ -260,7 +261,7 @@ final class GameSettings {
 
     /** A controller's L1 / R1: the next (+1) or previous (-1) tab of the game's page, round; false when there is nothing to switch to */
     static boolean stepTab(Game g, int delta) {
-        String[] keys = Profile.missing(g.titleId, g.name) == null ? new String[] {PERFORMANCE, GAME, SAVES, STORAGE} : new String[] {SAVES, STORAGE};
+        String[] keys = new String[] {INFO, SETTINGS, MISC};
         int cur = Math.max(0, Arrays.asList(keys).indexOf(tab));
         int next = PadPanel.tab(cur, delta, keys.length);
         if (next == cur) return false;
@@ -288,8 +289,8 @@ final class GameSettings {
         if (!id.equals(customFor)) { customFor = id; custom = false; }
         boolean wide = a.getResources().getConfiguration().screenWidthDp >= 600;
         String missing = Profile.missing(id, g.name);
-        String[] keys = missing == null ? new String[] {PERFORMANCE, GAME, SAVES, STORAGE} : new String[] {SAVES, STORAGE};
-        String[] labels = missing == null ? new String[] {Tx.s(R.string.game_performance), Tx.s(R.string.game_game), Tx.s(R.string.game_saves), Tx.s(R.string.game_storage)} : new String[] {Tx.s(R.string.game_saves), Tx.s(R.string.game_storage)};
+        String[] keys = new String[] {INFO, SETTINGS, MISC};
+        String[] labels = new String[] {Tx.s(R.string.game_info), Tx.s(R.string.game_settings), Tx.s(R.string.game_misc)};
         int t = Math.max(0, Arrays.asList(keys).indexOf(tab));
         tab = keys[t];
         final LinearLayout content;
@@ -309,11 +310,7 @@ final class GameSettings {
             ed.addView(s.view);
         }
         shaderUpdateCard(a, content, g, again);
-        if (!tab.equals(PERFORMANCE) && !tab.equals(GAME)) { a.gameTab(content, g, tab.equals(SAVES)); return; }
-        boolean perf = tab.equals(PERFORMANCE);
-        if (perf) Ui.add(content, Ui.statusChip(a, chipText(a, id)), 12, Ui.wrap());
-        TextView hint = Ui.add(content, Ui.small(a, Tx.s(R.string.game_for_this_game_only_default)), 6);
-        hint.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
+        if (tab.equals(INFO)) { infoTab(a, content, g); return; }
 
         // Recommended settings for this phone (game.tsv recommend rows: Recommend, Prefs.recommended): Recommended / Custom over the recommended values in a line, and on each
         // row of such a setting a tag (Recommended, or Changed with a "Recommended: …" line), kept current by refresh after every toggle. Without a recommendation, no choice
@@ -321,9 +318,12 @@ final class GameSettings {
         Runnable[] refresh = {() -> {}};
         List<Recommend.State> states = Prefs.recStates(a, id);
         String recLine = Recommend.line(states, (s, v) -> Prefs.recCardName(a, id, s, v));
+        if (tab.equals(MISC)) { miscTab(a, content, g, recLine == null, again); return; }
+        TextView hint = Ui.add(content, Ui.small(a, Tx.s(R.string.game_for_this_game_only_default)), 6);
+        hint.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
         if (recLine != null) {
-            // the card shows on Performance; on Game it is built off the page, so the rows it tags (Full vegetation) keep their Recommended / Changed tags
-            LinearLayout card = Ui.add(perf ? content : new LinearLayout(a), Ui.card(a), 12);
+            // Recommended / Custom stays on the page so the rows it tags (Full vegetation) keep their Recommended / Changed tags
+            LinearLayout card = Ui.add(content, Ui.card(a), 12);
             card.setPadding(Ui.dp(a, 14), Ui.dp(a, 12), Ui.dp(a, 14), Ui.dp(a, 12));
             card.addView(Ui.text(a, Tx.s(R.string.game_recommended_for_this_phone), 15, R.color.bn_text, 700));
             Ui.Segmented[] seg = new Ui.Segmented[1];
@@ -503,7 +503,6 @@ final class GameSettings {
                 .value(ownLabel(Prefs.ownPanelPad(a, id), Tx.arr(R.array.arr_pad_open)[Prefs.panelPad(a, id)])).chevron(a));
         controls.add(new Ui.Setting(a, "🕹️", Tx.s(R.string.common_button_mapping), v -> PadMapUi.forGame(a, g, again)).value(PadMapUi.label(a, id)).chevron(a));
         controls.add(new Ui.Setting(a, "🎯", Tx.s(R.string.game_motion_sensitivity), v -> motionSens(a, g, again)).value(Prefs.MOTION_NAMES[Prefs.motionSens(a, id)]).note(Tx.s(R.string.game_how_far_the_phone_s)).chevron(a));
-        controls.add(new Ui.Setting(a, "🅰️", Tx.s(R.string.game_xbox_button_labels), v -> xbox(a, g, again)).value(Prefs.xboxLabel(Prefs.xboxButtons(a, id))).chevron(a));
 
         // ---- Advanced: for testers ----
         advanced.add(new Ui.Setting(a, "⏲️", Tx.s(R.string.game_gpu_timing), v -> gpuTiming(a, g, again)).value(gpuTsLabel(a, id)).note(Tx.s(R.string.game_what_the_game_s_gpu)).chevron(a));
@@ -536,16 +535,43 @@ final class GameSettings {
         advanced.add(new Ui.Setting(a, "📝", Tx.s(R.string.game_extra_environment), v -> env(a, g, again))
                 .value(envLines == 0 ? Tx.s(R.string.game_none) : Tx.n(R.plurals.game_n_lines, envLines, envLines, env.replace('\n', ' '))).chevron(a));
 
-        Section[] all = perf ? new Section[] {picture, speed, advanced} : new Section[] {options, controls};   // Performance: what changes speed and picture; Game: the game's own options, language and controls
-        View reset = recLine != null ? null : Ui.button(a, Tx.s(R.string.game_reset_to_defaults), Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.game_reset_to_defaults), g.name))
-                .setMessage(Tx.s(R.string.game_the_game_will_follow_global))
-                .setPositiveButton(Tx.s(R.string.game_reset), (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        column(a, content, all, reset);
+        Section[] all = new Section[] {picture, speed, options, controls, advanced};   // one Settings tab: picture, speed, the game's options and controls, then tester settings
+        column(a, content, all, g);
         refresh[0].run();   // the tags, the Recommended: lines and the choice's changed line
     }
 
+    /** Game Info: the version from the dump and the public facts about the game; both fill in when their background reads land */
+    private static void infoTab(MainActivity a, LinearLayout content, Game g) {
+        String id = g.titleId;
+        Ui.add(content, Ui.section(a, Tx.s(R.string.game_info)), 12);
+        LinearLayout card = Ui.add(content, Ui.listCard(a), 6);
+        Ui.Setting version = new Ui.Setting(a, "\uD83C\uDFF7️", "Version", null).value("Reading the game files…");
+        Ui.Setting titleId = new Ui.Setting(a, "\uD83C\uDF9F️", "Title ID", null).value(id.toUpperCase(Locale.US));
+        Profile p = Profile.of(id);
+        int shaders = p == null ? 0 : p.shaderTotal;
+        File pack = g.packDir == null ? null : new File(g.packDir);
+        String lib = pack == null ? "No pack" : Pack.libraryProblem(pack, id) == null ? BuildConfig.NX_DMSH_VK_CHAIN : "Not current";
+        Ui.Setting sh = new Ui.Setting(a, "\uD83C\uDFA8", "Shaders", null).value(shaders > 0 ? shaders + " shaders · library " + lib : lib);
+        Ui.Setting pub = new Ui.Setting(a, "\uD83C\uDFE2", "Publisher", null);
+        Ui.Setting released = new Ui.Setting(a, "\uD83D\uDCC5", "Released", null);
+        Ui.Setting about = new Ui.Setting(a, "\uD83D\uDCD6", "About", null);
+        Ui.Setting genres = new Ui.Setting(a, "\uD83C\uDFAD", "Genres", null);
+        for (Ui.Setting s : new Ui.Setting[] {version, titleId, sh, pub, released, about, genres}) card.addView(s.view);
+        GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
+            version.value(m != null && m.version != null ? m.version : "Unknown");
+            if (m != null && m.publisher != null) pub.value(m.publisher);
+        });
+        CoverFetch.info(id, g.name, info -> {   // null when offline or the game is not in the public database: the local rows stay
+            if (info == null) return;
+            if (!info.publisher.isEmpty()) pub.value(info.publisher);
+            if (!info.released.isEmpty()) released.value(info.released);
+            if (!info.about.isEmpty()) about.value(info.about);
+            if (!info.categories.isEmpty()) genres.value(info.categories);
+        });
+    }
+
     /** A phone: the sections one under the other, each a label over its card and its line; Advanced folded under its label until opened (Show / Hide) */
-    private static void column(MainActivity a, LinearLayout content, Section[] all, View reset) {
+    private static void column(MainActivity a, LinearLayout content, Section[] all, Game g) {
         for (Section s : all) {
             if (s.empty()) continue;
             if (!s.key.equals("advanced")) {
@@ -580,7 +606,16 @@ final class GameSettings {
             head.setOnClickListener(v -> { advancedOpen = !advancedOpen; show.run(); });
             show.run();
         }
-        if (reset != null) Ui.add(content, reset, 20, Ui.wrap());
+    }
+
+    /** Misc: the save backups and the storage actions that used to close the Settings tab, and Reset to defaults after them */
+    private static void miscTab(MainActivity a, LinearLayout content, Game g, boolean canReset, Runnable again) {
+        String id = g.titleId;
+        a.gameTab(content, g, true);
+        a.gameTab(content, g, false);
+        if (canReset) Ui.add(content, Ui.button(a, Tx.s(R.string.game_reset_to_defaults), Ui.Kind.SOFT, v -> new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.game_reset_to_defaults), g.name))
+                .setMessage(Tx.s(R.string.game_the_game_will_follow_global))
+                .setPositiveButton(Tx.s(R.string.game_reset), (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton(Tx.s(R.string.common_cancel), null).show()), 20, Ui.wrap());
     }
 
     /**
@@ -642,6 +677,7 @@ final class GameSettings {
         boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
         Covers.show(tile, g);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
+            if (m == null) return;
             if (m.icon != null && !ownCover) { Ui.tileIcon(tile, m.icon); banner.setImageBitmap(m.icon); }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }
@@ -671,7 +707,7 @@ final class GameSettings {
         }
         for (int k = 0; k < keys.length; k++) {
             int i2 = k;
-            String e = keys[k].equals(PERFORMANCE) ? "\u26A1" : keys[k].equals(GAME) ? "\uD83C\uDFAE" : keys[k].equals(SAVES) ? "\uD83D\uDCBE" : "\uD83D\uDCE6";
+            String e = keys[k].equals(INFO) ? "\u2139\uFE0F" : keys[k].equals(MISC) ? "\uD83E\uDDF0" : "\u2699\uFE0F";
             TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; a.gameSettingsTop(); });
             n.setMinHeight(Ui.dp(a, 38));
             Ui.add(left, n, k == 0 ? 10 : 0);
@@ -715,15 +751,6 @@ final class GameSettings {
     static boolean slowOnTurnip(MainActivity a, String id) { GpuDriver.Info i = GpuDriver.selected(a, id); return i != null && TURNIP_SLOW.contains(id) && GpuDriver.isMesa(i); }
 
     static String driverShort(MainActivity a, String id) { GpuDriver.Info i = GpuDriver.selected(a, id); return i == null ? Tx.s(R.string.common_system) : i.label(); }
-
-    /** The Performance tab's chip: the GPU (GLES's renderer, GpuGl) and the driver this game starts with (an installed one's name, else the system driver's from the kept facts) */
-    static String chipText(MainActivity a, String id) {
-        GpuDriver.Info i = GpuDriver.selected(a, id);
-        String d = i != null ? i.label() + (slowOnTurnip(a, id) ? Tx.s(R.string.game_low_performance_here) : "") : Readiness.driverWord(Prefs.facts(a, Recommend.SYSTEM));
-        if (d == null) d = Tx.s(R.string.game_system_driver_2);
-        String n = GpuGl.name();
-        return n != null ? n + " · " + d : d;
-    }
 
     /** The title ID whose last pick here needs another render target pool than the setting before it (Profile.renderRestartNote): the next drawing of its sheet shows the line once */
     private static String renderNoteFor;
@@ -990,18 +1017,6 @@ final class GameSettings {
     private static void display(MainActivity a, Game g, Runnable done) {
         new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.common_display), g.name)).setSingleChoiceItems(Tx.arr(R.array.arr_display), Prefs.stretch(a, g.titleId) ? 1 : 0, (x, w) -> {
             Prefs.stretch(a, g.titleId, w == 1);
-            x.dismiss();
-            done.run();
-        }).setNegativeButton(Tx.s(R.string.common_cancel), null).show();
-    }
-
-    private static void xbox(MainActivity a, Game g, Runnable done) {   // Default first: the game follows Settings again
-        String[] labels = new String[Tx.arr(R.array.arr_xbox).length + 1];
-        labels[0] = Tx.s(R.string.game_default_settings_value, Prefs.xboxLabel(Prefs.xboxButtons(a)));
-        System.arraycopy(Tx.arr(R.array.arr_xbox), 0, labels, 1, Tx.arr(R.array.arr_xbox).length);
-        int checked = Prefs.ownXboxButtons(a, g.titleId) ? Prefs.xboxButtons(a, g.titleId) + 1 : 0;
-        new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.settings_xbox_button_label_swap), g.name)).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.xboxButtons(a, g.titleId, w == 0 ? null : w - 1);
             x.dismiss();
             done.run();
         }).setNegativeButton(Tx.s(R.string.common_cancel), null).show();

@@ -1,0 +1,36 @@
+# Hogwarts Legacy — SDK 17.5.4, Unreal Engine 4 (the Phoenix cook), NVN.
+# Snapshot v327680 from a .nup read in place; no full RomFS extraction.
+# The profile is a starting point: the memory keys are from the survey's rules, not measured yet.
+
+# ---- Identity ----
+title_id	0100F7E00C70E000
+program_id	0100F7E00C70E000
+
+# ---- App ----
+name	Hogwarts Legacy
+ipa	HogwartsLegacy.ipa
+app_category	public.app-category.action-games
+pad_layout	full
+
+# ---- Versions ----
+build	v327680	1.0	main=0c00fc37b0610fbdb2cf73aed0cc73e7	subsdk0=d0c48eef6dc2f1e7ac8b8dd5b5b03a60	sdk=1ea0b9fe6cd6867b18e374a5d53d7950
+package	v327680
+shader_versions	v327680
+
+# ---- Files ----
+modules	main subsdk0 sdk
+romfs_marker	Phoenix/Content/Paks/global.utoc
+zip_store	.pak:.utoc:.ucas
+
+# ---- Memory (survey defaults, not measured) ----
+# Unreal's nninitStartup reserves a 62 GB address region; the rewriter cuts FMallocBinned3
+# (dm/tools/ue_malloc.py / ue_region.py). A Switch-sized alias region matches the console layout.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+sys_resource	0x1000000
+
+# ---- Shaders ----
+shader_groups	ShaderArchive-Global-=global ShaderArchive-=game
+shader_note	Hogwarts Legacy shaders

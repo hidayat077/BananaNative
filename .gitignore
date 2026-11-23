@@ -26,3 +26,5 @@ STUTTER-TEST*.md
 linux/build/
 linux/sysroot/
 dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate-linux
+# Local Android replayer build (dm/tools/android_replay.py, scripts/regress.py); binaries are built here, never committed
+/replay-agent-build/

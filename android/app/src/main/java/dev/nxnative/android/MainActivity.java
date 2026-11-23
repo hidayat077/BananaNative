@@ -430,7 +430,7 @@ public final class MainActivity extends Activity {
      */
     // What a tile's state is, as a value the launcher compares (the words are in the app's language and never matched): ST_SOFT "Ready · note" (a light veil),
     // ST_WORKING something is being made (the moving bar), ST_HIDDEN nothing to say (Ready, Checking…). No flag: the veil with its words (needs preparing, a problem)
-    static final int ST_SOFT = 1, ST_WORKING = 2, ST_HIDDEN = 4;
+    static final int ST_SOFT = 1, ST_WORKING = 2, ST_HIDDEN = 4, ST_NO_COVER = 8;
 
     /** Sets a tile's state words and colour and remembers the kind of state it is (ST_*) */
     private static void state(TextView t, CharSequence words, int colorRes, int kind) {
@@ -446,6 +446,7 @@ public final class MainActivity extends Activity {
         if (ov.getTag() != null) return;   // a game that is being prepared: workTick draws it
         int kind = kindOf(st);
         badge.setVisibility(View.GONE);
+        if ((kind & ST_NO_COVER) != 0) { ov.setVisibility(View.GONE); return; }   // a locked game keeps its cover clear; the caption says it instead
         String s = st.getText().toString();
         s = s.replaceFirst("^[\\u25CF\\u2022\\s]+", "").trim();   // the state's dot (Ui.status) is not part of the words
         if (s.isEmpty() || (kind & ST_HIDDEN) != 0) { ov.setVisibility(View.GONE); return; }
@@ -685,12 +686,6 @@ public final class MainActivity extends Activity {
         perf.addView(new Ui.Setting(this, "🚀", Tx.s(R.string.common_use_fast_cores), null).toggle(this, Prefs.pinThreads(this), (b, on) -> Prefs.pinThreadsDefault(this, on))
                 .value(Tx.s(R.string.settings_keeps_the_busiest_threads_off)).view);
         perf.addView(new Ui.Setting(this, "🖥️", Tx.s(R.string.settings_docked_mode), null).toggle(this, Prefs.dockedMode(this), (b, on) -> Prefs.dockedMode(this, on)).view);
-        Ui.Setting xbox = new Ui.Setting(this, "🅰️", Tx.s(R.string.settings_xbox_button_label_swap), null).chevron(this);
-        xbox.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_xbox_button_label_swap))
-                .setSingleChoiceItems(Tx.arr(R.array.arr_xbox), Prefs.xboxButtons(this), (d, w) -> { Prefs.xboxButtonsDefault(this, w); xbox.value(Prefs.xboxLabel(w)); d.dismiss(); })
-                .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        xbox.value(Prefs.xboxLabel(Prefs.xboxButtons(this)));
-        ctl.addView(xbox.view);
         Ui.Setting padMap = new Ui.Setting(this, "🕹️", Tx.s(R.string.common_button_mapping), null).chevron(this);
         padMap.view.setOnClickListener(v -> PadMapUi.forDefault(this, () -> padMap.value(PadMapUi.label(this, null))));
         padMap.value(PadMapUi.label(this, null));
@@ -1332,12 +1327,12 @@ public final class MainActivity extends Activity {
         boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
         java.util.concurrent.atomic.AtomicBoolean hasLocalIcon = new java.util.concurrent.atomic.AtomicBoolean();
         GameMeta.loadControl(new File(g.gameDir), Edition.control(this, g), m -> {
-            if (m.icon != null && !ownCover) {
+            if (m != null && m.icon != null && !ownCover) {
                 hasLocalIcon.set(true);
                 Ui.tileIcon(tile, m.icon);
             }
             TileInfo ti = (TileInfo) c.getTag();
-            ti.version = m.version;
+            ti.version = m == null ? null : m.version;
             HomeLayout.caption(ti);   // the grid's and the list's second line
         });   // with the edition switch on, program 1's icon
         if (!ownCover) CoverFetch.fetchIfMissing(this, g, hasLocalIcon, b -> {
@@ -1490,7 +1485,7 @@ public final class MainActivity extends Activity {
                 if (problem != null && problem.shadersOnly && problem.prepare && !locked) Ondevice.autoUpdate(this, new File(g.gameDir), new File(g.packDir), g.titleId);
                 if (problem == null) state(st, Tx.s(R.string.home_ready), R.color.bn_leaf, ST_HIDDEN);
                 else if (problem.onDemand) state(st, problem.label, R.color.bn_leaf, ST_HIDDEN);   // Play starts it; the layer builds the shaders as it runs
-                else if (problem.playable && locked) state(st, Tx.s(R.string.home_ready_locked), R.color.bn_leaf, ST_SOFT);
+                else if (problem.playable && locked) state(st, Tx.s(R.string.home_ready_locked), R.color.bn_leaf, ST_SOFT | ST_NO_COVER);
                 else if (problem.playable && !problem.prepare) state(st, PrepareText.READY_OLDER(), R.color.bn_leaf, ST_SOFT);   // not a dump: nothing is updated on the phone (the page says where new ones come from)
                 else if (problem.playable && Ondevice.sampling(new File(g.packDir))) { state(st, PrepareText.CHECKING_SHADERS(), R.color.bn_leaf, ST_SOFT | ST_WORKING); updating.put(st, g); updateTick(); updateUi.removeCallbacks(sampleRun); updateUi.postDelayed(sampleRun, 2000); }   // the quick check of the older library (Ondevice.sampledKeep): the card follows it
                 else if (problem.playable && Pack.shaderLayerFills(new File(g.packDir), g.titleId, Prefs.layerEnv(this, g.titleId))) state(st, Tx.s(R.string.home_ready), R.color.bn_leaf, ST_HIDDEN);   // the layer builds what the older library lacks: no "update" to nag about

@@ -33,6 +33,9 @@ uint32_t *vka_spv_gs_link(const uint32_t *gw, size_t gn, const uint32_t *vw, siz
 uint32_t *vka_spv_gs_fill(const uint32_t *w, size_t nw, size_t *out_nw, char *err, size_t errn);
 // A pixel shader's colour outputs: the components each location's stores can write (bit c of comp[loc]), for the colour write mask: 0, or -1 when the module is not read
 int vka_spv_fout_comps(const uint32_t *w, size_t nw, uint8_t comp[8]);
+// A module whose GLSL.std.450 InverseSqrt of a scalar float is preceded by NMax with the smallest normal float: Vulkan returns Inf for InverseSqrt(0) and the next
+// 0*Inf is NaN, where Maxwell's RSQ gives a finite value. A malloc'd copy (*out_nw words; *changed), NULL with err empty when there is nothing to change
+uint32_t *vka_spv_safe_rsqrt(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn);
 // Texture-use feedback for the texture pool (vka_spvpatch.c vka_spv_pool_fb): before each read of the pool (a one-index access chain into the sampled-image array at set
 // `set` binding `tex_binding`) the module sets bit (id & 31) of word id >> 5 of a storage buffer at set `fb_set` binding `fb_binding`, id the index's low 20 bits: an atomic
 // OR when a load finds the bit clear. flags: VKA_PFB_VTX_STORES (the device has vertexPipelineStoresAndAtomics: vertex, tessellation and geometry modules may take it),
@@ -46,3 +49,10 @@ uint32_t *vka_spv_pool_fb(const uint32_t *w, size_t nw, uint32_t set, uint32_t t
 // L < 16 moves to nibble L of map, or with nibble 0xf becomes a Private (0, 0, 0, 1). A malloc'd copy (*out_nw words; *moved / *consts the original locations of each kind);
 // NULL with err empty when nothing changes, NULL with the reason in err when it cannot be made
 uint32_t *vka_spv_input_remap(const uint32_t *w, size_t nw, uint64_t map, size_t *out_nw, uint32_t *moved, uint32_t *consts, char *err, size_t errn);
+// Arrays of sampled images over a table of handles in a uniform buffer, read through the texture pool instead (vka_spvpatch.c vka_spv_table_pool): per table
+// its array's set 0 binding, the uniform buffer's set 0 binding and the byte offset of the table's entry 0 in it. The array's variable becomes one sampler; each read
+// loads entry k's handle from the buffer and takes its texture ID's element of the pool's sampled images (set pool_set, binding pool_binding, IDs clamped to max_id).
+// A malloc'd copy (*out_nw words; *sites the element loads rewritten); NULL with err empty when the module reads none of the arrays, NULL with the reason in err when it
+// cannot be rewritten
+typedef struct { uint32_t binding, ubo_binding, off; } vka_tabpool;
+uint32_t *vka_spv_table_pool(const uint32_t *w, size_t nw, const vka_tabpool *t, int nt, uint32_t pool_set, uint32_t pool_binding, uint32_t max_id, size_t *out_nw, int *sites, char *err, size_t errn);

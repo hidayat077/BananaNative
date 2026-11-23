@@ -1,6 +1,8 @@
 // DM_VK_NANSCAN=1: a diagnostic that finds the pass that first writes NaN or infinite texels. After every render pass, each float colour attachment's level / layer is
 // scanned by a compute shader (selftest/nanscan.comp) that counts NaN and infinite texels and keeps the first one's position; when the submission is done the completion
 // thread logs each pass with any, with its frame, its place in the submission, the attachment (serial, format, size) and the vertex / fragment shaders of its draws.
+// DM_VK_NANSCAN_NZ=<W>x<H> or <serial> (with DM_VK_NANSCAN): the scans' non-zero counts are logged for every pass attachment (or dispatch storage image) of that
+// size or texture serial, NaN or not: which pass fills a target and which leaves it at its clear value (Hogwarts Legacy's half-resolution light targets).
 // DM_VK_NANSCAN=2 also splits long passes to find the draw: the Vulkan pass is ended (and reopened by the next draw, its attachments loaded) after every
 // DM_VK_NANSCAN_STEP draws (default 64), in passes into the image DM_VK_NANSCAN_SERIAL (default any), of the game's pass whose index is in DM_VK_NANSCAN_DRAWS=<from>-<to> (default all), at most MAXSPLIT times a submission,
 // and only the scans after which an attachment has more NaN / infinite texels than at its previous scan in the submission are logged, with the pass's draw range.
@@ -31,6 +33,7 @@ static batch_t g_b[NBATCH]; static unsigned g_bi; static vka_span g_res;
 static VkPipeline g_pipe, g_pipe3, g_fetch; static VkPipelineLayout g_lay; static VkDescriptorSetLayout g_dsl;
 static uint32_t g_pass; static uint64_t g_pvs[NKEY], g_pfs[NKEY]; static uint32_t g_pn, g_pdraws, g_d0;   // g_pdraws: draws of the game's pass so far, g_d0: the segment's first
 static uint64_t g_probe, g_from_frame; static uint32_t g_big; static int g_split, g_nsplit; static uint32_t g_step = 64, g_from, g_to = UINT32_MAX; static uint64_t g_only;
+static uint32_t g_nz_w, g_nz_h; static uint64_t g_nz_serial;   // DM_VK_NANSCAN_NZ: log the non-zero counts of attachments of this size or serial
 static _Atomic int g_lines; static int g_maxl = 200;
 static uint32_t g_ts_gen = UINT32_MAX; static uint64_t g_ts_keys[NKEY], g_ts_last[NKEY]; static int g_ts_n; static _Atomic int g_ts_lines;   // DM_VK_TEX_STATS (replay thread)
 static struct { uint64_t fs; int bind, tid; } g_ts_seen[512]; static int g_ts_nseen;   // DM_VK_TEX_STATS: descriptions logged
@@ -44,6 +47,12 @@ int vka_nan_on(void) {
         if (r) { char *x; g_from = (uint32_t)strtoul(r, &x, 10); if (*x == '-') g_to = (uint32_t)strtoul(x + 1, NULL, 10); }
         VLOG("DM_VK_NANSCAN=2: passes split every %u draws in draws %u-%u of a pass%s, at most %d splits a submission", g_step, g_from, g_to, g_only ? " into DM_VK_NANSCAN_SERIAL" : "", MAXSPLIT);
     } else if (v) VLOG("DM_VK_NANSCAN: every pass's float attachments are scanned for NaN / infinite texels");
+    const char *nz = getenv("DM_VK_NANSCAN_NZ");   // DM_VK_NANSCAN_NZ: a size (WxH) or a texture serial whose attachments' non-zero counts are logged, NaN or not
+    if (v && nz && *nz) {
+        unsigned a, c;
+        if (sscanf(nz, "%ux%u", &a, &c) == 2 && a && c) { g_nz_w = a; g_nz_h = c; VLOG("DM_VK_NANSCAN_NZ: every scan of a %ux%u attachment logs its non-zero counts", a, c); }
+        else { g_nz_serial = strtoull(nz, NULL, 10); if (g_nz_serial) VLOG("DM_VK_NANSCAN_NZ: every scan of serial %llu logs its non-zero counts", (unsigned long long)g_nz_serial); }
+    }
     const char *bg = getenv("DM_VK_NANSCAN_BIG"); float bf = bg ? strtof(bg, NULL) : 0;   // finite texels above this count as infinite: values out of a shader's range
     if (v && bf > 0) { memcpy(&g_big, &bf, 4); VLOG("DM_VK_NANSCAN_BIG: texels above %g count as infinite", bf); }
     const char *ml = getenv("DM_VK_NANSCAN_LINES"); if (ml && atoi(ml) > 0) g_maxl = atoi(ml);   // the lines logged in all (default 200)
@@ -265,6 +274,16 @@ static void report(void *arg) {
             VLOG("tex stats: frame %llu fragment %016llx binding %d texture ID %d serial %llu (format %#x %s level 0 layer %u): %llu texels; above 1/1024 x %.1f%% y %.1f%% z %.1f%% w %.1f%%; max x %g y %g z %g w %g; %u NaN + %u infinite",
                  (unsigned long long)c->frame, (unsigned long long)c->stats, c->bind, c->tid, (unsigned long long)c->serial, c->fmt, dims, c->layer, (unsigned long long)nt,
                  100.0 * r->nz[0] / (double)nt, 100.0 * r->nz[1] / (double)nt, 100.0 * r->nz[2] / (double)nt, 100.0 * r->nz[3] / (double)nt, mx[0], mx[1], mx[2], mx[3], r->nan, r->inf);
+            continue;
+        }
+        if (c->bind < 0 && ((g_nz_w && c->w == g_nz_w && c->h == g_nz_h) || (g_nz_serial && c->serial == g_nz_serial))) {   // DM_VK_NANSCAN_NZ: the target's life, pass by pass
+            if (atomic_fetch_add(&g_lines, 1) >= g_maxl) return;
+            char keys[400] = ""; size_t o = 0;
+            for (uint32_t i = 0; i < c->nkeys && o < sizeof keys - 40; i++) o += (size_t)snprintf(keys + o, sizeof keys - o, " %016llx/%016llx", (unsigned long long)c->vs[i], (unsigned long long)c->fs[i]);
+            uint64_t nt = (uint64_t)c->w * c->h * (c->dz ? c->dz : 1); float mx[4]; memcpy(mx, r->mx, sizeof mx);
+            VLOG("nz scan: frame %llu pass %u: serial %llu (format %#x %ux%u level %u layer %u): above 1/1024 x %.1f%% y %.1f%% z %.1f%% w %.1f%%; max x %g y %g z %g w %g; %u NaN + %u infinite; draws %u-%u, vertex/fragment%s",
+                 (unsigned long long)c->frame, c->pass, (unsigned long long)c->serial, c->fmt, c->w, c->h, c->lv, c->layer,
+                 100.0 * r->nz[0] / (double)nt, 100.0 * r->nz[1] / (double)nt, 100.0 * r->nz[2] / (double)nt, 100.0 * r->nz[3] / (double)nt, mx[0], mx[1], mx[2], mx[3], r->nan, r->inf, c->d0, c->ndraws, keys);
             continue;
         }
         if (!r->nan && !r->inf) continue;

@@ -1336,10 +1336,13 @@
     <string name="game_fast_fp16_shader_math">快速 FP16 着色器运算</string>
     <string name="game_fp16_on_turnip_faster">Turnip 上的 16 位半精度：着色器更快，发热更少</string>
     <string name="game_fp16_default_precision">默认精度</string>
-    <string name="home_ready_locked">Ready · locked</string>
+    <string name="home_ready_locked">Ready · 🔒</string>
     <string name="home_lock_shaders">Lock shader version</string>
     <string name="home_lock_shaders_on">Keep current shaders across app updates (skips automatic updates)</string>
     <string name="home_lock_shaders_off">Updates shaders automatically when compatible improvements ship</string>
     <string name="settings_group_general">常规</string>
     <string name="settings_group_system">系统</string>
+    <string name="game_info">Game Info</string>
+    <string name="game_settings">Game Settings</string>
+    <string name="game_misc">其他</string>
 </resources>
