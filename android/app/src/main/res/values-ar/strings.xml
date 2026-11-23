@@ -1377,4 +1377,6 @@
     <string name="home_lock_shaders_off">Updates shaders automatically when compatible improvements ship</string>
     <string name="settings_group_general">عام</string>
     <string name="settings_group_system">النظام</string>
+    <string name="game_info">Game Info</string>
+    <string name="game_settings">Game Settings</string>
 </resources>

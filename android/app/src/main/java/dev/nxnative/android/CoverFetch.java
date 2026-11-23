@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +41,54 @@ final class CoverFetch {
 
     interface Callback { void onCover(Bitmap b); }
 
+    /** Public facts about a game from Nintendo Europe's search (title, publisher, release date, description, categories) */
+    static final class Info {
+        final String title, publisher, released, about, categories;
+        Info(String title, String publisher, String released, String about, String categories) {
+            this.title = title; this.publisher = publisher; this.released = released; this.about = about; this.categories = categories;
+        }
+    }
+
+    /** Looks a game up by title ID (lower case, as the API holds it), then by name; done is called on the main thread, null when offline or not found. */
+    static void info(String titleId, String name, Consumer<Info> done) {
+        String key = titleId == null ? name : titleId;
+        synchronized (infos) {
+            if (infos.containsKey(key)) { MAIN.post(() -> done.accept(infos.get(key))); return; }
+            if (infoMissed.contains(key)) { MAIN.post(() -> done.accept(null)); return; }
+        }
+        POOL.execute(() -> {
+            Info info = null;
+            try {
+                JSONObject doc = null;
+                if (titleId != null && titleId.matches("(?i)[0-9a-f]{16}"))
+                    doc = search("https://searching.nintendo-europe.com/en/select?q=*:*&fq=type:GAME&fq=application_id_s:" + titleId.toLowerCase(Locale.US) + "&rows=1&wt=json");
+                if (doc == null && name != null && !name.trim().isEmpty())
+                    doc = search("https://searching.nintendo-europe.com/en/select?q=" + URLEncoder.encode(name.replace("™", "").replace("®", "").trim(), "UTF-8") + "&fq=type:GAME&rows=1&wt=json");
+                if (doc != null) {
+                    JSONArray cats = doc.optJSONArray("pretty_game_categories_txt");
+                    StringBuilder cs = new StringBuilder();
+                    if (cats != null) for (int i = 0; i < cats.length(); i++) { if (cs.length() > 0) cs.append(", "); cs.append(cats.optString(i)); }
+                    info = new Info(doc.optString("title", ""), doc.optString("publisher", ""), doc.optString("pretty_date_s", ""),
+                            doc.optString("excerpt", ""), cs.toString());
+                }
+            } catch (Throwable ignored) {
+                info = null;
+            }
+            synchronized (infos) { if (info != null) infos.put(key, info); else infoMissed.add(key); }
+            Info ready = info;
+            MAIN.post(() -> done.accept(ready));
+        });
+    }
+
+    private static JSONObject search(String url) {
+        byte[] bytes = httpGet(url, MAX_JSON_BYTES);
+        if (bytes == null) return null;
+        JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+        JSONObject resp = root.optJSONObject("response");
+        JSONArray docs = resp != null ? resp.optJSONArray("docs") : null;
+        return docs != null && docs.length() > 0 ? docs.optJSONObject(0) : null;
+    }
+
     private static final int CONNECT_MS = 8000;
     private static final int READ_MS = 10000;
     private static final int MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -55,6 +104,8 @@ final class CoverFetch {
 
     private static final Map<String, List<Callback>> inFlight = new HashMap<>();
     private static final Set<String> missed = new HashSet<>();
+    private static final Map<String, Info> infos = new HashMap<>();
+    private static final Set<String> infoMissed = new HashSet<>();
 
     /** Fetches a cover in the background if the game has none yet; invokes cb on the main thread when saved. */
     static void fetchIfMissing(Context c, Game g, AtomicBoolean hasLocalIcon, Callback cb) {

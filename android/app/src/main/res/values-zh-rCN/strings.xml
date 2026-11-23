@@ -1342,4 +1342,6 @@
     <string name="home_lock_shaders_off">Updates shaders automatically when compatible improvements ship</string>
     <string name="settings_group_general">常规</string>
     <string name="settings_group_system">系统</string>
+    <string name="game_info">Game Info</string>
+    <string name="game_settings">Game Settings</string>
 </resources>
