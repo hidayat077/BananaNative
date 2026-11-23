@@ -603,6 +603,7 @@ def finish(key, w, job, c1):
     dropped = spv.strip_unused_caps(m)
     added = spv.formatless_storage_caps(m)
     n_precise = spv.precise_minmax(m)
+    spv.safe_inversesqrt(m)
     spv.txq_extra_components(m)   # a size query's component past the image's dimensions (vk_android_spv.py txq_extra_components)
     hmma = stage == 'cs' and spv.hmma_lds(m)   # the HMMA helper's calls lowered at their sites, gathers shared (vk_android_spv.py hmma_lds)
     if not hmma: spv.promote_locals(m)   # simplify GlobalToStorage helpers (binary search, CAS, branchless inPool) and promote single-store locals

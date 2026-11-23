@@ -410,6 +410,33 @@ def strip_unused_caps(m):
 
 
 GLSL_PRECISE = {37: 79, 40: 80, 43: 81}   # GLSL.std.450 FMin / FMax / FClamp → NMin / NMax / NClamp
+GLSL_INVERSE_SQRT = 32                    # GLSL.std.450 InverseSqrt; 80 above is NMax
+
+
+def safe_inversesqrt(m):
+    """A scalar InverseSqrt of 0 gives Inf on Vulkan and the next 0*Inf is NaN (Maxwell's RSQ gives a finite value). Put NMax(x, smallest normal) before each
+    scalar float InverseSqrt so a degenerate normal (dot 0) becomes a large finite inverse instead. → instructions rewritten.
+    shortcut: vector operands are left alone; add a same-shape constant when one is needed."""
+    sets = {x[1] for x in m.ins if x[0] & 0xffff == OP_EXT_INST_IMPORT and string_at(x, 2)[0] == 'GLSL.std.450'}
+    if not sets: return 0
+    glsl = next(iter(sets))
+    ft = m.find_type(OP_TYPE_FLOAT, 32)
+    if not ft: return 0
+    sites = [x for x in m.ins if len(x) == 6 and x[0] & 0xffff == OP_EXT_INST and x[1] == ft and x[3] == glsl and x[4] == GLSL_INVERSE_SQRT
+             and m.int_type(ft) is None and m.op(ft) == OP_TYPE_FLOAT]
+    if not sites: return 0
+    tiny = m.add_const(ft, 0x00800000)
+    out, n = [], 0
+    for x in m.ins:
+        if x in sites:
+            r = m.new_id()
+            out.append([7 << 16 | OP_EXT_INST, ft, r, glsl, 80, x[5], tiny])
+            out.append([x[0], x[1], x[2], x[3], x[4], r])
+            n += 1
+        else:
+            out.append(x)
+    m.ins = out
+    return n
 
 
 def precise_minmax(m):
