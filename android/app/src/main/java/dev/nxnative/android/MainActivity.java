@@ -1327,12 +1327,12 @@ public final class MainActivity extends Activity {
         boolean ownCover = Covers.show(tile, g);   // the player's own cover wins over the game's icon
         java.util.concurrent.atomic.AtomicBoolean hasLocalIcon = new java.util.concurrent.atomic.AtomicBoolean();
         GameMeta.loadControl(new File(g.gameDir), Edition.control(this, g), m -> {
-            if (m.icon != null && !ownCover) {
+            if (m != null && m.icon != null && !ownCover) {
                 hasLocalIcon.set(true);
                 Ui.tileIcon(tile, m.icon);
             }
             TileInfo ti = (TileInfo) c.getTag();
-            ti.version = m.version;
+            ti.version = m == null ? null : m.version;
             HomeLayout.caption(ti);   // the grid's and the list's second line
         });   // with the edition switch on, program 1's icon
         if (!ownCover) CoverFetch.fetchIfMissing(this, g, hasLocalIcon, b -> {

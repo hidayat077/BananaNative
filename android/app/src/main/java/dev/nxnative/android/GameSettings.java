@@ -672,6 +672,7 @@ final class GameSettings {
         boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
         Covers.show(tile, g);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
+            if (m == null) return;
             if (m.icon != null && !ownCover) { Ui.tileIcon(tile, m.icon); banner.setImageBitmap(m.icon); }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }

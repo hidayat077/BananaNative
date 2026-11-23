@@ -41,10 +41,10 @@ final class GameMeta {
      */
     static void loadControl(File dump, File control, Consumer<GameMeta> done) {
         boolean nup = Nup.isNup(dump) || Nup.picked(dump);
-        if (!nup && control == null && !dump.isDirectory()) return;
+        if (!nup && control == null && !dump.isDirectory()) { done.accept(null); return; }
         new Thread(() -> {
             GameMeta m = nup && control == null ? read(dump) : readFolder(control != null ? control : DumpLayout.controlDir(dump));
-            if (m != null) main.post(() -> done.accept(m));
+            main.post(() -> done.accept(m));   // always, even when nothing was found: a caller's "reading…" placeholder has to be cleared
         }, "nx-game-meta").start();
     }
 
