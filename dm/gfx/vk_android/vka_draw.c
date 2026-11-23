@@ -2065,6 +2065,24 @@ static int skip_fs(uint64_t fs) {
     for (int i = 0; i < nk; i++) if (keys[i] == fs) return 1;
     return 0;
 }
+// DM_VK_DEPTHOVR=<fs key prefix>[,…] (live, diagnostic): compare depth with ALWAYS for these fragment shaders, the Vulkan replay's counterpart of nvn_mtl.m's
+// DM_NVN_DEPTHOVR. With a shader forced to write a known colour it tells a depth rejection from nothing rasterising. A prefix is 1-16 hex digits.
+static int depth_override_hit(uint64_t fs) {
+    static uint32_t gen = ~0u; static struct { uint64_t v; int sh; } p[8]; static int n;
+    uint32_t g = atomic_load_explicit(&vka_env_gen, memory_order_relaxed);
+    if (g != gen) {
+        gen = g; n = 0;
+        const char *e = getenv("DM_VK_DEPTHOVR");
+        while (e && *e && n < 8) {
+            const char *comma = strchr(e, ','); size_t len = comma ? (size_t)(comma - e) : strlen(e);
+            if (len >= 1 && len <= 16) { char b[17]; memcpy(b, e, len); b[len] = 0; p[n].v = strtoull(b, NULL, 16); p[n].sh = 4 * (16 - (int)len); n++; }
+            e = comma ? comma + 1 : NULL;
+        }
+    }
+    for (int i = 0; i < n; i++) if ((fs >> p[i].sh) == p[i].v) return 1;
+    return 0;
+}
+
 // DM_VK_BIND_LOG=<hex key>[,…] (live): whether a or b (0: none) is one of its keys. The keys are parsed when a switch changes (vka_env_gen, as skip_fs), not read
 // with getenv at every draw and dispatch: that walk of the environment was 5.6 % of the replay thread's CPU in a game of ~4,000 draws a frame with the switch unset
 static int bind_log_hit(uint64_t a, uint64_t b) {
@@ -2659,6 +2677,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     DY_SET1(dt, (uint32_t)(hd && d->ds.dt), vk.vkCmdSetDepthTestEnable(g_cb, DY.dt));
     DY_SET1(dw, (uint32_t)(hd && d->ds.dt && d->ds.dw), vk.vkCmdSetDepthWriteEnable(g_cb, DY.dw));
     uint32_t dfv = eq_relax && d->ds.df == NVN_DEPTH_FUNC_EQUAL ? NVN_DEPTH_FUNC_LEQUAL : d->ds.df;   // mesh_cut
+    if (sh[1] && depth_override_hit(sh[1]->key)) dfv = NVN_DEPTH_FUNC_ALWAYS;   // DM_VK_DEPTHOVR
     DY_SET1(dc, (uint32_t)(dfv >= 1 && dfv <= 8 ? (VkCompareOp)(dfv - 1) : VK_COMPARE_OP_ALWAYS), vk.vkCmdSetDepthCompareOp(g_cb, DY.dc));
     DY_SET1(dbt, (uint32_t)(VK_FALSE), vk.vkCmdSetDepthBoundsTestEnable(g_cb, DY.dbt));
     DY_SET1(stt, (uint32_t)(hs && d->ds.st), vk.vkCmdSetStencilTestEnable(g_cb, DY.stt));

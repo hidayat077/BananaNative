@@ -284,6 +284,7 @@ DM_ONLINE	developer	Game			text			both
 DM_OODLE_HOST	internal	Diagnostics			text			both						Mac or iOS only	
 DM_OODLE_JOB	developer	Diagnostics			text			both							
 DM_OODLE_MODULES	internal	Diagnostics			text			both						Mac or iOS only	
+DM_OODLE_OOZ	internal	Diagnostics			text			both						Mac or iOS only	
 DM_OODLE_SERVE	developer	Game			text			both							
 DM_OOT_DRAW_DISTANCE	friendly	Graphics	Draw distance	the game is slow in a field or town (a shorter distance draws less)	choice	Long (300)=300;Medium (150)=150;Short (80)=80;Very short (40)=40	Full (the game's own)	game	Far scenery is cut off and appears as you walk; fields show a plain horizon.			0400486024DEC000	slow;fps;lag		live
 DM_OOT_FOG_ATTEN	developer	Game			text			both							
@@ -451,6 +452,7 @@ DM_TOUCH_HAPTICS	developer	Input			text			both
 DM_TOUCH_LOG	developer	Diagnostics			text			both							
 DM_TZ	developer	Game			text			both							
 DM_UDC_SELFTEST	developer	Diagnostics			text			both							
+DM_UE_DECODE	developer	Diagnostics			text			both							
 DM_UE_FREE_CHECK	developer	Diagnostics			text			both							
 DM_UE_SHADERS	developer	Diagnostics			text			both							
 DM_UE_TEXTURE_POOL	internal	Memory			text			both						Mac or iOS only	
@@ -476,6 +478,7 @@ DM_VK_CLASSIC_RP	advanced	Performance	Classic render passes		toggle			game		Game
 DM_VK_COALESCE_PCT	developer	Graphics			text			both							
 DM_VK_CS_ASYNC	developer	Graphics			text			both							
 DM_VK_CS_SHARED_OVER	developer	Diagnostics			text			both							
+DM_VK_DEPTHOVR	developer	Diagnostics			text			both							
 DM_VK_DEVICE_FAULT	developer	Graphics			text			both							
 DM_VK_DISPATCH_LOG	developer	Diagnostics			text			both							
 DM_VK_DISPATCH_ORDER	developer	Graphics			text			both							
