@@ -1634,7 +1634,7 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
 }
 // Images first used by a draw (from the walk, walk_all), or remade with storage use (vka_tex.c img_storage_upgrade): dry = only whether there is one
 static int make_images(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], int dry) {
-    (void)d; int any = 0;
+    int any = 0;   // d is read: the table premake below
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st]) continue;
         const vka_res *r = g_wk.r[st];
@@ -1647,6 +1647,17 @@ static int make_images(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], in
             } else if (x->what == VKA_R_TEX && vka_tbuf_pending(x->tid, x->dim)) {   // a buffer texture read as an image: its copy (vka_tbuf.c), outside the pass
                 any = 1; if (dry) return 1;
                 vka_tbuf_refresh(x->tid, x->dim, g_cb);
+            }
+        }
+        // The first entries of a table of handles the stage reads through the pool (vka_bind.h vka_tabpool_ids) are made here too, as the array's bindings
+        // made them: the pool reads' feedback alone makes a texture, or names one made already (by a copy into it: a streamed texture) in its slot, a frame
+        // after its first read (black for that frame). One made already gets its slot and is stamped used through the memo, as its binding did.
+        // DM_VK_TABLE_PREMAKE=0 (live): the feedback alone, as before
+        if ((g_wk.pool[st] & VKA_POOL_READS) && VKA_ENV("DM_VK_TABLE_PREMAKE", 1)) {
+            int ids[512]; uint8_t dim = 1; int n = vka_tabpool_ids(&d->b, st, sh[st]->e, sh[st]->b, rd_cb, NULL, ids, 512, &dim);
+            for (int i = 0; i < n; i++) {
+                if (vka_tex_id_pending_rec(ids[i], dim)) { any = 1; if (dry) return 1; vka_tex_id_view(ids[i], g_cb, dim, 0, NULL); }
+                else if (dry) vka_tex_id_view_rec(ids[i], g_cb, dim, 0, NULL);
             }
         }
     }
