@@ -311,7 +311,6 @@ final class GameSettings {
         shaderUpdateCard(a, content, g, again);
         if (!tab.equals(PERFORMANCE) && !tab.equals(GAME)) { a.gameTab(content, g, tab.equals(SAVES)); return; }
         boolean perf = tab.equals(PERFORMANCE);
-        if (perf) Ui.add(content, Ui.statusChip(a, chipText(a, id)), 12, Ui.wrap());
         TextView hint = Ui.add(content, Ui.small(a, Tx.s(R.string.game_for_this_game_only_default)), 6);
         hint.setPadding(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
 
@@ -503,7 +502,6 @@ final class GameSettings {
                 .value(ownLabel(Prefs.ownPanelPad(a, id), Tx.arr(R.array.arr_pad_open)[Prefs.panelPad(a, id)])).chevron(a));
         controls.add(new Ui.Setting(a, "🕹️", Tx.s(R.string.common_button_mapping), v -> PadMapUi.forGame(a, g, again)).value(PadMapUi.label(a, id)).chevron(a));
         controls.add(new Ui.Setting(a, "🎯", Tx.s(R.string.game_motion_sensitivity), v -> motionSens(a, g, again)).value(Prefs.MOTION_NAMES[Prefs.motionSens(a, id)]).note(Tx.s(R.string.game_how_far_the_phone_s)).chevron(a));
-        controls.add(new Ui.Setting(a, "🅰️", Tx.s(R.string.game_xbox_button_labels), v -> xbox(a, g, again)).value(Prefs.xboxLabel(Prefs.xboxButtons(a, id))).chevron(a));
 
         // ---- Advanced: for testers ----
         advanced.add(new Ui.Setting(a, "⏲️", Tx.s(R.string.game_gpu_timing), v -> gpuTiming(a, g, again)).value(gpuTsLabel(a, id)).note(Tx.s(R.string.game_what_the_game_s_gpu)).chevron(a));
@@ -715,15 +713,6 @@ final class GameSettings {
     static boolean slowOnTurnip(MainActivity a, String id) { GpuDriver.Info i = GpuDriver.selected(a, id); return i != null && TURNIP_SLOW.contains(id) && GpuDriver.isMesa(i); }
 
     static String driverShort(MainActivity a, String id) { GpuDriver.Info i = GpuDriver.selected(a, id); return i == null ? Tx.s(R.string.common_system) : i.label(); }
-
-    /** The Performance tab's chip: the GPU (GLES's renderer, GpuGl) and the driver this game starts with (an installed one's name, else the system driver's from the kept facts) */
-    static String chipText(MainActivity a, String id) {
-        GpuDriver.Info i = GpuDriver.selected(a, id);
-        String d = i != null ? i.label() + (slowOnTurnip(a, id) ? Tx.s(R.string.game_low_performance_here) : "") : Readiness.driverWord(Prefs.facts(a, Recommend.SYSTEM));
-        if (d == null) d = Tx.s(R.string.game_system_driver_2);
-        String n = GpuGl.name();
-        return n != null ? n + " · " + d : d;
-    }
 
     /** The title ID whose last pick here needs another render target pool than the setting before it (Profile.renderRestartNote): the next drawing of its sheet shows the line once */
     private static String renderNoteFor;
@@ -990,18 +979,6 @@ final class GameSettings {
     private static void display(MainActivity a, Game g, Runnable done) {
         new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.common_display), g.name)).setSingleChoiceItems(Tx.arr(R.array.arr_display), Prefs.stretch(a, g.titleId) ? 1 : 0, (x, w) -> {
             Prefs.stretch(a, g.titleId, w == 1);
-            x.dismiss();
-            done.run();
-        }).setNegativeButton(Tx.s(R.string.common_cancel), null).show();
-    }
-
-    private static void xbox(MainActivity a, Game g, Runnable done) {   // Default first: the game follows Settings again
-        String[] labels = new String[Tx.arr(R.array.arr_xbox).length + 1];
-        labels[0] = Tx.s(R.string.game_default_settings_value, Prefs.xboxLabel(Prefs.xboxButtons(a)));
-        System.arraycopy(Tx.arr(R.array.arr_xbox), 0, labels, 1, Tx.arr(R.array.arr_xbox).length);
-        int checked = Prefs.ownXboxButtons(a, g.titleId) ? Prefs.xboxButtons(a, g.titleId) + 1 : 0;
-        new PadFocus.Builder(a).setTitle(Tx.s(R.string.game_title_for, Tx.s(R.string.settings_xbox_button_label_swap), g.name)).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.xboxButtons(a, g.titleId, w == 0 ? null : w - 1);
             x.dismiss();
             done.run();
         }).setNegativeButton(Tx.s(R.string.common_cancel), null).show();

@@ -32,8 +32,9 @@ class Grouping(unittest.TestCase):
         for row in ('"Check for updates"', '"Player wiki"', '"Folders"', '"Storage"', '"Keep the screen on while preparing"', '"GPU driver"', '"Advanced"',
                     '"Readiness check"', '"Graphics self-test"', '"Share log"', '"Tester settings"', '"ADB control (debug)"', '"Time of day"', '"Frame generation"'):
             self.assertIn(row, b)
-        for row in ('ctl.addView(new Ui.Setting(this, "📳", "Rumble"', 'ctl.addView(xbox.view)', 'ctl.addView(padMap.view)', 'ctl.addView(touch.view)', 'ctl.addView(padPanel.view)', 'play.addView(rot.view)'):
+        for row in ('ctl.addView(new Ui.Setting(this, "📳", "Rumble"', 'ctl.addView(padMap.view)', 'ctl.addView(touch.view)', 'ctl.addView(padPanel.view)', 'play.addView(rot.view)'):
             self.assertIn(row, b)
+        self.assertNotIn('xbox.view', b)
 
     def test_group_is_closed_and_focusable(self):
         t = (SRC / 'MainActivity.java').read_text(encoding='utf-8')

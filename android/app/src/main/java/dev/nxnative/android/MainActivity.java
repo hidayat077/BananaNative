@@ -686,12 +686,6 @@ public final class MainActivity extends Activity {
         perf.addView(new Ui.Setting(this, "🚀", Tx.s(R.string.common_use_fast_cores), null).toggle(this, Prefs.pinThreads(this), (b, on) -> Prefs.pinThreadsDefault(this, on))
                 .value(Tx.s(R.string.settings_keeps_the_busiest_threads_off)).view);
         perf.addView(new Ui.Setting(this, "🖥️", Tx.s(R.string.settings_docked_mode), null).toggle(this, Prefs.dockedMode(this), (b, on) -> Prefs.dockedMode(this, on)).view);
-        Ui.Setting xbox = new Ui.Setting(this, "🅰️", Tx.s(R.string.settings_xbox_button_label_swap), null).chevron(this);
-        xbox.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_xbox_button_label_swap))
-                .setSingleChoiceItems(Tx.arr(R.array.arr_xbox), Prefs.xboxButtons(this), (d, w) -> { Prefs.xboxButtonsDefault(this, w); xbox.value(Prefs.xboxLabel(w)); d.dismiss(); })
-                .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        xbox.value(Prefs.xboxLabel(Prefs.xboxButtons(this)));
-        ctl.addView(xbox.view);
         Ui.Setting padMap = new Ui.Setting(this, "🕹️", Tx.s(R.string.common_button_mapping), null).chevron(this);
         padMap.view.setOnClickListener(v -> PadMapUi.forDefault(this, () -> padMap.value(PadMapUi.label(this, null))));
         padMap.value(PadMapUi.label(this, null));

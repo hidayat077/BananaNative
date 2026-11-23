@@ -27,7 +27,7 @@ class GameSettingsPage(unittest.TestCase):
     def test_every_setting_reachable(self):
         for call in ('presets(a, g, again)', 'resolution(a, g, again)', 'scene(a, g, again)', 'upscaler(a, g, again)', 'sharpness(a, g, again)', 'dlssMode(a, g, again)',
                      'clarity(a, g, again)', 'dlssSharp(a, g, again)', 'display(a, g, again)', 'aspect(a, g, again)', 'cap(a, g, again)', 'drs(a, g, again)',
-                     'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'xbox(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
+                     'driver(a, g, again)', 'gpuTiming(a, g, again)', 'language(a, g, again)', 'PadMapUi.forGame(a, g, again)', 'env(a, g, again)',
                      'Prefs.resetGame(a, id)', 'Prefs.backToRecommended(a, id)'):
             self.assertIn(call, self.gs, f'{call}: its row is gone')
         for setter in ('fullVegetation', 'skipLayers', 'hold60', 'decouple', 'instancedDraws', 'classicPasses', 'psoAsync', 'ramSaver', 'pauseOnReturn', 'pinThreads'):
