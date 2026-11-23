@@ -2,7 +2,6 @@ package dev.nxnative.android;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -59,11 +58,11 @@ final class TouchControls extends View {
     private float tx, ty, tr;      // the show / hide button
     private float picX, picY, picW = 1, picH = 1;   // the game's picture in the view, normalized
 
-    // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): each group (the left stick with L3,
-    // the D-pad, the face buttons, the right stick with R3, the left and the right shoulders with − / +) moved by (gdx, gdy) units and scaled by gsc around its centre,
-    // and where the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred, 1 right / bottom; nxhost_picture_place)
-    // Each control is its own group: the editor moves and scales one at a time (Eden's per-control layout),
-    // so − L ZL, the sticks with their clicks and the face buttons no longer have to move together.
+    // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): every control is moved by
+    // (gdx, gdy) units and scaled by gsc around its own centre in the editor, and the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred,
+    // 1 right / bottom; nxhost_picture_place)
+    // Each control is its own group: the editor moves and scales one control at a time, so − L ZL and a
+    // stick with its click can be placed separately. Kept per screen shape in ctl<N>@<screen> keys.
     private static final int GROUPS = MAX;
     private String prof;
     private final float[] gdx = new float[GROUPS], gdy = new float[GROUPS], gsc = new float[GROUPS];
@@ -97,13 +96,6 @@ final class TouchControls extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), line = new Paint(Paint.ANTI_ALIAS_FLAG), text = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
-
-    // Eden's vector artwork, ported from /home/hidayat/eden (GPL-3.0-or-later, see NOTICE.md): the drawables
-    // replace the Paint-drawn circles; the host still owns touch arbitration and the pressed state.
-    private final java.util.HashMap<String, Bitmap> artCache = new java.util.HashMap<>();
-    private Object[] art;   // one EdenOverlayDrawables.Button / Dpad / Joystick per control, null when Eden has no artwork
-    private String[] artId;
-    private int artPixels;
 
     TouchControls(Context c, boolean input) {
         super(c);
@@ -269,7 +261,6 @@ final class TouchControls extends View {
                     cx[j] += cx[j] < w / 2f ? move : -move;
                 }
         groups(w, h, u);
-        buildArt(u);
         tr = 10 * u; tx = w / 2f; ty = m + tr;   // small and faint (onDraw); its touch area is larger (onToggle)
         // The host's units: centres normalized to the view, radii in units of its height; a stick's grab ring is its own (input_map.c)
         float[] f = new float[n * 6];
@@ -550,85 +541,6 @@ final class TouchControls extends View {
         if (changed) invalidate();
     }
 
-    // ---- Eden artwork ----
-    /** Builds one Eden drawable per control; bitmap rasterisation is cached across layouts of the same size. */
-    private void buildArt(float u) {
-        int px = Math.max(48, Math.round(168 * u));
-        if (px == artPixels && art != null) { boundsArt(); return; }
-        artPixels = px;
-        art = new Object[n]; artId = new String[n];
-        for (int i = 0; i < n; i++) {
-            String id = artId(i); if (id == null) continue;
-            artId[i] = id;
-            int normal = EdenOverlayArt.drawableFor(id);
-            if (normal == 0) continue;
-            int pressedId = EdenOverlayArt.pressedFor(id);
-            if (kind[i] == STICK) {
-                // Eden draws the ring at the layout scale and the movable cap at ring / 1.66
-                Bitmap ring = artBitmap(normal, px), cap = artBitmap(normal, Math.max(24, Math.round(px / 1.66f))),
-                        capDown = artBitmap(pressedId, Math.max(24, Math.round(px / 1.66f)));
-                if (ring != null && cap != null) art[i] = new EdenOverlayDrawables.Joystick(getResources(), ring, cap,
-                        capDown == null ? cap : capDown, new android.graphics.Rect(), new android.graphics.Rect());
-                continue;
-            }
-            Bitmap b = artBitmap(normal, px), bp = pressedId != 0 ? artBitmap(pressedId, px) : b;
-            if (b == null || bp == null) continue;
-            if (kind[i] == DPAD) {
-                Bitmap diag = artBitmap(dev.nxnative.android.R.drawable.dpad_standard_diagonal_depressed, px);
-                art[i] = new EdenOverlayDrawables.Dpad(getResources(), b, bp, diag == null ? bp : diag);
-            } else {
-                art[i] = new EdenOverlayDrawables.Button(getResources(), b, bp);
-            }
-        }
-        boundsArt();
-    }
-
-    /** Rasterised artwork, cached by drawable and pixel size (the same vector is used at two sizes on a stick) */
-    private Bitmap artBitmap(int id, int px) {
-        String key = id + "/" + px;
-        Bitmap b = artCache.get(key);
-        if (b == null) { b = EdenOverlayBitmap.render(getContext(), id, px, 0xFFFFFFFF); if (b != null) artCache.put(key, b); }
-        return b;
-    }
-
-    private String artId(int i) {
-        if (kind[i] == STICK) return stick[i] == 0 ? EdenOverlayArt.LEFT_STICK : EdenOverlayArt.RIGHT_STICK;
-        if (kind[i] == DPAD) return EdenOverlayArt.DPAD;
-        String s = label[i];
-        if ("A".equals(s)) return EdenOverlayArt.A;
-        if ("B".equals(s)) return EdenOverlayArt.B;
-        if ("X".equals(s)) return EdenOverlayArt.X;
-        if ("Y".equals(s)) return EdenOverlayArt.Y;
-        if ("L".equals(s)) return EdenOverlayArt.L;
-        if ("R".equals(s)) return EdenOverlayArt.R;
-        if ("ZL".equals(s)) return EdenOverlayArt.ZL;
-        if ("ZR".equals(s)) return EdenOverlayArt.ZR;
-        if ("L3".equals(s)) return EdenOverlayArt.STICK_L;
-        if ("R3".equals(s)) return EdenOverlayArt.STICK_R;
-        if ("−".equals(s) || "-".equals(s)) return EdenOverlayArt.MINUS;
-        if ("+".equals(s)) return EdenOverlayArt.PLUS;
-        return null;   // the toggle button and Home / Capture keep the Paint drawing
-    }
-
-    private void boundsArt() {
-        if (art == null) return;
-        for (int i = 0; i < n; i++) {
-            Object d = art[i]; if (d == null) continue;
-            int w0 = d instanceof EdenOverlayDrawables.Button ? ((EdenOverlayDrawables.Button) d).width
-                    : d instanceof EdenOverlayDrawables.Dpad ? ((EdenOverlayDrawables.Dpad) d).width
-                    : ((EdenOverlayDrawables.Joystick) d).width;
-            int h0 = d instanceof EdenOverlayDrawables.Button ? ((EdenOverlayDrawables.Button) d).height
-                    : d instanceof EdenOverlayDrawables.Dpad ? ((EdenOverlayDrawables.Dpad) d).height
-                    : ((EdenOverlayDrawables.Joystick) d).height;
-            float s = 2f * r[i] / Math.max(1, Math.max(w0, h0));
-            int bw = Math.max(1, Math.round(w0 * s)), bh = Math.max(1, Math.round(h0 * s));
-            int l = Math.round(cx[i] - bw / 2f), t = Math.round(cy[i] - bh / 2f);
-            if (d instanceof EdenOverlayDrawables.Button) ((EdenOverlayDrawables.Button) d).setBounds(l, t, l + bw, t + bh);
-            else if (d instanceof EdenOverlayDrawables.Dpad) ((EdenOverlayDrawables.Dpad) d).setBounds(l, t, l + bw, t + bh);
-            else ((EdenOverlayDrawables.Joystick) d).setBounds(l, t, l + bw, t + bh);
-        }
-    }
-
     // ---- Drawing ----
     private int alpha(float a) { return Math.max(0, Math.min(255, Math.round(255 * a * opacity))); }
 
@@ -654,29 +566,7 @@ final class TouchControls extends View {
     }
 
     private void drawControls(Canvas c) {
-        int a = alpha(1f);
         for (int i = 0; i < n; i++) {
-            Object d = art == null ? null : art[i];
-            if (d instanceof EdenOverlayDrawables.Button) {
-                EdenOverlayDrawables.Button b = (EdenOverlayDrawables.Button) d;
-                b.setOpacity(a); b.setPressed((pressed[i] & buttons[i]) != 0); b.draw(c);
-                continue;
-            }
-            if (d instanceof EdenOverlayDrawables.Dpad) {
-                EdenOverlayDrawables.Dpad p = (EdenOverlayDrawables.Dpad) d;
-                int dir = 0;
-                if ((pressed[i] & UP) != 0) dir |= EdenOverlayDrawables.Dpad.UP;
-                if ((pressed[i] & RIGHT) != 0) dir |= EdenOverlayDrawables.Dpad.RIGHT;
-                if ((pressed[i] & DOWN) != 0) dir |= EdenOverlayDrawables.Dpad.DOWN;
-                if ((pressed[i] & LEFT) != 0) dir |= EdenOverlayDrawables.Dpad.LEFT;
-                p.setOpacity(a); p.setDirections(dir); p.draw(c);
-                continue;
-            }
-            if (d instanceof EdenOverlayDrawables.Joystick) {
-                EdenOverlayDrawables.Joystick j = (EdenOverlayDrawables.Joystick) d;
-                j.setOpacity(a); j.setStick(sticks[2 * stick[i]], sticks[2 * stick[i] + 1]); j.draw(c);
-                continue;
-            }
             boolean held = pressed[i] != 0;
             fill.setColor(held ? Color.argb(alpha(0.55f), 255, 255, 255) : Color.argb(alpha(0.35f), 0, 0, 0));
             line.setColor(Color.argb(alpha(0.9f), 255, 255, 255));
