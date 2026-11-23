@@ -62,8 +62,9 @@ final class TouchControls extends View {
     // The user's layout, one per screen shape (prof: the view's size in steps of 40 units, so a foldable's two screens keep one each): each group (the left stick with L3,
     // the D-pad, the face buttons, the right stick with R3, the left and the right shoulders with − / +) moved by (gdx, gdy) units and scaled by gsc around its centre,
     // and where the picture sits in the free space (placeX, placeY: 0 left / top, 0.5 centred, 1 right / bottom; nxhost_picture_place)
-    private static final int GROUPS = 6;
-    private static final String[] GROUP_NAME = {"left stick", "D-pad", "A B X Y", "right stick", "ZL L −", "ZR R +"};
+    // Each control is its own group: the editor moves and scales one at a time (Eden's per-control layout),
+    // so − L ZL, the sticks with their clicks and the face buttons no longer have to move together.
+    private static final int GROUPS = MAX;
     private String prof;
     private final float[] gdx = new float[GROUPS], gdy = new float[GROUPS], gsc = new float[GROUPS];
     private float placeX = 0.5f, placeY = 0.5f;
@@ -287,15 +288,13 @@ final class TouchControls extends View {
     }
 
     // ---- The user's layout: groups moved and scaled, the picture placed, kept per screen shape ----
-    private int groupOf(int i) {
-        long b = buttons[i];
-        if (kind[i] == STICK) return stick[i] == 0 ? 0 : 3;
-        if (kind[i] == DPAD) return 1;
-        if (b == LS) return 0;
-        if (b == RS) return 3;
-        if ((b & (A | B | X | Y)) != 0) return 2;
-        if ((b & (ZL | L | MINUS)) != 0) return 4;
-        return 5;
+    private int groupOf(int i) { return i; }   // one editable control per group
+
+    private String nameOf(int i) {
+        if (label[i] != null && label[i].length() > 0) return label[i];
+        if (kind[i] == STICK) return stick[i] == 0 ? "L stick" : "R stick";
+        if (kind[i] == DPAD) return "D-pad";
+        return "control " + i;
     }
 
     /** Moves and scales each group as the user left it, around the centre of where the automatic layout put it, kept inside the view; gbox gets each group's bounds */
@@ -325,7 +324,7 @@ final class TouchControls extends View {
     private void load() {
         button = toggleButton(getContext());
         for (int g = 0; g < GROUPS; g++) {
-            String[] v = prefs().getString("group" + g + "@" + prof, "0 0 1").split(" ");
+            String[] v = prefs().getString("ctl" + g + "@" + prof, "0 0 1").split(" ");
             try { gdx[g] = Float.parseFloat(v[0]); gdy[g] = Float.parseFloat(v[1]); gsc[g] = Float.parseFloat(v[2]); }
             catch (RuntimeException e) { gdx[g] = 0; gdy[g] = 0; gsc[g] = 1; }
         }
@@ -335,7 +334,7 @@ final class TouchControls extends View {
 
     private void saveLayout() {
         SharedPreferences.Editor e = prefs().edit();
-        for (int g = 0; g < GROUPS; g++) e.putString("group" + g + "@" + prof, gdx[g] + " " + gdy[g] + " " + gsc[g]);
+        for (int g = 0; g < GROUPS; g++) e.putString("ctl" + g + "@" + prof, gdx[g] + " " + gdy[g] + " " + gsc[g]);
         e.putString("picture@" + prof, placeX + " " + placeY).commit();   // commit: the game process may end right after (Stop)
     }
 
@@ -621,7 +620,7 @@ final class TouchControls extends View {
             int h0 = d instanceof EdenOverlayDrawables.Button ? ((EdenOverlayDrawables.Button) d).height
                     : d instanceof EdenOverlayDrawables.Dpad ? ((EdenOverlayDrawables.Dpad) d).height
                     : ((EdenOverlayDrawables.Joystick) d).height;
-            float s = 2f * r[i] * 1.35f / Math.max(1, Math.max(w0, h0));
+            float s = 2f * r[i] / Math.max(1, Math.max(w0, h0));
             int bw = Math.max(1, Math.round(w0 * s)), bh = Math.max(1, Math.round(h0 * s));
             int l = Math.round(cx[i] - bw / 2f), t = Math.round(cy[i] - bh / 2f);
             if (d instanceof EdenOverlayDrawables.Button) ((EdenOverlayDrawables.Button) d).setBounds(l, t, l + bw, t + bh);
@@ -729,7 +728,7 @@ final class TouchControls extends View {
         }
         text.setTextSize(13 * u);
         text.setColor(Color.argb(230, 255, 255, 255));
-        String hint = dragG >= 0 && dragG < GROUPS ? Tx.s(dev.nxnative.android.R.string.game_group_drag_to_move, GROUP_NAME[dragG], Math.round(gsc[dragG] * 100))
+        String hint = dragG >= 0 && dragG < GROUPS ? Tx.s(dev.nxnative.android.R.string.game_group_drag_to_move, nameOf(dragG), Math.round(gsc[dragG] * 100))
                 : dragG == GROUPS ? Tx.s(dev.nxnative.android.R.string.game_picture_drag_into_the_black) : Tx.s(dev.nxnative.android.R.string.game_drag_a_control_or_the);
         c.drawText(hint, w / 2f, y + bh + 22 * u, text);
     }
