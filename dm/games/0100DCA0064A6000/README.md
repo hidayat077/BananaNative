@@ -79,3 +79,4 @@ General host changes first needed here; each applies to every game:
 - Tessellation (15 hull, 18 domain shaders) and the 10 geometry shaders are not built ([Rendering](#rendering)).
 - [docs/geometry-metal-research.md](../../../docs/geometry-metal-research.md) describes geometry shaders now built as compute kernels, checked on AI: THE SOMNIUM FILES only ("Other games and iOS device execution are unvalidated"); whether this game's 10 build with it is not recorded.
 - The limiter's phase lock stays off while `nn::vi::ListFrameHistory` returns no entries.
+- **Android (Adreno 650 / Turnip):** lighting glitches can still appear in lit scenes (`DM_VK_QUAD_SHFL` falls back to fine derivatives for float-bit quad shuffles when fragment subgroups / quad operations are absent). Custom Turnip builds that keep LRZ active across full-screen in-pass `vkCmdClearAttachments` clears can also cull background tiles as black rectangles on Adreno 650 GMEM (`TU_DEBUG=nolrz` clears them).
