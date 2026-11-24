@@ -19,6 +19,9 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <sched.h>
+#include "vka_aff.h"
+int nxhost_adpf_state(void);
 
 #define ENC_FNS(X) \
     X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer) X(vkCmdUpdateBuffer) X(vkCmdFillBuffer) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) \
@@ -425,6 +428,23 @@ static _Atomic int g_enc_tid;
 int vka_enc_tid(void) { return atomic_load_explicit(&g_enc_tid, memory_order_relaxed); }
 static inline uint64_t enc_cnt(void) { uint64_t v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
 #define KADD(a, i, v) __atomic_store_n(&(a)[i], (a)[i] + (v), __ATOMIC_RELAXED)
+static void enc_aff_set(unsigned mask) {
+    cpu_set_t cs; CPU_ZERO(&cs); for (int c = 0; c < 32; c++) if (mask >> c & 1) CPU_SET(c, &cs);
+    if (sched_setaffinity(0, sizeof cs, &cs)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("enc sched_setaffinity(%#x): errno %d", mask, errno); }
+}
+static void enc_aff_check(void) {
+    static unsigned m_was;
+    static int auto_done, topo_read;
+    static vka_aff_masks topo;
+    unsigned m = (unsigned)VKA_ENV("DM_VK_AFF_ENC", 0), a = (unsigned)VKA_ENV("DM_VK_AFF_ALL", 0);
+    int auto_on = VKA_ENV("DM_VK_AFF_AUTO", 1);
+    if (m != m_was) { m_was = m; if (m) { enc_aff_set(m); VLOG("DM_VK_AFF_ENC=%#x", m); } }
+    if (!a && !m && auto_on && !auto_done && nxhost_adpf_state() < 0) {
+        if (!topo_read) { topo = vka_aff_topology(); topo_read = 1; }
+        auto_done = 1;
+        if (topo.enc) { enc_aff_set(topo.enc); VLOG("DM_VK_AFF_AUTO: ADPF unavailable, encoder thread pinned to CPU mask %#x", topo.enc); }
+    }
+}
 static void *enc_main(void *arg) {
     (void)arg; pthread_setname_np(pthread_self(), "vk-enc"); vka_fp_host("vk-enc");
     vka_perf_thread(-8);   // the ADPF session and the replay thread's priority
@@ -449,6 +469,7 @@ static void *enc_main(void *arg) {
                 continue;
             }
         }
+        enc_aff_check();
         uint64_t b0 = mono_ns(); uint32_t every = atomic_load_explicit(&g_tail_every, memory_order_relaxed);
         while (t != h) {
             const hdr *r = (const hdr *)(g_ring + t % RING);

@@ -217,7 +217,10 @@ void vka_tex_alias_stats(char *b, size_t n) {
     snprintf(b, n, "images not GPU-written: cleared %.0f MB (%d, %.0f MB would fit their storage), filled once %.0f MB (%d, %.0f MB fit), tracked %.0f MB (%d, %.0f MB fit); GPU-written %.0f MB",
              by[0][0] / 1e6, cnt[0], by[0][1] / 1e6, by[1][0] / 1e6, cnt[1], by[1][1] / 1e6, by[2][0] / 1e6, cnt[2], by[2][1] / 1e6, gw / 1e6);
 }
-static _Atomic uint32_t g_tgen, *g_tver, *g_sver;   // the recording thread's view memo: see unref_locked
+static _Atomic uint32_t g_tgen, g_treg_gen, *g_tver, *g_sver;   // the recording thread's view memo: see unref_locked
+uint64_t vka_tex_tabpool_gen(void) {
+    return (uint64_t)atomic_load_explicit(&g_tgen, memory_order_acquire) << 32 | atomic_load_explicit(&g_treg_gen, memory_order_acquire);
+}
 static _Atomic uint8_t *g_tisbuf;                   // per texture ID: registered as a buffer texture (vka_tex_id_is_buffer)
 static smap_ent *map_get(uint64_t s) { return vksm_get(&g_smap, s); }
 static void map_put(uint64_t s, vka_img *im) { vksm_put(&g_smap, s, im); }   // (no memory for a new key: the texture has no entry, so its next lookup makes its image again; the old image goes when its refs do)
@@ -2714,6 +2717,7 @@ static void treg(int id, const tex_t *t, const view_t *v, int img) {
     dirty(&g_tdirty, &g_ntd, &g_tdcap, &g_tdflag, 1 << 20, id);
     if (!g_tver) g_tver = calloc(1 << 20, sizeof *g_tver);
     if (g_tver) atomic_fetch_add_explicit(&g_tver[id], 1, memory_order_release);
+    atomic_fetch_add_explicit(&g_treg_gen, 1, memory_order_release);
     if (!g_tisbuf) g_tisbuf = calloc(1 << 20, 1);
     if (g_tisbuf) atomic_store_explicit(&g_tisbuf[id], (v && v->set_target ? v->target : t->d.target) == NVN_TEXTURE_TARGET_BUFFER, memory_order_release);
     pthread_mutex_unlock(&g_tmu);

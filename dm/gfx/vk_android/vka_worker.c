@@ -59,17 +59,27 @@ int vka_worker_on(void) {
 #include <sched.h>
 #include <dirent.h>
 #include <errno.h>
+#include "vka_aff.h"
+int nxhost_adpf_state(void);
 static void aff_set(pid_t tid, unsigned mask) {
     cpu_set_t cs; CPU_ZERO(&cs); for (int c = 0; c < 32; c++) if (mask >> c & 1) CPU_SET(c, &cs);
     if (sched_setaffinity(tid, sizeof cs, &cs)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VRED("sched_setaffinity(%d, %#x): errno %d", (int)tid, mask, errno); }
 }
 static void aff_check(void) {
     static unsigned r_was, a_was;
+    static int auto_done, topo_read;
+    static vka_aff_masks topo;
     unsigned r = (unsigned)VKA_ENV("DM_VK_AFF_REPLAY", 0), a = (unsigned)VKA_ENV("DM_VK_AFF_ALL", 0);
+    int auto_on = VKA_ENV("DM_VK_AFF_AUTO", 1);
     if (a != a_was) { a_was = a; if (a) { DIR *d = opendir("/proc/self/task"); struct dirent *e; int n = 0;
             while (d && (e = readdir(d))) if (e->d_name[0] != '.') { aff_set((pid_t)atoi(e->d_name), a); n++; }
             if (d) closedir(d); VLOG("DM_VK_AFF_ALL=%#x: %d threads", a, n); } }
     if (r != r_was) { r_was = r; if (r) { aff_set(0, r); VLOG("DM_VK_AFF_REPLAY=%#x", r); } }
+    if (!a && !r && auto_on && !auto_done && nxhost_adpf_state() < 0) {
+        if (!topo_read) { topo = vka_aff_topology(); topo_read = 1; }
+        auto_done = 1;
+        if (topo.replay) { aff_set(0, topo.replay); VLOG("DM_VK_AFF_AUTO: ADPF unavailable, replay thread pinned to CPU mask %#x", topo.replay); }
+    }
 }
 // ---------- Queue dependencies (vka_qsched.h), on the worker thread ----------
 uint64_t vka_rp_sub_commit_sig(uint64_t reserved, uint64_t signal);   // vka_exec.c

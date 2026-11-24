@@ -220,7 +220,7 @@ static int oq_on(void) {
     OQ.hreset = (PFN_vkResetQueryPool)vk.vkGetDeviceProcAddr(V.dev, "vkResetQueryPool"); OQ.get = (PFN_vkGetQueryPoolResults)vk.vkGetDeviceProcAddr(V.dev, "vkGetQueryPoolResults");
     PFN_vkCreateQueryPool create = (PFN_vkCreateQueryPool)vk.vkGetDeviceProcAddr(V.dev, "vkCreateQueryPool");
     if (!f12.hostQueryReset || !OQ.hreset) { VRED("occlusion queries: the device has no host query reset: every samples-passed report writes 1"); return 0; }
-    OQ.precise = f2.features.occlusionQueryPrecise != 0;
+    OQ.precise = f2.features.occlusionQueryPrecise != 0 && VKA_ENV("DM_VK_OCCLUSION_PRECISE", 1);
     VkQueryPoolCreateInfo ci = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_OCCLUSION, .queryCount = OQ_N};
     VkResult r = create && OQ.begin && OQ.end && OQ.get ? create(V.dev, &ci, NULL, &OQ.pool) : VK_ERROR_FEATURE_NOT_PRESENT;
     if (r) { OQ.pool = VK_NULL_HANDLE; VRED("occlusion queries: no query pool (%d): every samples-passed report writes 1", r); return 0; }
@@ -1687,9 +1687,9 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
             else { uint64_t x, y; int known = rc_known(rc->addr, &x) && rc_known(rc->addr + 16, &y); S.rc_skip = known && (rc->mode ? x == y : x != y); }
             break; }
         case OP_RESET_COUNTER: { uint64_t t; memcpy(&t, a, 8); if (t == NVN_COUNTER_TYPE_SAMPLES_PASSED) oq_reset(); break; }
-        case OP_CLEAR_BUF: mdx_write(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
-        case OP_COPY_B2B: mdx_write(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
-        case OP_UPDATE_UB: mdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
+        case OP_CLEAR_BUF: mdx_write(); vka_draw_ub_bump(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
+        case OP_COPY_B2B: mdx_write(); vka_draw_ub_bump(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
+        case OP_UPDATE_UB: mdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_draw_ub_bump(); vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
         case OP_SET_RT: S.rt = *(const p_set_rt *)a; S.has_rt = 1; break;
         case OP_SCISSOR: S.sc = *(const p_scissor *)a; S.has_sc = 1; break;
         case OP_COPY_STRIDE: { const p_copy_stride *cs = a; if (cs->image) S.copy_img_stride = cs->stride; else S.copy_stride = cs->stride; break; }
@@ -1697,7 +1697,7 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
         case OP_CLEAR_DS: if (!S.rc_skip && g_cb) clear_ds(a); break;
         case OP_CLEAR_TEX: if (!S.rc_skip && g_cb) clear_tex(a); break;
         case OP_COPY_B2T: if (g_cb) copy_bt(a, 1); break;
-        case OP_COPY_T2B: mdx_write(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
+        case OP_COPY_T2B: mdx_write(); vka_draw_ub_bump(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
         case OP_COPY_T2T: if (g_cb) copy_t2t(a); break;
         case OP_DLSS: if (!S.rc_skip && g_cb) dlss_eval(a); break;
         case OP_BARRIER: if (g_cb && !bar_kept) { int32_t bits; memcpy(&bits, a, 4); if (!vka_gbar_game(g_cb, (uint32_t)bits)) vka_barrier(g_cb); } break;   // (vka_gbar.c: between dispatches, a compute-to-compute barrier at the next one)

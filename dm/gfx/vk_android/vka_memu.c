@@ -59,7 +59,7 @@ static vka_shader *derive(vka_shader *s, const dmsh_vk_entry *e, VkShaderModule 
     *v = *s; memset(v->mods, 0, sizeof v->mods); v->mods[DMSH_VK_MOD_BASE] = mod;
     v->vin = v->fout = NULL; v->img = NULL; v->tex = NULL; v->gslink = NULL; v->gs_claim = VK_NULL_HANDLE; v->inst_bind = 0; v->frz[0] = v->frz[1] = VK_NULL_HANDLE; v->frz_none = 1;
     v->memu_d = NULL; v->memu = kind; v->e = e; v->key = e->key; v->chash = 0;
-    if (kind == 2) { v->b = NULL; v->c1_len = 0; }
+    if (kind == 2) { v->b = NULL; v->c1_len = 0; v->has_ubo_ind = 0; v->tp_ubo_mask = 0; }
     return v;
 }
 vka_shader *vka_memu_cs_of(vka_shader *s, int gl) {
