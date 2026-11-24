@@ -793,7 +793,7 @@ int vka_mem_release(uintptr_t lo, uintptr_t hi) {
 // A segment is unplaced only after the last fence reserved has completed (unplace), so one still in a cache that the generation has not caught yet is not freed under
 // a submission that uses it
 enum { NLC = 1024 };   // direct-mapped by 64 KiB block of the address: the level's ~8,000 draws read buffers in ~1,000 segments
-typedef struct { uint64_t gen; seg_t s[NLC]; } lcache;
+typedef struct { uint64_t gen; seg_t last; seg_t s[NLC]; } lcache;
 static __thread lcache *t_lc;
 // The recording thread's cache outside TLS: a __thread variable of a dlopen'ed library is reached through the dynamic TLS descriptor resolver at every access, and the
 // lookups run ~10 times a draw (profile p2: the lookup 8 % of the replay thread, the resolver in it). The first thread that records a submission (vka_mem_rec_thread) owns it
@@ -808,8 +808,16 @@ static const seg_t *lookup(uintptr_t a, seg_t *tmp) {   // the segment holding a
     if (__builtin_thread_pointer() == atomic_load_explicit(&g_rlc_tp, memory_order_relaxed)) c = &g_rlc;
     else { c = t_lc; if (!c) c = t_lc = calloc(1, sizeof *c); }
     uint64_t gen = atomic_load_explicit(&g_sg_gen, memory_order_acquire);
-    seg_t *e = c ? &c->s[(a >> 16) & (NLC - 1)] : NULL;
-    if (e && c->gen == gen && a >= e->lo && a < e->hi) return e;
+    seg_t *e = NULL;
+    if (c) {
+        if (c->gen == gen) {
+            if (a >= c->last.lo && a < c->last.hi) return &c->last;
+            e = &c->s[(a >> 16) & (NLC - 1)];
+            if (a >= e->lo && a < e->hi) { c->last = *e; return e; }
+        } else {
+            e = &c->s[(a >> 16) & (NLC - 1)];
+        }
+    }
     if (pthread_rwlock_tryrdlock(&g_rw)) {   // contended: a table edit (or, under DM_VK_MEM_LOCK_WHOLE, a placement) holds it
         uint64_t t0 = mono_ns(); pthread_rwlock_rdlock(&g_rw);
         atomic_fetch_add_explicit(c == &g_rlc ? &g_lkw_rec_ns : &g_lkw_oth_ns, mono_ns() - t0, memory_order_relaxed);
@@ -818,7 +826,7 @@ static const seg_t *lookup(uintptr_t a, seg_t *tmp) {   // the segment holding a
     int i = sg_find(a); const seg_t *r = NULL;
     if (i >= 0 && a < g_sg[i].hi) {
         *tmp = g_sg[i]; r = tmp;
-        if (c) { if (c->gen != gen) { memset(c->s, 0, sizeof c->s); c->gen = gen; } *e = g_sg[i]; }
+        if (c) { if (c->gen != gen) { memset(&c->last, 0, sizeof c->last); memset(c->s, 0, sizeof c->s); c->gen = gen; } *e = g_sg[i]; c->last = g_sg[i]; }
     }
     pthread_rwlock_unlock(&g_rw);
     return r;
@@ -1624,7 +1632,7 @@ static int fb_kinds(void) {   // bit 1 shader, bit 2 texture; 0 off
     static int v = -1;
     if (v >= 0) return v;
     const char *e = getenv("DM_MEM_FILEBACK"), *k = getenv("DM_MEM_FILEBACK_KINDS");
-    int on = e && *e ? atoi(e) > 0 : 1; v = 0;   // (default on: the shader kind)
+    int on = e && *e ? atoi(e) > 0 : 0; v = 0;   // (default off: opt-in via DM_MEM_FILEBACK=1 or launcher RAM saver)
     if (on) { const char *ks = k && *k ? k : "shader"; v = (strstr(ks, "shader") ? 1 : 0) | (strstr(ks, "texture") ? 2 : 0);
               if ((v & 1) && !nvn_shader_pools_deferred()) { v &= ~1; VLOG("file-backed pools: shader kind off: DM_VK_PLACE_SHADER_POOLS=1 places shader-code pools for their address"); }
               if (v) VLOG("file-backed pools (DM_MEM_FILEBACK): %s%s%s (DM_MEM_FILEBACK_KINDS=%s), an unlinked file in %s", v & 1 ? "shader-code pools" : "", v == 3 ? " and " : "",

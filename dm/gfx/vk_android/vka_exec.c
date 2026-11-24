@@ -26,7 +26,7 @@ enum { NSLOT = 8 };
 enum { NCHUNK = 32 };
 static struct { VkCommandBuffer cb; uint64_t fence; VkCommandBuffer x[NCHUNK]; VkFence vf; int vf_on; } g_slot[NSLOT];   // vf: set when its commit had no timeline signal (vf_on)   // x: the command buffers a submission goes on in once it hands its first part to the queue (chunk)
 static unsigned g_slot_i;
-static int g_chunk_draws = -1, g_nx; static uint64_t g_chunk_d0;   // chunk(): draws a part, parts this submission, draws at its part's start
+static int g_chunk_draws = -1, g_chunk_pass = 300, g_partlog, g_nx; static uint64_t g_chunk_d0;   // chunk(): draws a part, mid-pass split threshold, parts this submission, draws at its part's start
 static VkCommandPool g_pool;
 static VkCommandBuffer g_cb;   // the submission being recorded (NULL without a device)
 VkCommandBuffer vka_rp_cb(void) { return g_cb; }
@@ -220,7 +220,7 @@ static int oq_on(void) {
     OQ.hreset = (PFN_vkResetQueryPool)vk.vkGetDeviceProcAddr(V.dev, "vkResetQueryPool"); OQ.get = (PFN_vkGetQueryPoolResults)vk.vkGetDeviceProcAddr(V.dev, "vkGetQueryPoolResults");
     PFN_vkCreateQueryPool create = (PFN_vkCreateQueryPool)vk.vkGetDeviceProcAddr(V.dev, "vkCreateQueryPool");
     if (!f12.hostQueryReset || !OQ.hreset) { VRED("occlusion queries: the device has no host query reset: every samples-passed report writes 1"); return 0; }
-    OQ.precise = f2.features.occlusionQueryPrecise != 0;
+    OQ.precise = f2.features.occlusionQueryPrecise != 0 && VKA_ENV("DM_VK_OCCLUSION_PRECISE", 1);
     VkQueryPoolCreateInfo ci = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_OCCLUSION, .queryCount = OQ_N};
     VkResult r = create && OQ.begin && OQ.end && OQ.get ? create(V.dev, &ci, NULL, &OQ.pool) : VK_ERROR_FEATURE_NOT_PRESENT;
     if (r) { OQ.pool = VK_NULL_HANDLE; VRED("occlusion queries: no query pool (%d): every samples-passed report writes 1", r); return 0; }
@@ -697,6 +697,8 @@ void vka_rp_sub_begin(void) {
     // about 3 ms a frame, below the clock governor's step-up. Breath of the Wild's field on the AYN Thor (Turnip): 47.2 -> 52.5 fps, idle 3.4 -> 1.9 ms,
     // GPU clock 615 -> 680 MHz; 64 draws was worse (39 fps), 100 and 250 a little worse than 150 (Peanuts Native 213133f, 2026-11-21)
     g_chunk_draws = VKA_ENV("DM_VK_CHUNK", 150);   // live: from the next submission
+    g_chunk_pass = VKA_ENV("DM_VK_CHUNK_PASS", 300);   // live: from the next submission (300 reduces mid-pass tiler GMEM store+load splits)
+    g_partlog = VKA_ENV("DM_VK_PARTLOG", 0);
     g_nx = 0; g_chunk_d0 = g_stat_draws;
     g_t_begin += now_ns() - tb0;
 }
@@ -783,11 +785,11 @@ static inline void chunk_check(void) {
     if (!g_cb || g_nx >= NCHUNK) return;   // no part left: chunk() would do nothing and leave the draw count, so every later draw would end its pass
     uint64_t in = g_stat_draws - g_chunk_d0;
     if (g_chunk_draws > 0 && in >= (uint64_t)g_chunk_draws && vka_rp_split_ok(&S.rt, S.has_rt)) { vka_rp_end(); chunk(); return; }
-    int cp = VKA_ENV("DM_VK_CHUNK_PASS", 150);   // 150 (was 600): see DM_VK_CHUNK
+    int cp = g_chunk_pass;
     if (cp > 0 && in >= (uint64_t)cp && vka_rp_open_for(&S.rt, S.has_rt)) {
         uint32_t w = 0, h = 0; int dep = vka_rp_depth(&w, &h);
         if ((uint64_t)w * h >= (16ull << 20)) return;   // a 6400x6400 ink map costs ~400 MB to store and load on a tiler: never split it mid-pass for chunking
-        if (VKA_ENV("DM_VK_PARTLOG", 0)) VLOG("part split inside a pass of %ux%u%s", w, h, dep ? " with depth" : "");
+        if (g_partlog) VLOG("part split inside a pass of %ux%u%s", w, h, dep ? " with depth" : "");
         vka_rp_end(); chunk();
     }
 }
@@ -1687,9 +1689,9 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
             else { uint64_t x, y; int known = rc_known(rc->addr, &x) && rc_known(rc->addr + 16, &y); S.rc_skip = known && (rc->mode ? x == y : x != y); }
             break; }
         case OP_RESET_COUNTER: { uint64_t t; memcpy(&t, a, 8); if (t == NVN_COUNTER_TYPE_SAMPLES_PASSED) oq_reset(); break; }
-        case OP_CLEAR_BUF: mdx_write(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
-        case OP_COPY_B2B: mdx_write(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
-        case OP_UPDATE_UB: mdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
+        case OP_CLEAR_BUF: mdx_write(); vka_draw_ub_bump(); if (g_cb) { const p_clear_buf *cb = a; vka_rw_pre(g_cb); buf_fill(cb->addr, cb->size, cb->value); vka_barrier(g_cb); vka_rw_point(g_cb, 'f', 0, cb->value, cb->addr); } break;
+        case OP_COPY_B2B: mdx_write(); vka_draw_ub_bump(); if (g_cb) { uint64_t s_, d, n; memcpy(&s_, a, 8); memcpy(&d, (const uint8_t *)a + 8, 8); memcpy(&n, (const uint8_t *)a + 16, 8); vka_rw_pre(g_cb); buf_copy(s_, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'c', 0, s_, d); } break;
+        case OP_UPDATE_UB: mdx_write(); g_n_ub++; if (g_cb) { uint64_t d, n; memcpy(&d, a, 8); memcpy(&n, (const uint8_t *)a + 8, 8); if (!vka_rp_ub_defer(d, n, (const uint8_t *)a + 16)) { vka_draw_ub_bump(); vka_rp_end(); vka_rw_pre(g_cb); buf_update((const uint8_t *)a + 16, d, n); vka_barrier(g_cb); vka_rw_point(g_cb, 'u', 0, n, d); } } break;
         case OP_SET_RT: S.rt = *(const p_set_rt *)a; S.has_rt = 1; break;
         case OP_SCISSOR: S.sc = *(const p_scissor *)a; S.has_sc = 1; break;
         case OP_COPY_STRIDE: { const p_copy_stride *cs = a; if (cs->image) S.copy_img_stride = cs->stride; else S.copy_stride = cs->stride; break; }
@@ -1697,7 +1699,7 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
         case OP_CLEAR_DS: if (!S.rc_skip && g_cb) clear_ds(a); break;
         case OP_CLEAR_TEX: if (!S.rc_skip && g_cb) clear_tex(a); break;
         case OP_COPY_B2T: if (g_cb) copy_bt(a, 1); break;
-        case OP_COPY_T2B: mdx_write(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
+        case OP_COPY_T2B: mdx_write(); vka_draw_ub_bump(); if (g_cb) { vka_rw_pre(g_cb); copy_bt(a, 0); vka_rw_point(g_cb, 't', 0, 0, 0); } break;
         case OP_COPY_T2T: if (g_cb) copy_t2t(a); break;
         case OP_DLSS: if (!S.rc_skip && g_cb) dlss_eval(a); break;
         case OP_BARRIER: if (g_cb && !bar_kept) { int32_t bits; memcpy(&bits, a, 4); if (!vka_gbar_game(g_cb, (uint32_t)bits)) vka_barrier(g_cb); } break;   // (vka_gbar.c: between dispatches, a compute-to-compute barrier at the next one)

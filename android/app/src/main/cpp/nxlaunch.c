@@ -556,20 +556,27 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_adpfState(JNIEnv *env, j
 }
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_pinThreads(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
-    static cpu_set_t fast, mid; static int ready;
+    static cpu_set_t fast, mid, guest; static int ready;
     if (!ready) {
         int n = (int)sysconf(_SC_NPROCESSORS_CONF); if (n > CPU_SETSIZE) n = CPU_SETSIZE;
         long top = 0;
         for (int c = 0; c < n; c++) { long k = cpu_max_khz(c); if (k > top) top = k; }
         if (!top) return -1;   // no cpufreq: leave the scheduler alone
-        // Fast: the cores at the top clock. Middle: the others at 75 % of it or more (a mid cluster: 2.8 of 3.19 GHz on a Snapdragon 8 Gen 2, 3.53 of 4.32 on an
-        // 8 Elite), never the small cores (1.8 of 2.8 on an older big.LITTLE). Without a middle group the encoder and the game share the fast cores
-        CPU_ZERO(&fast); CPU_ZERO(&mid);
+        // Fast: the cores at the top clock. Middle: the others at 75 % of it or more (a mid cluster: 2.8 of 3.19 GHz on a Snapdragon 8 Gen 2, 2.42 of 3.19 on
+        // Snapdragon 870), never the small cores. On 1+3+4 SoCs where mid has <= 3 cores, spread the 10+ guest threads across mid + little (non-fast) so vk-enc
+        // does not contend with every guest worker on the 3 mid cores.
+        CPU_ZERO(&fast); CPU_ZERO(&mid); CPU_ZERO(&guest);
         for (int c = 0; c < n; c++) { long k = cpu_max_khz(c); if (k == top) CPU_SET(c, &fast); else if (k * 4 >= top * 3) CPU_SET(c, &mid); }
         if (!CPU_COUNT(&mid)) mid = fast;
+        if (CPU_COUNT(&mid) <= 3 && CPU_COUNT(&fast) + CPU_COUNT(&mid) < n) {
+            for (int c = 0; c < n; c++) { long k = cpu_max_khz(c); if (k > 0 && k < top) CPU_SET(c, &guest); }
+            if (!CPU_COUNT(&guest)) guest = mid;
+        } else {
+            guest = mid;
+        }
         ready = 1;
-        fprintf(stderr, "[nxlaunch] thread placement: the replay thread on %d core(s) at %ld MHz, the encoder and the game on %d%s\n",
-                CPU_COUNT(&fast), top / 1000, CPU_COUNT(&mid), CPU_EQUAL(&mid, &fast) ? " (the same: no middle cluster)" : "");
+        fprintf(stderr, "[nxlaunch] thread placement: the replay thread on %d core(s) at %ld MHz, the encoder on %d%s, guest threads on %d\n",
+                CPU_COUNT(&fast), top / 1000, CPU_COUNT(&mid), CPU_EQUAL(&mid, &fast) ? " (the same: no middle cluster)" : "", CPU_COUNT(&guest));
     }
     DIR *d = opendir("/proc/self/task"); if (!d) return 0;
     int placed = 0; struct dirent *e;
@@ -579,11 +586,11 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_pinThreads(JNIEnv *env, 
         FILE *f = fopen(path, "r"); if (!f) continue;
         if (!fgets(name, sizeof name, f)) name[0] = 0; fclose(f);
         name[strcspn(name, "\n")] = 0;
-        int g = !strcmp(name, "vk-replay") ? 1 : !strcmp(name, "vk-enc") || !strncmp(name, "0x", 2) ? 2 : 0;
+        int g = !strcmp(name, "vk-replay") ? 1 : !strcmp(name, "vk-enc") ? 2 : !strncmp(name, "0x", 2) ? 3 : 0;
         if (!g) continue;   // not a placed thread; looked at again next time (a thread may be renamed after it starts)
         // Checked every call, not once: the replay thread starts under the name of the game thread that made it, and Android resets every thread to all cores
         // when it moves the app between foreground and background
-        const cpu_set_t *to = g == 1 ? &fast : &mid; cpu_set_t cur;
+        const cpu_set_t *to = g == 1 ? &fast : g == 2 ? &mid : &guest; cpu_set_t cur;
         if (!sched_getaffinity(tid, sizeof cur, &cur) && CPU_EQUAL(&cur, to)) continue;
         if (!sched_setaffinity(tid, sizeof *to, to)) placed++;   // fails while a core is parked (core control at low load): the next call places it
     }

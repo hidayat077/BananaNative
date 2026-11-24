@@ -1,4 +1,4 @@
-# Builds the test-app APK with Pokemon Z-A, Zelda TotK, Final Fantasy Resonance, South Park: The Fractured but Whole and Hogwarts Legacy (title IDs below); add a game by adding its ID to nxGames.
+# Builds the test-app APK with Pokemon Z-A, Zelda TotK, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy and DRAGON BALL: Sparking! ZERO (title IDs below); add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F43008C44000,0100F2C0115B6000,0100606026F12000,01008F2005154000,0100F7E00C70E000
+  nxGames: 0100F43008C44000,0100F2C0115B6000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000
 
 jobs:
   apk:

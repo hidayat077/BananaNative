@@ -432,11 +432,16 @@ int vka_tbuf_pending(int id, uint8_t dim);           // buffer texture id read a
 void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb);   // copies buffer texture id's guest memory into its image (outside a render pass)
 VkImageView vka_tbuf_image_view(int id, uint8_t dim);   // that image's view (after vka_tbuf_refresh); VK_NULL_HANDLE = none
 void vka_tbuf_wrote(uint64_t addr, uint64_t n);     // GPU work that writes guest memory [addr, addr+n) was recorded (vka_tex.c gw_add): images of buffer textures over it are copied again at their next use
+void vka_tbuf_sub_begin(void);                      // submission start: resets per-submission unaligned texel buffer scratch copy cache
+uint64_t vka_tbuf_wrote_gen(void);                  // monotonic generation bumped when a GPU write overlaps a cached buffer texture
 int vka_tex_id_pending(int id);                     // texture ID id is registered and its image is not made yet (its first use records commands)
 VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same on the recording thread, through a memo (DM_VK_TEX_MEMO)
 VkFormat vka_tex_id_vkfmt(int id);   // the format texture ID id is viewed in, not its (possibly shared) image's (vka_tex.c)
 VkImageView vka_tex_id_view_bits(int id, VkCommandBuffer cb, VkImageLayout *layout);   // a storage view of its image as R32_UINT (4-byte texels), not written into the bindless table (vka_tex.c)
 int vka_tex_id_pending_rec(int id, uint8_t dim);
+uint64_t vka_tex_tabpool_gen(void);                 // monotonic generation for tabpool premake memoization (g_tgen | g_treg_gen)
+uint32_t vka_tex_id_ver(int id);                    // per-texture registration version (no lock)
+uint32_t vka_tex_sreg_gen(void);                    // monotonic sampler registration generation (no lock)
 int vka_tex_id_storage_pending(int id);            // texture ID id's image exists without storage use and would be remade with it at its next storage binding (a draw ends its pass first)
 int vka_tex_id_class(int id);                       // the numeric class of texture ID id's view format: 1 uint, 2 sint, 0 other
 int vka_tex_id_class_rec(int id);                   // the same, memoized for the recording thread (by the ID's registration version)
@@ -470,6 +475,8 @@ typedef struct vka_shader {
     uint8_t fcomp[8];                   // a pixel shader: the components of each colour output its module can write (vka_spv_fout_comps), for the write mask; all 0xf when not read
     struct vka_memu_sh *memu_d;         // a task / mesh shader drawn through compute: its layout and compute / vertex forms (vka_memu.c), made at its first draw
     uint8_t memu;                       // such a form itself: 1 a task / mesh shader as compute (the arena, records and push constant in its layout), 2 a generated vertex shader (the arena)
+    uint8_t has_ubo_ind;                // 1 if any binding record reads a handle or pointer from a uniform buffer (*_UBO)
+    uint16_t tp_ubo_mask;               // bitmask of uniform buffer slots (< 16) holding VKA_BF_TABPOOL handle tables
     uint64_t chash;                     // its library entry's hash (vka_shlib_entry_hash), for the pipeline cache's stamp (vka_pso.c); 0 = not in the library
 } vka_shader;
 // An instanced variant's key (vka_draw.c's instanced runs): its base shader's key XOR this. It is no key of the shader library, and the variant depends on the uniform
@@ -549,10 +556,11 @@ typedef struct {
     uint32_t bind_gen;                 // raised by every state record but a uniform buffer bind (vka_draw.c's instanced runs: a draw that joins without its walk)
     uint32_t ubo_dirty[VKA_NSTAGE];    // uniform buffer slots bound since the open run's last draw, a bit per slot
     // Stamps (vka_stamp: unique across every queue's state) of what a state record last changed, so a draw can tell an input it derived from is unchanged without comparing
-    // it: the vertex attribute formats and streams, the vertex buffers, each stage's storage buffers, its texture / sampler / image handles, the pushed constants
-    uint64_t s_vfmt, s_vbuf, s_ssbo[VKA_NSTAGE], s_tex[VKA_NSTAGE], s_push;
+    // it: the vertex attribute formats and streams, the vertex buffers, each stage's uniform / storage buffers, its texture / sampler / image handles, the pushed constants
+    uint64_t s_vfmt, s_vbuf, s_ubo[VKA_NSTAGE], s_ssbo[VKA_NSTAGE], s_tex[VKA_NSTAGE], s_push;
 } vka_dstate;
 uint64_t vka_stamp(void);   // a new stamp, never 0 and never given twice
+void vka_draw_ub_bump(void);   // bumps the in-submission buffer-write generation for tabpool premake memoization
 void vka_dstate_reset(vka_dstate *d);
 int vka_classic_rp(void);   // DM_VK_CLASSIC_RP: the game's passes as VkRenderPasses with imageless framebuffers (vka_draw.c)
 VkRenderPass vka_rp_compat(const VkFormat *cf, uint32_t n, VkFormat df, VkFormat sf, uint32_t samples);   // a render pass pipelines of those targets are made against

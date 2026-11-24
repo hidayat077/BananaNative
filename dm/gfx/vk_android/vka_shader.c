@@ -788,6 +788,21 @@ int vka_shader_fout_retyped(vka_shader *s, uint32_t umask, uint32_t smask) {
     VkShaderModule m = vka_shader_fout_module(s, umask, smask);
     return m && m != vka_shader_module(s, DMSH_VK_MOD_BASE);
 }
+// Classify a shader's binding records once for draw-path fast paths (walk_all memo and tabpool premake).
+static void shader_classify_binds(vka_shader *s) {
+    s->has_ubo_ind = 0;
+    s->tp_ubo_mask = 0;
+    if (!s->e || !s->b) return;
+    for (unsigned i = 0; i < s->e->bind_count; i++) {
+        const dmsh_vk_bind *b = &s->b[i];
+        if (b->kind == DMSH_VK_KIND_TEX_UBO || b->kind == DMSH_VK_KIND_SAMP_UBO ||
+            b->kind == DMSH_VK_KIND_SBUF_UBO || b->kind == DMSH_VK_KIND_IMG_UBO ||
+            b->skind == DMSH_VK_KIND_SAMP_UBO)
+            s->has_ubo_ind = 1;
+        if ((b->flags & VKA_BF_TABPOOL) && b->reserved >= 1 && b->reserved <= 16)
+            s->tp_ubo_mask |= (uint16_t)(1u << (b->reserved - 1));
+    }
+}
 // A new shader of key from L (not in the table yet)
 static vka_shader *make_new(const vka_shlib *L, uint64_t key) {
     vka_shader *s = calloc(1, sizeof *s); if (!s) return NULL;
@@ -799,6 +814,7 @@ static vka_shader *make_new(const vka_shlib *L, uint64_t key) {
         s->e = e; s->b = vka_shlib_binds(L, e); s->chash = vka_shlib_entry_hash(L, e);
         why = refusal(L, e);
         { const tp_ent *tp = why ? NULL : tabpool_of(L, e); if (tp) s->b = tp->b; }   // its arrays over tables of handles as their samplers (tabpool, above)
+        shader_classify_binds(s);
         const dmsh_vk_module *m = why ? NULL : vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
         if (!why && !m) why = "no base module";
         memset(s->fcomp, 0xf, sizeof s->fcomp);

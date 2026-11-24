@@ -57,6 +57,21 @@ int main(void) {
       for (int i = 0; i < 30; i++) { host += 100000000; vktk_add(&j, 1000000000ull + (uint64_t)i * 1920000, host); }     // 3 s: one window
       for (int i = 0; i < 300; i++) { host += 100000000; double y = vktk_add(&j, 5000 + (uint64_t)i * 1920000, host); if (y > 0) x = y; }   // the counter restarted from 5000
       CHECK(x > 0 && fabs(x / real - 1) < 0.001, "after a counter reset: %.3f", x); }
+    // loading-screen GPU slumber inflates early windows by 4-6x while the GPU counter pauses; later active gameplay converges to real tick
+    { vktk s = {0}; double x = 0; uint64_t host = 1000000000000ull, ticks = 1000000ull;
+      for (int w = 0; w < 3; w++) {
+          host += 2100000000ull;
+          ticks += (uint64_t)(0.4 * 1e9 * 19.2e6 / 1e9);   // ~80% idle slumber -> ~273 ns/tick apparent period
+          x = vktk_add(&s, ticks, host);
+      }
+      CHECK(x == 0, "slumber windows alone must not lock calibration");
+      for (int f = 0; f < 600; f++) {
+          host += 16700000ull;
+          ticks += (uint64_t)(16700000.0 * 19.2e6 / 1e9);
+          double y = vktk_add(&s, ticks, host);
+          if (y > 0 && x == 0) x = y;
+      }
+      CHECK(x > 0 && fabs(x / real - 1) < 0.001, "converges to real tick after loading slumber: %.3f vs %.3f", x, real); }
     if (!fails) printf("t_android_tstick: ok\n");
     return fails != 0;
 }

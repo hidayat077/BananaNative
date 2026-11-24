@@ -21,6 +21,45 @@ void vka_mem_describe(uint64_t addr, char *out, size_t n);   // (vka_mem.c, diag
 enum { ROW = 16384, NVIEW = 4096, NIMG = 4096, TBUF_HASH_MAX = 65536 };
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic uint64_t g_twrote_gen;
+static _Atomic uint32_t g_tv_retire_gen;
+static _Atomic uint8_t g_fmt_ok[256];   // bit 0: cached, bit 1: uniform texel supported, bit 2: storage texel supported
+enum { NTCOPY = 64 };
+typedef struct { uint64_t addr, range, wgen; VkFormat fmt; VkBufferView cv; } tcopy_ent;
+static tcopy_ent g_tcopy[NTCOPY];
+static _Atomic int g_ntcopy;
+static uint64_t g_tc_lo, g_tc_hi;
+typedef struct { uint32_t id, ver, sgen, rgen; int mode; VkBufferView v; } tbm_ent;
+static tbm_ent g_tbm[256];
+typedef struct { int id, mode; uint8_t dim; uint32_t ver; uint64_t fr, wgen; } tpm_ent;
+static tpm_ent g_tpm[256];
+static int g_tbuf_mode = 1;
+
+void vka_tbuf_sub_begin(void) {
+    g_tbuf_mode = VKA_ENV("DM_VK_TBUF", 1);
+    pthread_mutex_lock(&g_mu);
+    atomic_store_explicit(&g_ntcopy, 0, memory_order_release);
+    g_tc_lo = g_tc_hi = 0;
+    pthread_mutex_unlock(&g_mu);
+}
+uint64_t vka_tbuf_wrote_gen(void) {
+    return atomic_load_explicit(&g_twrote_gen, memory_order_acquire);
+}
+static int tbuf_fmt_ok(VkFormat fmt, int writes) {
+    if ((uint32_t)fmt < 256u) {
+        uint8_t c = atomic_load_explicit(&g_fmt_ok[(uint32_t)fmt], memory_order_acquire);
+        if (c & 1u) return writes ? (c & 4u) != 0 : (c & 2u) != 0;
+        VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);
+        uint8_t nv = 1u
+            | ((fp.bufferFeatures & VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT) ? 2u : 0u)
+            | ((fp.bufferFeatures & VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT) ? 4u : 0u);
+        atomic_store_explicit(&g_fmt_ok[(uint32_t)fmt], nv, memory_order_release);
+        return writes ? (nv & 4u) != 0 : (nv & 2u) != 0;
+    }
+    VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);
+    VkFormatFeatureFlags need = writes ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
+    return (fp.bufferFeatures & need) != 0;
+}
 
 typedef struct { int id, format; uint64_t addr, bytes; uint32_t elems; vka_fmt f; } tb_t;
 static int tb_of(int id, tb_t *t) {
@@ -56,18 +95,27 @@ static void view_link(int slot) {
 static void destroy_view(void *a) { vk.vkDestroyBufferView(V.dev, (VkBufferView)a, NULL); }
 static void retire_view(VkBufferView v) { if (v) vka_after(vka_fence_last(), destroy_view, (void *)v); }
 // DM_VK_TBUF (live; A/B): 1 (default) binds buffer textures as above, 2 leaves the storage texel buffers unbound (shaders read buffer textures but write none), 0 binds none (as before)
-static int tbuf_mode(void) { return VKA_ENV("DM_VK_TBUF", 1); }
+static int tbuf_mode(void) { return g_tbuf_mode; }
 VkBufferView vka_tbuf_view(int id, int writes) {
     int mode = tbuf_mode(); if (!mode || (writes && mode == 2)) return VK_NULL_HANDLE;
+    uint32_t ver = 0, sgen = 0, rgen = 0;
+    tbm_ent *bm = NULL;
+    if (!writes && mode == 1 && id > 0) {
+        ver = vka_tex_id_ver(id);
+        sgen = atomic_load_explicit(&vka_seg_gen, memory_order_acquire);
+        rgen = atomic_load_explicit(&g_tv_retire_gen, memory_order_acquire);
+        bm = &g_tbm[(uint32_t)id & 255u];
+        if (bm->id == (uint32_t)id && bm->ver == ver && bm->sgen == sgen && bm->rgen == rgen && bm->mode == mode && bm->v) {
+            return bm->v;
+        }
+    }
     tb_t t; if (!tb_of(id, &t)) return VK_NULL_HANDLE;
     uint64_t max = V.props.limits.maxTexelBufferElements, n = t.elems < max ? t.elems : max;
     if (n < t.elems) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 4) VRED("buffer texture ID %d: %u elements, the device's texel buffers hold %llu: the rest reads as zero", id, t.elems, (unsigned long long)max); }
     VkDeviceSize range = (VkDeviceSize)n * t.f.bpb, off = 0; VkBuffer buf = VK_NULL_HANDLE;
     if (vka_addr_run(t.addr, range, &buf, &off) < range) { not_placed(&t, "texel buffer"); return VK_NULL_HANDLE; }
     VkFormat fmt = t.f.vk;   // (an sRGB format's raw twin: a texel buffer has no sRGB decode)
-    VkFormatProperties fp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, fmt, &fp);
-    VkFormatFeatureFlags need = writes ? VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT : VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
-    if (!(fp.bufferFeatures & need)) {
+    if (!tbuf_fmt_ok(fmt, writes)) {
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
             VRED("buffer texture ID %d: VkFormat %d is not a %s texel buffer format on this device: not bound", id, fmt, writes ? "storage" : "uniform");
         return VK_NULL_HANDLE;
@@ -78,12 +126,32 @@ VkBufferView vka_tbuf_view(int id, int writes) {
         // snapshot is copied into aligned scratch (host visible and coherent, so no copy is recorded and this works with a render pass open); its bytes are those the
         // CPU wrote before this draw, as with the Metal tbuf_shadow. A write through a copied view could not go back to guest memory, so it stays unbound.
         if (vka_tbuf_copy(writes, range, off, (uint32_t)al)) {
+            uint64_t wgen = atomic_load_explicit(&g_twrote_gen, memory_order_acquire);
+            int nt = atomic_load_explicit(&g_ntcopy, memory_order_acquire);
+            for (int i = 0; i < nt; i++) {
+                if (g_tcopy[i].range == range && g_tcopy[i].addr == t.addr && g_tcopy[i].fmt == fmt && g_tcopy[i].wgen == wgen && g_tcopy[i].cv) {
+                    return g_tcopy[i].cv;
+                }
+            }
             vka_span sp;
             if (vka_scratch(range, al > 16 ? al : 16, &sp) &&
                 (vka_tex_gw_read(t.addr, range, sp.ptr) || vka_cpu_read(t.addr, sp.ptr, (size_t)range))) {
                 VkBufferViewCreateInfo si = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .buffer = sp.buf, .format = fmt, .offset = sp.off, .range = range};
                 VkBufferView cv = VK_NULL_HANDLE;
-                if (!vk.vkCreateBufferView(V.dev, &si, NULL, &cv)) { vka_after(vka_fence_last() + 1, destroy_view, (void *)(uintptr_t)cv); return cv; }
+                if (!vk.vkCreateBufferView(V.dev, &si, NULL, &cv)) {
+                    vka_after(vka_fence_last() + 1, destroy_view, (void *)(uintptr_t)cv);
+                    pthread_mutex_lock(&g_mu);
+                    int ntc = atomic_load_explicit(&g_ntcopy, memory_order_relaxed);
+                    static int rr;
+                    int slot = ntc < NTCOPY ? ntc : (rr++ & (NTCOPY - 1));
+                    g_tcopy[slot] = (tcopy_ent){t.addr, (uint64_t)range, atomic_load_explicit(&g_twrote_gen, memory_order_acquire), fmt, cv};
+                    if (ntc < NTCOPY) atomic_store_explicit(&g_ntcopy, ntc + 1, memory_order_release);
+                    uint64_t hi = t.addr + (uint64_t)range;
+                    if (!g_tc_hi || t.addr < g_tc_lo) g_tc_lo = t.addr;
+                    if (hi > g_tc_hi) g_tc_hi = hi;
+                    pthread_mutex_unlock(&g_mu);
+                    return cv;
+                }
             }
         }
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8)
@@ -94,20 +162,36 @@ VkBufferView vka_tbuf_view(int id, int writes) {
     uint64_t now = vka_frame();
     pthread_mutex_lock(&g_mu);
     uint32_t gen = atomic_load(&vka_seg_gen);
-    if (gen != g_vgen) { for (int i = 0; i < g_nv; i++) retire_view(g_v[i].v); g_nv = 0; memset(g_vhead, 0, sizeof g_vhead); g_vgen = gen; }
+    if (gen != g_vgen) {
+        for (int i = 0; i < g_nv; i++) retire_view(g_v[i].v);
+        g_nv = 0; memset(g_vhead, 0, sizeof g_vhead); g_vgen = gen;
+        atomic_fetch_add_explicit(&g_tv_retire_gen, 1, memory_order_release);
+    }
     for (int i = g_vhead[view_h(buf, off, range, fmt)]; i; i = g_vnext[i - 1]) {
         tview *tv = &g_v[i - 1];
-        if (tv->buf == buf && tv->off == off && tv->range == range && tv->fmt == fmt) { tv->last = now; VkBufferView v = tv->v; pthread_mutex_unlock(&g_mu); return v; }
+        if (tv->buf == buf && tv->off == off && tv->range == range && tv->fmt == fmt) {
+            tv->last = now; VkBufferView v = tv->v;
+            uint32_t rg = atomic_load_explicit(&g_tv_retire_gen, memory_order_acquire);
+            pthread_mutex_unlock(&g_mu);
+            if (bm && v && gen == sgen) *bm = (tbm_ent){(uint32_t)id, ver, sgen, rg, mode, v};
+            return v;
+        }
     }
     VkBufferViewCreateInfo ci = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .buffer = buf, .format = fmt, .offset = off, .range = range};
     VkBufferView v = VK_NULL_HANDLE; VkResult r = vk.vkCreateBufferView(V.dev, &ci, NULL, &v);
     if (r) { pthread_mutex_unlock(&g_mu); static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("buffer texture ID %d: vkCreateBufferView (VkFormat %d, %llu bytes) failed (%d): not bound", id, fmt, (unsigned long long)range, r); return VK_NULL_HANDLE; }
     int slot = g_nv < NVIEW ? g_nv++ : 0;
-    if (slot == 0 && g_nv == NVIEW) { for (int i = 1; i < NVIEW; i++) if (g_v[i].last < g_v[slot].last) slot = i; view_unlink(slot); retire_view(g_v[slot].v); }
+    if (slot == 0 && g_nv == NVIEW) {
+        for (int i = 1; i < NVIEW; i++) if (g_v[i].last < g_v[slot].last) slot = i;
+        view_unlink(slot); retire_view(g_v[slot].v);
+        atomic_fetch_add_explicit(&g_tv_retire_gen, 1, memory_order_release);
+    }
     g_v[slot] = (tview){buf, off, range, fmt, v, now};
     view_link(slot);
     static int noted; if (!noted++) VLOG("buffer textures: bound as texel buffers over guest memory (first: texture ID %d, %u elements, VkFormat %d)", id, t.elems, fmt);
+    uint32_t rg = atomic_load_explicit(&g_tv_retire_gen, memory_order_acquire);
     pthread_mutex_unlock(&g_mu);
+    if (bm && v && gen == sgen) *bm = (tbm_ent){(uint32_t)id, ver, sgen, rg, mode, v};
     return v;
 }
 
@@ -144,12 +228,20 @@ static int tbuf_hash(uint64_t addr, uint64_t bytes, uint64_t *out) {
     return 1;
 }
 void vka_tbuf_wrote(uint64_t addr, uint64_t n) {
-    if (!atomic_load_explicit(&g_ni, memory_order_relaxed)) return;
+    int ni = atomic_load_explicit(&g_ni, memory_order_relaxed);
+    int ntc = atomic_load_explicit(&g_ntcopy, memory_order_relaxed);
+    if (!ni && !ntc) return;
     pthread_mutex_lock(&g_mu);
+    int hit = 0;
     if (g_i_hi && addr < g_i_hi && g_i_lo < addr + n) {
-        int ni = atomic_load_explicit(&g_ni, memory_order_relaxed);
-        for (int i = 0; i < ni; i++) if (addr < g_i[i].addr + g_i[i].bytes && g_i[i].addr < addr + n) { g_i[i].dirty = 1; g_i[i].hash_ok = 0; }
+        ni = atomic_load_explicit(&g_ni, memory_order_relaxed);
+        for (int i = 0; i < ni; i++) if (addr < g_i[i].addr + g_i[i].bytes && g_i[i].addr < addr + n) { g_i[i].dirty = 1; g_i[i].hash_ok = 0; hit = 1; }
     }
+    if (g_tc_hi && addr < g_tc_hi && g_tc_lo < addr + n) {
+        ntc = atomic_load_explicit(&g_ntcopy, memory_order_relaxed);
+        for (int i = 0; i < ntc; i++) if (g_tcopy[i].range && addr < g_tcopy[i].addr + g_tcopy[i].range && g_tcopy[i].addr < addr + n) { g_tcopy[i].range = 0; hit = 1; }
+    }
+    if (hit) atomic_fetch_add_explicit(&g_twrote_gen, 1, memory_order_release);
     pthread_mutex_unlock(&g_mu);
 }
 static void destroy_img(void *a) {
@@ -214,13 +306,23 @@ static timg *img_make(const tb_t *t, int is2d) {   // (g_mu held)
     return &g_i[slot];
 }
 int vka_tbuf_pending(int id, uint8_t dim) {
+    if (!vka_tex_id_is_buffer(id)) return 0;
+    int mode = tbuf_mode();
+    if (!mode) return 0;
+    uint32_t ver = vka_tex_id_ver(id);
+    uint64_t fr = vka_frame(), wgen = atomic_load_explicit(&g_twrote_gen, memory_order_acquire);
+    tpm_ent *pm = &g_tpm[((uint32_t)id * 7u + dim) & 255u];
+    if (pm->id == id && pm->dim == dim && pm->mode == mode && pm->ver == ver && pm->fr == fr && pm->wgen == wgen) return 0;
     tb_t t; int is2d;
-    if (!vka_tex_id_is_buffer(id) || !tbuf_mode() || !shape(dim, &is2d) || !tb_of(id, &t)) return 0;
-    uint64_t fr = vka_frame();
+    if (!shape(dim, &is2d) || !tb_of(id, &t)) return 0;
     pthread_mutex_lock(&g_mu);
     timg *x = img_find(&t, is2d);
     if (!x) { pthread_mutex_unlock(&g_mu); return 1; }
-    if (x->copied_frame == fr && !x->dirty) { pthread_mutex_unlock(&g_mu); return 0; }
+    if (x->copied_frame == fr && !x->dirty) {
+        pthread_mutex_unlock(&g_mu);
+        *pm = (tpm_ent){id, mode, dim, ver, fr, wgen};
+        return 0;
+    }
     int can_hash = !x->dirty && x->laid && x->hash_ok && t.bytes <= TBUF_HASH_MAX && VKA_ENV("DM_VK_TBUF_HASH", 1);
     uint64_t old_hash = x->hash;
     pthread_mutex_unlock(&g_mu);
@@ -229,7 +331,12 @@ int vka_tbuf_pending(int id, uint8_t dim) {
         if (tbuf_hash(t.addr, t.bytes, &h) && h == old_hash) {
             pthread_mutex_lock(&g_mu);
             x = img_find(&t, is2d);
-            if (x && !x->dirty && x->hash_ok && x->hash == old_hash) { x->copied_frame = fr; x->last = fr; pthread_mutex_unlock(&g_mu); return 0; }
+            if (x && !x->dirty && x->hash_ok && x->hash == old_hash) {
+                x->copied_frame = fr; x->last = fr;
+                pthread_mutex_unlock(&g_mu);
+                *pm = (tpm_ent){id, mode, dim, ver, fr, wgen};
+                return 0;
+            }
             pthread_mutex_unlock(&g_mu);
         }
     }
