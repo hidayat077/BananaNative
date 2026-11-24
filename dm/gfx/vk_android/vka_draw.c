@@ -32,7 +32,14 @@ static int g_sb_peek_on = -1, g_ub_peek_on = -1, g_tex_peek_on = -1;
 static uint64_t g_ub_gen, g_sub_id;
 void vka_draw_ub_bump(void) { g_ub_gen++; }
 static struct { const vka_shader *sh; uint64_t ubo_hash, ub_gen, tgen; int tex_base; } g_tp_memo[64];
-static struct { const vka_shader *sh; uint64_t s_ubo, s_ssbo, s_tex; int tex_base, samp_base; int valid; } g_wk_prev[VKA_NSTAGE];
+static struct {
+    const vka_shader *sh; uint64_t s_ubo, s_ssbo, s_tex; int tex_base, samp_base; int valid;
+    uint8_t mi_ok, tm_ok, ds_ok;
+    uint64_t mi_tgen, mi_twgen, mi_fr;
+    uint64_t tm_tgen;
+    uint64_t ds_rp, ds_tgen;
+} g_wk_prev[VKA_NSTAGE];
+static uint8_t g_wk_hit[VKA_NSTAGE];
 enum { SWM_MAX = 128 };
 static struct {
     int valid, nw;
@@ -192,7 +199,12 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     g_ub_gen++;
     g_sub_id++;
     memset(g_tp_memo, 0, sizeof g_tp_memo);
-    for (int i = 0; i < VKA_NSTAGE; i++) { g_wk_prev[i].valid = 0; g_swm[i].valid = 0; }
+    for (int i = 0; i < VKA_NSTAGE; i++) {
+        g_wk_prev[i].valid = 0;
+        g_wk_prev[i].mi_ok = g_wk_prev[i].tm_ok = g_wk_prev[i].ds_ok = 0;
+        g_wk_hit[i] = 0;
+        g_swm[i].valid = 0;
+    }
     if (g_sb_peek_on < 0) { const char *e = getenv("DM_VK_SB_PEEK"); g_sb_peek_on = e && *e ? 1 : 0; }
     if (g_ub_peek_on < 0) { const char *e = getenv("DM_VK_UB_PEEK"); g_ub_peek_on = e && *e ? 1 : 0; }
     if (g_tex_peek_on < 0) { const char *e = getenv("DM_VK_TEX_PEEK"); g_tex_peek_on = e && *e ? 1 : 0; }
@@ -1015,7 +1027,11 @@ static int ubo_desc(uint64_t addr, uint64_t size, VkDescriptorBufferInfo *bi) {
         UB.m_valid = 1; UB.m_seq = UB.seq; UB.m_addr = addr; UB.m_size = sz; UB.m_span = s;
         *bi = (VkDescriptorBufferInfo){s.buf, s.off, sz}; return 1;
     }
-    if (run && !(o % V.ub_align) && !(addr % V.ub_align)) { *bi = (VkDescriptorBufferInfo){b, o, run}; return 1; }
+    if (run) {
+        VkDeviceSize al = V.ub_align, am = al - 1;
+        int aligned = al <= 1 || ((al & am) == 0 ? (((o | addr) & am) == 0) : (!(o % al) && !(addr % al)));
+        if (aligned) { *bi = (VkDescriptorBufferInfo){b, o, run}; return 1; }
+    }
     vka_span s; if (!vka_scratch(size, V.ub_align, &s)) return 0;
     if (!cpu_read(addr, s.ptr, size)) { memset(s.ptr, 0, size); VRED_ONCE("uniform buffer at %#llx is not readable: it reads zeros", (unsigned long long)addr); }
     else if (run) VRED_ONCE("uniform buffer at %#llx is not %llu-byte aligned: bound as a copy of the CPU's bytes", (unsigned long long)addr, (unsigned long long)V.ub_align);
@@ -1423,42 +1439,52 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
     int eligible = g_write_memo && !g_prof && st != 5 && !sh->has_ubo_ind && g_wk_prev[st].valid &&
                    n <= SWM_MAX && !g_class_log && !g_tex_peek_on && !g_sb_peek_on && !g_ub_peek_on &&
                    !atomic_load_explicit(&g_nsbw, memory_order_relaxed);
+    int gens_loaded = 0;
     if (eligible) {
-        tgen = vka_tex_tabpool_gen();
-        sgen = vka_tex_sreg_gen();
-        mgen = vka_mem_gen();
-        tw_gen = vka_tbuf_wrote_gen();
         memcpy(&aref_u32, &d->alpha_ref, sizeof aref_u32);
         typeof(g_swm[0]) *m = &g_swm[st];
         if (m->valid && m->sh == sh && m->s_ubo == d->s_ubo[st] && m->s_ssbo == d->s_ssbo[st] &&
-            m->s_tex == d->s_tex[st] && m->s_push == d->s_push && m->tgen == tgen && m->mgen == mgen &&
-            m->ub_gen == g_ub_gen && m->rp_gen == vka_n_rp && m->tw_gen == tw_gen && m->sub_id == g_sub_id &&
-            m->sgen == sgen && m->base_instance == (uint32_t)d->b.base_instance &&
+            m->s_tex == d->s_tex[st] && m->s_push == d->s_push &&
+            m->ub_gen == g_ub_gen && m->rp_gen == vka_n_rp && m->sub_id == g_sub_id &&
+            m->base_instance == (uint32_t)d->b.base_instance &&
             m->samples == (uint32_t)d->b.samples && m->tex_base == (uint32_t)d->b.tex_base &&
             m->samp_base == (uint32_t)d->b.samp_base && m->alpha_ref == aref_u32 && m->alpha_func == afunc &&
             m->pool == pool && g_w.n + (uint32_t)m->nw <= 512) {
-            uint32_t base = g_w.n;
-            memcpy(g_w.w + base, m->w, (size_t)m->nw * sizeof m->w[0]);
-            memcpy(g_w.bi + base, m->bi, (size_t)m->nw * sizeof m->bi[0]);
-            memcpy(g_w.ii + base, m->ii, (size_t)m->nw * sizeof m->ii[0]);
-            memcpy(g_w.bv + base, m->bv, (size_t)m->nw * sizeof m->bv[0]);
-            memcpy(g_w.ad + base, m->ad, (size_t)m->nw * sizeof m->ad[0]);
-            memcpy(g_w.dim + base, m->dim, (size_t)m->nw * sizeof m->dim[0]);
-            for (int j = 0; j < m->nw; j++) {
-                uint32_t idx = base + (uint32_t)j;
-                if (m->pkind[j] == 1) g_w.w[idx].pBufferInfo = &g_w.bi[idx];
-                else if (m->pkind[j] == 2) g_w.w[idx].pImageInfo = &g_w.ii[idx];
-                else if (m->pkind[j] == 3) g_w.w[idx].pTexelBufferView = &g_w.bv[idx];
+            tgen = vka_tex_tabpool_gen();
+            sgen = vka_tex_sreg_gen();
+            mgen = vka_mem_gen();
+            tw_gen = vka_tbuf_wrote_gen();
+            gens_loaded = 1;
+            if (m->tgen == tgen && m->mgen == mgen && m->tw_gen == tw_gen && m->sgen == sgen) {
+                uint32_t base = g_w.n;
+                memcpy(g_w.w + base, m->w, (size_t)m->nw * sizeof m->w[0]);
+                memcpy(g_w.bi + base, m->bi, (size_t)m->nw * sizeof m->bi[0]);
+                memcpy(g_w.ii + base, m->ii, (size_t)m->nw * sizeof m->ii[0]);
+                memcpy(g_w.bv + base, m->bv, (size_t)m->nw * sizeof m->bv[0]);
+                memcpy(g_w.ad + base, m->ad, (size_t)m->nw * sizeof m->ad[0]);
+                memcpy(g_w.dim + base, m->dim, (size_t)m->nw * sizeof m->dim[0]);
+                for (int j = 0; j < m->nw; j++) {
+                    uint32_t idx = base + (uint32_t)j;
+                    if (m->pkind[j] == 1) g_w.w[idx].pBufferInfo = &g_w.bi[idx];
+                    else if (m->pkind[j] == 2) g_w.w[idx].pImageInfo = &g_w.ii[idx];
+                    else if (m->pkind[j] == 3) g_w.w[idx].pTexelBufferView = &g_w.bv[idx];
+                }
+                g_w.n += (uint32_t)m->nw;
+                return 1;
             }
-            g_w.n += (uint32_t)m->nw;
-            return 1;
         }
         m->valid = 0;
     } else {
         g_swm[st].valid = 0;
     }
     uint32_t start_n = g_w.n;
-    int cacheable = eligible;
+    int cacheable = eligible && g_wk_hit[st];
+    if (cacheable && !gens_loaded) {
+        tgen = vka_tex_tabpool_gen();
+        sgen = vka_tex_sreg_gen();
+        mgen = vka_mem_gen();
+        tw_gen = vka_tbuf_wrote_gen();
+    }
     for (int i = 0; i < n; i++) {
         if (g_w.n == 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
         uint32_t k = g_w.n;
@@ -1586,20 +1612,28 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
     return 1;
 }
 // Each stage's bindings, walked once a draw or dispatch (walk_all): the images first used are made from them (make_images), then set 0 is written from them (bind_sets)
-static struct { int n[VKA_NSTAGE], pool[VKA_NSTAGE]; char why[VKA_NSTAGE][200]; vka_res r[VKA_NSTAGE][512]; } g_wk;
+static struct { int n[VKA_NSTAGE], pool[VKA_NSTAGE]; uint8_t has_write[VKA_NSTAGE]; char why[VKA_NSTAGE][200]; vka_res r[VKA_NSTAGE][512]; } g_wk;
 static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
     uint64_t t0_ = g_prof ? cntvct() : 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         vka_shader *s = sh[st];
-        if (!s) { g_wk.n[st] = 0; g_wk.pool[st] = 0; continue; }
+        if (!s) { g_wk.n[st] = 0; g_wk.pool[st] = 0; g_wk.has_write[st] = 0; g_wk_hit[st] = 0; continue; }
         if (g_walk_memo && !s->has_ubo_ind && g_wk_prev[st].valid && g_wk_prev[st].sh == s &&
             g_wk_prev[st].s_ubo == d->s_ubo[st] && g_wk_prev[st].s_ssbo == d->s_ssbo[st] &&
             g_wk_prev[st].s_tex == d->s_tex[st] && g_wk_prev[st].tex_base == d->b.tex_base &&
             g_wk_prev[st].samp_base == d->b.samp_base && g_wk.n[st] >= 0) {
+            g_wk_hit[st] = 1;
             continue;
         }
+        g_wk_hit[st] = 0;
         g_wk.pool[st] = 0;
         g_wk.n[st] = vka_walk(&d->b, st, s->e, s->b, s->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, g_wk.r[st], 512, &g_wk.pool[st], g_wk.why[st], sizeof g_wk.why[st]);
+        uint8_t hw = 0;
+        const vka_res *rr = g_wk.r[st];
+        for (int i = 0; i < g_wk.n[st]; i++) {
+            if ((rr[i].flags & DMSH_VK_BF_RW) || rr[i].what == VKA_R_IMG || rr[i].what == VKA_R_GMEM_LOG) { hw = 1; break; }
+        }
+        g_wk.has_write[st] = hw;
         if (!s->has_ubo_ind && g_wk.n[st] >= 0) {
             g_wk_prev[st].sh = s;
             g_wk_prev[st].s_ubo = d->s_ubo[st];
@@ -1607,6 +1641,9 @@ static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
             g_wk_prev[st].s_tex = d->s_tex[st];
             g_wk_prev[st].tex_base = d->b.tex_base;
             g_wk_prev[st].samp_base = d->b.samp_base;
+            g_wk_prev[st].mi_ok = 0;
+            g_wk_prev[st].tm_ok = 0;
+            g_wk_prev[st].ds_ok = 0;
             g_wk_prev[st].valid = 1;
         } else {
             g_wk_prev[st].valid = 0;
@@ -1622,8 +1659,10 @@ static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
 static void tex_masks(vka_shader *const sh[VKA_NSTAGE], uint64_t tu[5], uint64_t ts[5]) {
     if (!g_tex_retype) return;
     static const int st_of[] = {0, 1, 2, 3, 4, 6, 7};
+    uint64_t tgen = vka_tex_tabpool_gen();
     for (size_t j = 0; j < sizeof st_of / sizeof *st_of; j++) {
         int st = st_of[j]; vka_shader *s = sh[st]; if (!s) continue;
+        if (g_wk_hit[st] && g_wk_prev[st].valid && g_wk_prev[st].tm_ok && g_wk_prev[st].tm_tgen == tgen) continue;
         int rg = vka_shader_tex_range(s); if (rg < 0 || rg >= 5) continue;
         vka_res *r = g_wk.r[st]; uint64_t um = 0, sm = 0, fm = 0, lo = (uint64_t)rg * DMSH_VK_STAGE_BINDINGS;
         for (int i = 0; i < g_wk.n[st]; i++) {
@@ -1636,7 +1675,10 @@ static void tex_masks(vka_shader *const sh[VKA_NSTAGE], uint64_t tu[5], uint64_t
             if (c == 1) um |= bit; else if (c == 2) sm |= bit; else fm |= bit;
         }
         uint64_t mixed = (um & sm) | ((um | sm) & fm); um &= ~mixed; sm &= ~mixed;
-        if (!(um | sm)) continue;
+        if (!(um | sm)) {
+            if (g_wk_prev[st].valid) { g_wk_prev[st].tm_ok = 1; g_wk_prev[st].tm_tgen = tgen; }
+            continue;
+        }
         vka_texmod_key tk = {DMSH_VK_MOD_BASE, 0, 0, 0, 0, -1, um, sm};   // (the rewrite's check on the base module; the pipeline's own module is made in pstate_fill)
         if (!vka_shader_tex_module(s, &tk)) continue;
         tu[rg] |= um; ts[rg] |= sm;
@@ -1780,19 +1822,43 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
 }
 // Images first used by a draw (from the walk, walk_all), or remade with storage use (vka_tex.c img_storage_upgrade): dry = only whether there is one
 static int make_images(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], int dry) {
+    uint64_t vka_frame(void);
     int any = 0;   // d is read: the table premake below
+    uint64_t mi_tgen_now = 0, mi_twgen_now = 0, mi_fr_now = 0;
+    int mi_gens_ok = 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st]) continue;
-        const vka_res *r = g_wk.r[st];
-        for (int i = 0; i < g_wk.n[st]; i++) {
-            const vka_res *x = &r[i];
-            if (!x->tid || (x->what != VKA_R_TEX && x->what != VKA_R_IMG)) continue;
-            if (vka_tex_id_pending_rec(x->tid, x->dim) || (x->what == VKA_R_IMG && vka_tex_id_storage_pending(x->tid))) {   // (an image remade with storage use copies its content: outside the pass)
-                any = 1; if (dry) return 1;
-                vka_tex_id_view(x->tid, g_cb, x->dim, wbf_view_of_binding(x->what == VKA_R_IMG, x->flags, DMSH_VK_BF_RW), NULL);
-            } else if (x->what == VKA_R_TEX && vka_tbuf_pending(x->tid, x->dim)) {   // a buffer texture read as an image: its copy (vka_tbuf.c), outside the pass
-                any = 1; if (dry) return 1;
-                vka_tbuf_refresh(x->tid, x->dim, g_cb);
+        int skip_loop = 0;
+        if (dry && g_wk_prev[st].valid && !g_wk.has_write[st]) {
+            if (!mi_gens_ok) {
+                mi_tgen_now = vka_tex_tabpool_gen();
+                mi_twgen_now = vka_tbuf_wrote_gen();
+                mi_fr_now = vka_frame();
+                mi_gens_ok = 1;
+            }
+            if (g_wk_hit[st] && g_wk_prev[st].mi_ok && g_wk_prev[st].mi_tgen == mi_tgen_now &&
+                g_wk_prev[st].mi_twgen == mi_twgen_now && g_wk_prev[st].mi_fr == mi_fr_now) {
+                skip_loop = 1;
+            }
+        }
+        if (!skip_loop) {
+            const vka_res *r = g_wk.r[st];
+            for (int i = 0; i < g_wk.n[st]; i++) {
+                const vka_res *x = &r[i];
+                if (!x->tid || (x->what != VKA_R_TEX && x->what != VKA_R_IMG)) continue;
+                if (vka_tex_id_pending_rec(x->tid, x->dim) || (x->what == VKA_R_IMG && vka_tex_id_storage_pending(x->tid))) {   // (an image remade with storage use copies its content: outside the pass)
+                    any = 1; if (dry) return 1;
+                    vka_tex_id_view(x->tid, g_cb, x->dim, wbf_view_of_binding(x->what == VKA_R_IMG, x->flags, DMSH_VK_BF_RW), NULL);
+                } else if (x->what == VKA_R_TEX && vka_tbuf_pending(x->tid, x->dim)) {   // a buffer texture read as an image: its copy (vka_tbuf.c), outside the pass
+                    any = 1; if (dry) return 1;
+                    vka_tbuf_refresh(x->tid, x->dim, g_cb);
+                }
+            }
+            if (dry && g_wk_prev[st].valid && !g_wk.has_write[st] && mi_gens_ok) {
+                g_wk_prev[st].mi_ok = 1;
+                g_wk_prev[st].mi_tgen = mi_tgen_now;
+                g_wk_prev[st].mi_twgen = mi_twgen_now;
+                g_wk_prev[st].mi_fr = mi_fr_now;
             }
         }
         // The first entries of a table of handles the stage reads through the pool (vka_bind.h vka_tabpool_ids) are made here too, as the array's bindings
@@ -1837,8 +1903,7 @@ static int draw_writes(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
     if (sh[2] && sh[2]->gs_fx > 0) return 1;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
-        const vka_res *r = g_wk.r[st];
-        for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].flags & DMSH_VK_BF_RW) || r[i].what == VKA_R_IMG || r[i].what == VKA_R_GMEM_LOG) return 1;
+        if (g_wk.has_write[st]) return 1;
     }
     return 0;
 }
@@ -1855,10 +1920,13 @@ static int bar_hazard(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
     return 0;
 }
 static int depth_sampled(vka_shader *const sh[VKA_NSTAGE], const vka_dstate *d) {
+    uint64_t tgen = R.on ? vka_tex_tabpool_gen() : 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         if (!sh[st] || (st == 1 && d->rast_discard)) continue;
+        if (R.on && g_wk_hit[st] && g_wk_prev[st].valid && g_wk_prev[st].ds_ok && g_wk_prev[st].ds_rp == vka_n_rp && g_wk_prev[st].ds_tgen == tgen) continue;
         const vka_res *r = g_wk.r[st];
         for (int i = 0; i < g_wk.n[st]; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_TBUF) && r[i].tid && vka_tex_id_in_pass_rec(r[i].tid, r[i].dim) == 2) return 1;
+        if (R.on && g_wk_prev[st].valid) { g_wk_prev[st].ds_ok = 1; g_wk_prev[st].ds_rp = vka_n_rp; g_wk_prev[st].ds_tgen = tgen; }
     }
     return 0;
 }

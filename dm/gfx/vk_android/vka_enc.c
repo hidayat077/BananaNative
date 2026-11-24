@@ -453,11 +453,13 @@ static void *enc_main(void *arg) {
     for (;;) {
         uint64_t h = atomic_load_explicit(&g_head, memory_order_acquire);
         if (t == h) {
-            // Empty: spin while the replay thread is recording (its next call comes within microseconds), then sleep until a call comes
-            for (uint64_t t0 = mono_ns();;) {
-                h = atomic_load_explicit(&g_head, memory_order_acquire); if (h != t) break;
-                if (spin_over(t0)) break;
-                wait_change(&g_head, t);
+            // Empty: spin only while a submission is open on the replay thread, then sleep until a call comes (idle frames sleep immediately)
+            if (atomic_load_explicit(&g_ecb, memory_order_relaxed) != VK_NULL_HANDLE) {
+                for (uint64_t t0 = mono_ns();;) {
+                    h = atomic_load_explicit(&g_head, memory_order_acquire); if (h != t) break;
+                    if (spin_over(t0) || atomic_load_explicit(&g_ecb, memory_order_relaxed) == VK_NULL_HANDLE) break;
+                    wait_change(&g_head, t);
+                }
             }
             if (h == t) {
                 uint32_t s = atomic_load(&g_cseq);   // (an event count, as wait_tail's)
@@ -517,8 +519,8 @@ void vka_enc_start(VkCommandBuffer cb) {
     vka_enc_sync();
     extern int vka_gp_active;
     if (!VKA_ENV("DM_VK_ENC", 1) || vka_gp_active || vka_nan_on() || vka_texstats_on() || !up()) { atomic_store(&g_ecb, VK_NULL_HANDLE); return; }
-    { int bt = VKA_ENV("DM_VK_ENC_BATCH", 16384); g_batch = bt < 0 ? 0 : bt > (1 << 20) ? (1 << 20) : (uint32_t)bt; }   // live: from this submission
-    { int us = VKA_ENV("DM_VK_ENC_SPIN", 50); atomic_store_explicit(&g_spin_ns, (uint64_t)(us < 0 ? 0 : us > 100000 ? 100000 : us) * 1000, memory_order_relaxed); }   // live: from this submission
+    { int bt = VKA_ENV("DM_VK_ENC_BATCH", 8192); g_batch = bt < 0 ? 0 : bt > (1 << 20) ? (1 << 20) : (uint32_t)bt; }   // live: from this submission
+    { int us = VKA_ENV("DM_VK_ENC_SPIN", 250); atomic_store_explicit(&g_spin_ns, (uint64_t)(us < 0 ? 0 : us > 100000 ? 100000 : us) * 1000, memory_order_relaxed); }   // live: from this submission
     { int tb = VKA_ENV("DM_VK_ENC_TAIL", 16384); atomic_store_explicit(&g_tail_every, tb <= 0 ? 0 : tb > (1 << 20) ? (1u << 20) : (uint32_t)tb, memory_order_relaxed); }   // live: from this submission
     atomic_store(&g_ecb, cb);
 }

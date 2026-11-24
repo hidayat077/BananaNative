@@ -33,8 +33,10 @@ typedef struct { uint32_t id, ver, sgen, rgen; int mode; VkBufferView v; } tbm_e
 static tbm_ent g_tbm[256];
 typedef struct { int id, mode; uint8_t dim; uint32_t ver; uint64_t fr, wgen; } tpm_ent;
 static tpm_ent g_tpm[256];
+static int g_tbuf_mode = 1;
 
 void vka_tbuf_sub_begin(void) {
+    g_tbuf_mode = VKA_ENV("DM_VK_TBUF", 1);
     pthread_mutex_lock(&g_mu);
     atomic_store_explicit(&g_ntcopy, 0, memory_order_release);
     g_tc_lo = g_tc_hi = 0;
@@ -93,7 +95,7 @@ static void view_link(int slot) {
 static void destroy_view(void *a) { vk.vkDestroyBufferView(V.dev, (VkBufferView)a, NULL); }
 static void retire_view(VkBufferView v) { if (v) vka_after(vka_fence_last(), destroy_view, (void *)v); }
 // DM_VK_TBUF (live; A/B): 1 (default) binds buffer textures as above, 2 leaves the storage texel buffers unbound (shaders read buffer textures but write none), 0 binds none (as before)
-static int tbuf_mode(void) { return VKA_ENV("DM_VK_TBUF", 1); }
+static int tbuf_mode(void) { return g_tbuf_mode; }
 VkBufferView vka_tbuf_view(int id, int writes) {
     int mode = tbuf_mode(); if (!mode || (writes && mode == 2)) return VK_NULL_HANDLE;
     uint32_t ver = 0, sgen = 0, rgen = 0;
@@ -304,8 +306,9 @@ static timg *img_make(const tb_t *t, int is2d) {   // (g_mu held)
     return &g_i[slot];
 }
 int vka_tbuf_pending(int id, uint8_t dim) {
+    if (!vka_tex_id_is_buffer(id)) return 0;
     int mode = tbuf_mode();
-    if (!mode || !vka_tex_id_is_buffer(id)) return 0;
+    if (!mode) return 0;
     uint32_t ver = vka_tex_id_ver(id);
     uint64_t fr = vka_frame(), wgen = atomic_load_explicit(&g_twrote_gen, memory_order_acquire);
     tpm_ent *pm = &g_tpm[((uint32_t)id * 7u + dim) & 255u];
