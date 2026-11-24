@@ -347,7 +347,7 @@ static uint64_t sh_get(uint32_t qi, uint32_t use, PFN_vkGetQueryPoolResults get)
 }
 static void post_run(void *ops_, int n) {   // the completion thread, in submission order, before the fence reads as done
     pop *ops = ops_;
-    for (int i = 0; i < n; i++) if (ops[i].kind < 1 || ops[i].kind > 8) {   // (diagnostic: an op array that is not one, see vka_dev.c's checks of the post records)
+    for (int i = 0; i < n; i++) if (ops[i].kind < 1 || ops[i].kind > 9) {   // (diagnostic: an op array that is not one, see vka_dev.c's checks of the post records)
         static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("completion effects: op %d of %d has kind %d (address %#llx): not an op array (freed or overwritten); its effects are dropped (not freed)",
                                                                    i, n, ops[i].kind, (unsigned long long)ops[i].addr);
         return;
