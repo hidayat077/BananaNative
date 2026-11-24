@@ -194,12 +194,25 @@ static uint64_t g_img_bytes;
 static uint64_t g_img_made_n, g_img_made_b, g_img_evict_n, g_img_evict_b;
 static vksoft_set g_soft_hard; static uint64_t g_soft_n, g_soft_bytes, g_soft_made, g_soft_whole;   // (under g_tmu) soft textures ("Soft textures" below): live, the storage bytes left out, made, made whole
 static int g_zwant;   // (under g_tmu) img_create_ may make a zero-shared image: vka_tex_get's new image whose content is ST_ZERO ("Zero-shared images" below)
+_Static_assert(VKF_POOL_CPU_NO_ACCESS == NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS && VKF_TARGET_2D == NVN_TEXTURE_TARGET_2D, "vka_famshare pool/target constants");
+_Static_assert(VKF_TEX_DISPLAY == NVN_TEXTURE_FLAGS_DISPLAY && VKF_TEX_VIDEO_DECODE == NVN_TEXTURE_FLAGS_VIDEO_DECODE && VKF_TEX_IMAGE == NVN_TEXTURE_FLAGS_IMAGE
+               && VKF_TEX_COMPRESSIBLE == NVN_TEXTURE_FLAGS_COMPRESSIBLE && VKF_TEX_LINEAR == NVN_TEXTURE_FLAGS_LINEAR && VKF_TEX_SPARSE == NVN_TEXTURE_FLAGS_SPARSE
+               && VKF_TEX_LINEAR_RT == NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET && VKF_TEX_MINIMAL_LAYOUT == NVN_TEXTURE_FLAGS_MINIMAL_LAYOUT, "vka_famshare tex flag constants");
+static vkf_desc_tab g_fam_desc;   // live resolution-family candidate descriptors by serial (under g_tmu)
+static struct { int on; uint64_t pool, pgen; int64_t off; uint32_t max_w, max_h, or_flags; int fresh; VkImage probe; vka_imem probe_m; } g_fam;   // (under g_tmu)
+typedef struct { VkImage img; vka_imem m; } fam_probe_t;
+static void fam_probe_destroy(void *arg) {
+    fam_probe_t *p = arg;
+    if (p->img) vk.vkDestroyImage(V.dev, p->img, NULL);
+    vka_imem_free(&p->m);
+    free(p);
+}
 
 // The images' memory for the stats line: all of it, and the part whose content the GPU wrote (render targets, copy and storage destinations); the rest was filled from the
 // texture's storage in guest memory, which stays in its memory pool, so those bytes are held twice
-uint64_t vka_tex_mem_nolock(int *n) { if (n) *n = g_nlive; return g_img_bytes + vka_imem_zbytes_nolock(); }   // (zero-shared allocations counted once each)
+uint64_t vka_tex_mem_nolock(int *n) { if (n) *n = g_nlive; return g_img_bytes + vka_imem_zbytes_nolock() + vka_imem_fbytes_nolock(); }   // (zero-shared and family-shared allocations counted once each)
 uint64_t vka_tex_mem(int *n, uint64_t *gpu_written) {
-    pthread_mutex_lock(&g_tmu); uint64_t all = g_img_bytes + vka_imem_zbytes(), gw = 0;
+    pthread_mutex_lock(&g_tmu); uint64_t fb = vka_imem_fbytes(), all = g_img_bytes + vka_imem_zbytes() + fb, gw = fb;
     for (int i = 0; i < g_nlive; i++) if (g_live[i]->gpu_owned) gw += g_live[i]->bytes;
     if (n) *n = g_nlive; if (gpu_written) *gpu_written = gw;
     pthread_mutex_unlock(&g_tmu); return all;
@@ -584,11 +597,13 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
     }
     // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered): 2D / 2D-array views of slices need this (Vulkan 1.1 maintenance1)
     if (is3d && (u & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+    // Resolution-family sharing: live resolution variants at one NVN pool offset and format alias one VkDeviceMemory sized to the family's largest declared extent
+    int fam = g_fam.on && !res;
     // Zero-shared images (below): a large GPU-content image the caller makes (g_zwant: vka_tex_get, its content ST_ZERO) is made to alias the zeroed memory of its create info
-    int zs = g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", 4.0) * 1048576.0),
-                                                                    vkz_max(f->kind >= 3, V.driver_id == VK_DRIVER_ID_MESA_TURNIP, (int64_t)VKA_ENVF("DM_VK_ZSHARE_MAX_MB", -1.0)), res, im->samples, is3d, compressed(f),
-                                                                    (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_DISPLAY)) != 0);
-    if (zs) fl |= VK_IMAGE_CREATE_ALIAS_BIT;
+    int zs = !fam && g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", 4.0) * 1048576.0),
+                                                                           vkz_max(f->kind >= 3, V.driver_id == VK_DRIVER_ID_MESA_TURNIP, (int64_t)VKA_ENVF("DM_VK_ZSHARE_MAX_MB", -1.0)), res, im->samples, is3d, compressed(f),
+                                                                           (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_DISPLAY)) != 0);
+    if (zs || fam) fl |= VK_IMAGE_CREATE_ALIAS_BIT;
     VkImageType it = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
     VkImageFormatProperties ip;
     for (int k = 0; k < 3 && vk.vkGetPhysicalDeviceImageFormatProperties(V.pd, f->vk, it, VK_IMAGE_TILING_OPTIMAL, u, fl, &ip); k++)
@@ -614,7 +629,39 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
         return im;
     }
     int fresh = 0;
-    if (zs && mt != UINT32_MAX) {   // the key: the whole create info (ALIAS_BIT in its flags), the format list, the memory type and requirements (images that may alias consistently)
+    uint64_t fam_asz = 0;
+    if (fam && mt != UINT32_MAX) {
+        vkf_key fk = {g_fam.pool, g_fam.pgen, g_fam.off, (uint32_t)f->vk, mt};
+        VkResult fr = vka_imem_bind_fam_existing(im->img, &fk, &mr, &im->m, &fam_asz);
+        if (fr == VK_NOT_READY) {
+            uint64_t alloc_size = mr.size;
+            VkImage probe = VK_NULL_HANDLE; VkMemoryRequirements pmr = {0};
+            if (g_fam.max_w > im->w || g_fam.max_h > im->h) {
+                VkImageCreateInfo pci = ci;
+                pci.extent = (VkExtent3D){g_fam.max_w, g_fam.max_h, 1};
+                if (!(pci.usage & VK_IMAGE_USAGE_STORAGE_BIT) && (g_fam.or_flags & NVN_TEXTURE_FLAGS_IMAGE) && (feats(f->vk) & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
+                    VkImageFormatProperties pip;
+                    if (!vk.vkGetPhysicalDeviceImageFormatProperties(V.pd, f->vk, it, VK_IMAGE_TILING_OPTIMAL, pci.usage | VK_IMAGE_USAGE_STORAGE_BIT, pci.flags, &pip))
+                        pci.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+                }
+                if (!vk.vkCreateImage(V.dev, &pci, NULL, &probe)) {
+                    vk.vkGetImageMemoryRequirements(V.dev, probe, &pmr);
+                    if (pmr.size > alloc_size) alloc_size = pmr.size;
+                }
+            }
+            fr = vka_imem_bind_fam_new(im->img, &fk, alloc_size, &mr, &im->m);
+            if (!fr && im->m.fam) {
+                g_fam.fresh = 1; fam_asz = alloc_size;
+                if (probe != VK_NULL_HANDLE) {
+                    if (!vka_imem_bind_fam_alias(probe, im->m.dm, pmr.size, &g_fam.probe_m)) g_fam.probe = probe;
+                    else vk.vkDestroyImage(V.dev, probe, NULL);
+                }
+            } else if (probe != VK_NULL_HANDLE) {
+                vk.vkDestroyImage(V.dev, probe, NULL);
+            }
+        }
+    }
+    if (!im->m.fam && zs && mt != UINT32_MAX) {   // the key: the whole create info (ALIAS_BIT in its flags), the format list, the memory type and requirements (images that may alias consistently)
         struct { VkImageCreateFlags fl; VkFormat f; VkImageType it; uint32_t w, h, dp, lv, ly, sm; VkImageUsageFlags u; uint32_t mt, nfl; VkFormat fls[6]; VkDeviceSize size, al; } k;
         memset(&k, 0, sizeof k);
         k.fl = fl; k.f = f->vk; k.it = it; k.w = im->w; k.h = im->h; k.dp = im->depth; k.lv = im->levels; k.ly = im->layers; k.sm = im->samples; k.u = u; k.mt = mt; k.size = mr.size; k.al = mr.alignment;
@@ -624,16 +671,25 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
     } else zs = 0;
     if (!im->m.dm && (r = vka_imem_bind(im->img, mt, &mr, &im->m))) {   // a run of a shared block, or a dedicated allocation (vka_imgmem.c)
         VRED("texture serial %llu: %llu bytes of image memory not allocated (%d; %.0f MiB in %d images, %llu image allocations, at most %u allocations)", (unsigned long long)t->serial,
-             (unsigned long long)mr.size, r, g_img_bytes / 1048576.0, g_nlive, (unsigned long long)vka_imem_allocations(), V.props.limits.maxMemoryAllocationCount);
+             (unsigned long long)mr.size, r, vka_tex_mem_nolock(NULL) / 1048576.0, g_nlive, (unsigned long long)vka_imem_allocations(), V.props.limits.maxMemoryAllocationCount);
         vk.vkDestroyImage(V.dev, im->img, NULL); free(im); return NULL;
     }
-    if (zs) {   // its bytes are the shared allocation's, counted once (vka_tex_mem)
+    if (im->m.fam) {   // its bytes are the family allocation's, counted once (vka_tex_mem)
+        im->bytes = 0; if (g_fam.fresh) vka_mem_grew(fam_asz);
+        static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)
+            VLOG("family-shared image: texture serial %llu %ux%u format %#x flags %#x: %.1f MiB %s (family max %ux%u)", (unsigned long long)t->serial,
+                 im->w, im->h, d->format, d->flags, fam_asz / 1048576.0, g_fam.fresh ? "made for its family" : "aliased onto existing family memory", g_fam.max_w, g_fam.max_h);
+        g_img_made_n++; g_img_made_b += g_fam.fresh ? fam_asz : 0;
+    } else if (zs) {   // its bytes are the shared allocation's, counted once (vka_tex_mem)
         im->bytes = 0; if (fresh) vka_mem_grew(mr.size);
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)
             VLOG("zero-shared image: texture serial %llu %ux%u layers %u levels %u format %#x flags %#x: %.1f MiB of zeroed memory %s (memory of its own at its first write)", (unsigned long long)t->serial,
                  im->w, im->h, im->layers, im->levels, d->format, d->flags, mr.size / 1048576.0, fresh ? "made for its create info" : "shared with images of the same create info");
-    } else { im->bytes = mr.size; g_img_bytes += mr.size; vka_mem_grew(mr.size); }
-    g_img_made_n++; g_img_made_b += im->bytes ? im->bytes : fresh ? mr.size : 0;   // (a zero-shared image's bytes are the shared allocation's: counted once, when it is made)
+        g_img_made_n++; g_img_made_b += fresh ? mr.size : 0;
+    } else {
+        im->bytes = mr.size; g_img_bytes += mr.size; vka_mem_grew(mr.size);
+        g_img_made_n++; g_img_made_b += im->bytes;
+    }
     if (mr.size >= (VkDeviceSize)(VKA_ENVF("DM_VK_BIGIMG_MB", 64.0) * 1048576.0)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)   // large images, for memory walls
         VLOG("large image: texture serial %llu %ux%ux%u layers %u levels %u (base %u) samples %u format %#x target %d flags %#x: %.1f MiB of image memory (storage %.1f MiB at %p, pool flags %#x)",
              (unsigned long long)t->serial, im->w, im->h, im->depth, im->layers, im->levels, im->base, im->samples, t->d.format, t->d.target, t->d.flags, mr.size / 1048576.0,
@@ -1742,7 +1798,7 @@ static void img_diag(const vktl_in *in, uint64_t lim, uint64_t imgs, const vktl_
 void vka_tex_cache_stats(char *b, size_t n) {   // the `ctl stats` line's texture-cache state (vka_ctl.c): the same numbers as img_diag, plus the counters since start
     vktl_cfg c = img_cfg();
     pthread_mutex_lock(&g_tmu);
-    vktl_in in = {.img_bytes = g_img_bytes + vka_imem_zbytes(), .ws_bytes = g_img_ws};
+    vktl_in in = {.img_bytes = g_img_bytes + vka_imem_zbytes() + vka_imem_fbytes(), .ws_bytes = g_img_ws};
     int fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
     if (fd >= 0) { char buf[2048]; ssize_t r = read(fd, buf, sizeof buf - 1); close(fd);
                    if (r > 0) { buf[r] = 0; in.mem_total = meminfo_kb(buf, "MemTotal:") << 10; in.mem_avail = meminfo_kb(buf, "MemAvailable:") << 10; } }
@@ -1761,7 +1817,7 @@ static void img_limit_update(uint64_t cur_frame) {   // caller holds g_tmu
     g_img_pinned = env > 0;
     if (g_img_lim && cur_frame < g_lim_frame + (g_psi.pressed ? 15 : 60)) return;
     g_lim_frame = cur_frame;
-    uint64_t imgs = g_img_bytes + vka_imem_zbytes();
+    uint64_t imgs = g_img_bytes + vka_imem_zbytes() + vka_imem_fbytes();
     vktl_in in = {.img_bytes = imgs, .psi_some10 = -1};
     if (env <= 0) {
         int fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
@@ -1816,7 +1872,7 @@ static void vka_tex_prune_locked(void) {
     vktl_cfg cfg = img_cfg();
     img_limit_update(cur_frame);
     int pressed = g_psi.pressed;
-    uint64_t limit_bytes = g_img_lim, total_bytes = g_img_bytes + vka_imem_zbytes();
+    uint64_t limit_bytes = g_img_lim, total_bytes = g_img_bytes + vka_imem_zbytes() + vka_imem_fbytes();
     // DM_VK_PRUNE_MS=<ms> (0, the default: all at once): the most replay-thread time a frame gives to evictions. A prune takes the cache from its limit down a sixteenth,
     // about 900 images in Mario Kart World at a 2300 MiB limit, and that took 0.8-1.2 s in one frame on Turnip (Adreno 740; each race lap met one). With a budget the
     // evictions go on in the next frames (g_prune_more) until the target is reached; the cache is over its limit by what was made meanwhile
@@ -1869,14 +1925,14 @@ static void vka_tex_prune_locked(void) {
     for (int k = 0; k < nc && total_bytes > target; k++) {
         if (budget_ns && vktl_budget_spent(budget_ns, k, prune_ns + (now_ns() - t_prune))) { cut = 1; break; }
         if (vktl_guard_ws(&cfg, pinned, total_bytes, (uint64_t)c[k].im->bytes, g_img_ws)) continue;
-        uint64_t before = g_img_bytes + vka_imem_zbytes();
+        uint64_t before = g_img_bytes + vka_imem_zbytes() + vka_imem_fbytes();
         if (c[k].gpu) {   // (only under hard memory pressure: the image comes back empty, so say so)
             static _Atomic int ng;
             if (atomic_fetch_add(&ng, 1) < 8) VRED("image cache: GPU-written image serial %llu %ux%u format %#x evicted under memory pressure: it is made again empty when the game uses it",
                                                    (unsigned long long)c[k].im->serial, c[k].im->w, c[k].im->h, c[k].im->d.format);
         }
         img_evict_locked(c[k].im);
-        uint64_t after = g_img_bytes + vka_imem_zbytes(), b = before > after ? before - after : 0;
+        uint64_t after = g_img_bytes + vka_imem_zbytes() + vka_imem_fbytes(), b = before > after ? before - after : 0;
         pruned++; bytes_freed += b; total_bytes = after; last_age = cur_frame - c[k].last;   // (skipped candidates break the array's order: not c[pruned - 1])
     }
     if (budget_ns) { prune_ns += now_ns() - t_prune; g_prune_more = cut; }
@@ -1914,7 +1970,7 @@ static vka_img *level_child(const tex_t *t, const vka_fmt *f) {
         if (!off || off > (uintptr_t)t->mem) continue;
         const uint8_t *pm = t->mem - off; int lk; unsigned kk = 0;
         for (vka_img *p = live_first(pm, &lk); p; p = live_next(p, pm, &lk)) {
-            if (p->par || p->base || p->rs || p->soft || p->m.z || p->is_video || p->pdead || img_pool_dead(p) || p->f.vk != f->vk || p->layers != 1 || p->samples != 1 ||
+            if (p->par || p->base || p->rs || p->soft || p->m.z || p->m.fam || p->is_video || p->pdead || img_pool_dead(p) || p->f.vk != f->vk || p->layers != 1 || p->samples != 1 ||
                 k + cn > p->levels || !nvn_tex_level_of(&p->d, &t->d, off, &kk) || kk != k) continue;
             vka_img *c = calloc(1, sizeof *c);
             if (!c) return NULL;
@@ -1987,13 +2043,34 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
         int mode = 0;
         int soft = 0;
         uint64_t t_new = 0;
+        uint32_t fam_fresh = 0; VkImage fam_probe = VK_NULL_HANDLE; vka_imem fam_probe_m = {0};
         if (!im) {
             t_new = now_ns();
             vka_tex_prune_locked();
             mode = first_mode(t, &f, cpuw_take(t->serial, 0));
             soft = !base && soft_want(t, &f, mode);
-            g_zwant = mode == ST_ZERO && !(t->d.flags & NVN_TEXTURE_FLAGS_IMAGE);   // (size: vkz_candidate)
+            memset(&g_fam, 0, sizeof g_fam);
+            if (VKA_ENV("DM_VK_FAM_SHARE", 1) && mode == ST_ZERO && !base && !soft && !compressed(&f) && t->pool && t->mem) {
+                unsigned pf = 0; int psp = 0; uint64_t pgen = nvn_pool_live(t->pool, &pf, &psp);
+                if (pgen && vkf_candidate(1, 1, t->has_layout, pf, psp, t->d.flags, t->d.target, t->d.depth, t->d.levels, t->d.samples, t->d.stride)) {
+                    uint32_t mw = (uint32_t)t->d.width, mh = (uint32_t)t->d.height, mf = (uint32_t)t->d.flags;
+                    int is_fam = vkf_desc_query(&g_fam_desc, (uint64_t)(uintptr_t)t->pool, pgen, t->off, (uint32_t)t->d.format,
+                                                (uint32_t)t->d.width, (uint32_t)t->d.height, (uint32_t)t->d.flags, &mw, &mh, &mf);
+                    if (!is_fam) {
+                        int fk;
+                        for (vka_img *o = live_first(t->mem, &fk); o && !is_fam; o = live_next(o, t->mem, &fk))
+                            if (o->m.fam && o->pool == t->pool && o->pgen == pgen && o->f.vk == f.vk) is_fam = 1;
+                    }
+                    if (is_fam) {
+                        g_fam.on = 1; g_fam.pool = (uint64_t)(uintptr_t)t->pool; g_fam.pgen = pgen; g_fam.off = t->off;
+                        g_fam.max_w = mw; g_fam.max_h = mh; g_fam.or_flags = mf;
+                    }
+                }
+            }
+            g_zwant = !g_fam.on && mode == ST_ZERO && !(t->d.flags & NVN_TEXTURE_FLAGS_IMAGE);   // (size: vkz_candidate)
             im = img_create(t, &f, soft ? soft_levels(d_levels_of(t)) : base);
+            fam_fresh = (uint32_t)g_fam.fresh; fam_probe = g_fam.probe; fam_probe_m = g_fam.probe_m;
+            memset(&g_fam, 0, sizeof g_fam);
             g_zwant = 0;
             if (im && soft) soft_note(im, t);   // (a soft texture: from level 1, "Soft textures" above)
         }
@@ -2001,11 +2078,36 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
             im->vmin = vmin;
             live_add(im);
             big_note(im, t);
+            int fam_alias = im->m.fam && !fam_fresh;
+            int direct_cb = (ds_here(im, cb) || fam_alias) && cb && cb == vka_rp_cb() && !vka_rp_is_open();
             // Its first content through the upload batch when cb is the replay's (vka_dev.c "Upload batches"): staging that retires on the batch's own completion
-            VkCommandBuffer ucb = !ds_here(im, cb) && cb && cb == vka_rp_cb() && vka_up_on() ? vka_up_begin() : VK_NULL_HANDLE;
-            img_first_use(im, t, ucb ? ucb : cb, mode);
+            VkCommandBuffer ucb = !direct_cb && cb && cb == vka_rp_cb() && vka_up_on() ? vka_up_begin() : VK_NULL_HANDLE;
+            VkCommandBuffer rc = ucb ? ucb : cb;
+            fam_probe_t *fp = im->m.fam && fam_fresh && fam_probe ? calloc(1, sizeof *fp) : NULL;
+            if (fam_alias) {
+                if (rc) vka_img_barrier(rc, im->img, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+                im->inited = 1; im->mode = ST_ZERO;
+            } else if (im->m.fam && fam_fresh && fam_probe && fp) {
+                if (rc) {
+                    vka_img_barrier(rc, fam_probe, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+                    VkImageSubresourceRange rg = {im->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+                    if (im->f.kind >= 3) { VkClearDepthStencilValue z = {0, 0}; vk.vkCmdClearDepthStencilImage(rc, fam_probe, VK_IMAGE_LAYOUT_GENERAL, &z, 1, &rg); }
+                    else { VkClearColorValue z = {{0}}; vk.vkCmdClearColorImage(rc, fam_probe, VK_IMAGE_LAYOUT_GENERAL, &z, 1, &rg); }
+                    vka_barrier(rc);
+                    vka_img_barrier(rc, im->img, im->aspect, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+                }
+                fp->img = fam_probe; fp->m = fam_probe_m;
+                vka_after(vka_fence_last() + 1, fam_probe_destroy, fp);
+                fam_probe = VK_NULL_HANDLE;
+                im->inited = 1; im->mode = ST_ZERO; g_st_up[ST_ZERO]++;
+            } else {
+                if (fam_probe) { vk.vkDestroyImage(V.dev, fam_probe, NULL); vka_imem_free(&fam_probe_m); fam_probe = VK_NULL_HANDLE; free(fp); }
+                img_first_use(im, t, rc, mode);
+            }
             if (ucb) { vka_up_point(vka_up_cur(ucb)); vka_up_end(); }   // (an upload of many pieces, upload_mt, checks the batch budget only here)
             throttle = ucb != VK_NULL_HANDLE;
+        } else if (fam_probe) {
+            vk.vkDestroyImage(V.dev, fam_probe, NULL); vka_imem_free(&fam_probe_m); fam_probe = VK_NULL_HANDLE;
         }
         if (t_new) { atomic_fetch_add_explicit(&g_new_ns, now_ns() - t_new, memory_order_relaxed); atomic_fetch_add_explicit(&g_new_n, 1, memory_order_relaxed); }
     }
@@ -2036,12 +2138,13 @@ vka_img *vka_tex_ref(vka_img *im) { if (im) { pthread_mutex_lock(&g_tmu); im->re
 void vka_tex_drop_pool(const void *pool) {
     if (!pool) return;
     pthread_mutex_lock(&g_tmu);
+    vkf_desc_drop_pool(&g_fam_desc, (uint64_t)(uintptr_t)pool);
     int ndrop = 0;
     uint64_t bytes_dropped = 0;
     for (int i = 0; i < g_nlive; ) {
         vka_img *im = g_live[i];
         if (im->pool == pool) {
-            bytes_dropped += im->m.size;
+            bytes_dropped += im->bytes;
             ndrop++;
             map_del_im(im);
             im->refs = 1;
@@ -2238,7 +2341,15 @@ static int tex_obj_holds(uintptr_t obj, uint64_t serial) {   // read through the
     tex_t seen; dm_guest_read_mapped(&seen, obj, sizeof seen);
     return seen.magic == MAGIC('T', 'E', 'X', 0) && seen.serial == serial;
 }
-void mtl_tex_init(const tex_t *t) { if (!t || !t->serial) return; pthread_mutex_lock(&g_tmu); vto_own(&g_tex_own, t->serial, t); pthread_mutex_unlock(&g_tmu); }
+void mtl_tex_init(const tex_t *t) {
+    if (!t || !t->serial) return;
+    unsigned pf = 0; int psp = 0; uint64_t pgen = t->pool ? nvn_pool_live(t->pool, &pf, &psp) : 0;
+    pthread_mutex_lock(&g_tmu);
+    vto_own(&g_tex_own, t->serial, t);
+    if (pgen && vkf_candidate(t->pool != NULL, t->mem != NULL, t->has_layout, pf, psp, t->d.flags, t->d.target, t->d.depth, t->d.levels, t->d.samples, t->d.stride))
+        vkf_desc_put(&g_fam_desc, t->serial, (uint64_t)(uintptr_t)t->pool, pgen, t->off, (uint32_t)t->d.format, (uint32_t)t->d.flags, (uint32_t)t->d.width, (uint32_t)t->d.height);
+    pthread_mutex_unlock(&g_tmu);
+}
 void mtl_tex_release(tex_t *t) {
     pthread_mutex_lock(&g_tmu);
     if (!vto_release(&g_tex_own, t->serial, t, tex_obj_holds)) {
@@ -2246,6 +2357,7 @@ void mtl_tex_release(tex_t *t) {
         if (k <= 4 || !(k & (k - 1))) VLOG("texture serial %llu: Finalize of a copy of its texture object, the original still holds it: its image stays (%llu so far)", (unsigned long long)t->serial, (unsigned long long)k);
         pthread_mutex_unlock(&g_tmu); return;
     }
+    vkf_desc_del(&g_fam_desc, t->serial);
     smap_ent *e = map_get(t->serial); vka_img *im = e ? e->im : NULL;
     if (e) map_del(t->serial);
     cpuw_take(t->serial, 0);

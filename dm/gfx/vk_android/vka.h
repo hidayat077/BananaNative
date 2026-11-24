@@ -272,10 +272,16 @@ typedef struct {
 int vka_fmt_of(int nvn_format, vka_fmt *f);         // 0 = no Vulkan format (logged once per format)
 // An image's memory (vka_imgmem.c): space in a shared block (blk, at off, units of 256 bytes) or a dedicated allocation (blk NULL, off 0); size = its memory requirements' size
 // z: zero-shared memory (vka_imem_bind_zero; dm is the shared allocation, freed with its last image)
-typedef struct { VkDeviceMemory dm; uint64_t off, size; void *blk; uint32_t units; int z; } vka_imem;
+// fam: resolution-family shared memory (vka_famshare.h; dm is the family's allocation, freed with its last alias)
+#include "vka_famshare.h"
+typedef struct { VkDeviceMemory dm; uint64_t off, size; void *blk; uint32_t units; int z, fam; } vka_imem;
 VkResult vka_imem_bind(VkImage img, uint32_t type, const VkMemoryRequirements *mr, vka_imem *m);   // allocated and bound, or the error with nothing allocated
 VkResult vka_imem_bind_zero(VkImage img, uint32_t type, const VkMemoryRequirements *mr, const void *key, uint32_t klen, vka_imem *m, int *fresh);   // bound to the zeroed allocation of its key (vka_zshare.h)
+VkResult vka_imem_bind_fam_existing(VkImage img, const vkf_key *k, const VkMemoryRequirements *mr, vka_imem *m, uint64_t *alloc_size);
+VkResult vka_imem_bind_fam_new(VkImage img, const vkf_key *k, uint64_t alloc_size, const VkMemoryRequirements *mr, vka_imem *m);
+VkResult vka_imem_bind_fam_alias(VkImage img, VkDeviceMemory dm, uint64_t img_size, vka_imem *m);
 uint64_t vka_imem_zbytes(void); uint64_t vka_imem_zbytes_nolock(void);   // bytes of the zero-shared allocations
+uint64_t vka_imem_fbytes(void); uint64_t vka_imem_fbytes_nolock(void);   // bytes of the family-shared allocations
 void vka_imem_zowned(void);   // a zero-shared image got memory of its own (vka_tex.c img_own): counted for the stats line
 void vka_imem_free(vka_imem *m);   // after vkDestroyImage, once the GPU is done with the image
 void vka_imem_stats(char *b, size_t n);

@@ -95,6 +95,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_shlib
 	$(B)/t_android_imgmem
 	$(B)/t_android_zshare
+	$(B)/t_android_famshare
 	$(B)/t_android_texlimit
 	$(B)/t_android_tstick
 	$(B)/t_android_lowram
@@ -471,7 +472,7 @@ coverage:
 	LLVM_PROFILE_FILE="$(call cov_profile,$(B)/cov)" $(MAKE) -i B=$(B)/cov SAN="$(COV_FLAGS)" run
 	@$(call cov_export,$(B)/cov)
 # The Android host's pure parts (dm/host/android): resampler, channel map, SPS size, MediaCodec picture layouts; gamepad / touch / sensor mapping
-run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_aff $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail
+run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_famshare $(B)/t_android_texlimit $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_aff $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail
 $(B)/t_android_av: t_android_av.c ../android/av_android.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. $(WEAK_HOST) -o $@ t_android_av.c
 $(B)/t_android_input: t_android_input.c ../android/input_map.c ../android/input_map.h ../../gfx/vk_android/vka_present_fit.h ../motion_fusion.h ../dm_input.h | $(B)
@@ -488,6 +489,9 @@ $(B)/t_android_imgmem: t_android_imgmem.c $(VKA)/vka_extents.h | $(B)
 # Zero-shared image memory's bookkeeping (vka_zshare.h; vka_imgmem.c vka_imem_bind_zero, vka_tex.c img_own)
 $(B)/t_android_zshare: t_android_zshare.c $(VKA)/vka_zshare.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_zshare.c
+# Resolution-family physical image memory sharing (vka_famshare.h; vka_imgmem.c, vka_tex.c)
+$(B)/t_android_famshare: t_android_famshare.c $(VKA)/vka_famshare.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_famshare.c
 # The texture cache's limit and eviction order (vka_texlimit.h; vka_tex.c vka_tex_prune_locked)
 $(B)/t_android_texlimit: t_android_texlimit.c $(VKA)/vka_texlimit.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_texlimit.c
