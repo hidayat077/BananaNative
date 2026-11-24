@@ -1985,6 +1985,59 @@ static vka_img *level_child(const tex_t *t, const vka_fmt *f) {
     return NULL;
 }
 
+// A GPU compute shader may write 4x4 BC1-7 blocks into an uncompressed UINT storage image (R32G32B32A32_UINT for 16 B/block BC3/BC5/BC7/BC6H or R32G32_UINT for 8 B/block
+// BC1/BC4, ceil(w/4) x ceil(h/4)) over the same pool address as a w x h BC texture. Vulkan forbids uncompressed storage views over block-compressed images, so same_shape
+// creates separate VkImages; these helpers propagate the GPU-written blocks from the uncompressed storage image into the aliased BC image in both creation orders.
+static int bc_alias_match(const vka_img *s, const uint8_t *dmem, const nvn_texdesc *dd, const vka_fmt *df) {
+    if (!s || !s->mem || s->par || s->is_video || s->samples != 1 || img_pool_dead((vka_img *)s)) return 0;
+    if (s->f.kind > 2 || s->f.bw != 1 || s->f.bh != 1 || (s->f.bpb != 8 && s->f.bpb != 16)) return 0;
+    if (!(s->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) return 0;
+    if (!dmem || dmem != s->mem || !dd || !df) return 0;
+    if (df->kind > 2 || df->bw != 4 || df->bh != 4 || df->bpb != s->f.bpb || dd->samples > 1) return 0;
+    uint32_t dw = dd->width ? dd->width : 1, dh = dd->height ? dd->height : 1;
+    uint32_t sw = s->d.width ? s->d.width : 1, sh = s->d.height ? s->d.height : 1;
+    if (sw != (dw + 3) / 4 || sh != (dh + 3) / 4) return 0;
+    uint32_t dl = dd->target == NVN_TEXTURE_TARGET_3D ? 1 : (dd->depth ? dd->depth : 1);
+    uint32_t dz = dd->target == NVN_TEXTURE_TARGET_3D && dd->depth ? dd->depth : 1;
+    return s->layers == dl && s->depth == dz;
+}
+static int bc_alias_match_img(const vka_img *s, const vka_img *d) {
+    return d && d != s && !d->par && !d->is_video && !img_pool_dead((vka_img *)d) && (d->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+        && bc_alias_match(s, d->mem, &d->d, &d->f);
+}
+static int bc_copy_levels(vka_img *s, vka_img *d, VkCommandBuffer cb, uint32_t lv0, uint32_t nlv, uint32_t l0, uint32_t nl) {
+    int copied = 0, is3d = d->depth > 1;
+    for (uint32_t k = 0; k < nlv; k++) {
+        uint32_t lv = lv0 + k;
+        if (lv < s->base || lv - s->base >= s->levels) continue;
+        if (lv < d->base || lv - d->base >= d->levels) {
+            if (lv < d->base) {
+                static _Atomic int n;
+                if (atomic_fetch_add(&n, 1) < 8)
+                    VLOG("BC alias: BC serial %llu (%ux%u fmt %#x) skipped level %u because image base is %u",
+                         (unsigned long long)d->serial, d->d.width, d->d.height, d->d.format, lv, d->base);
+            }
+            continue;
+        }
+        uint32_t slv = lv - s->base, dlv = lv - d->base;
+        uint32_t sw = (s->d.width >> lv) ? (s->d.width >> lv) : 1, sh = (s->d.height >> lv) ? (s->d.height >> lv) : 1;
+        uint32_t dw = (d->d.width >> lv) ? (d->d.width >> lv) : 1, dh = (d->d.height >> lv) ? (d->d.height >> lv) : 1;
+        if (sw != (dw + 3) / 4 || sh != (dh + 3) / 4) continue;
+        uint32_t dmax = is3d ? ((d->depth >> dlv) ? (d->depth >> dlv) : 1) : d->layers;
+        if (l0 >= dmax) continue;
+        uint32_t cnt = nl && l0 + nl <= dmax ? nl : (dmax - l0);
+        if (!cnt) continue;
+        VkImageSubresourceLayers ss = {VK_IMAGE_ASPECT_COLOR_BIT, slv, is3d ? 0 : l0, is3d ? 1 : cnt};
+        VkImageSubresourceLayers ds = {VK_IMAGE_ASPECT_COLOR_BIT, dlv, is3d ? 0 : l0, is3d ? 1 : cnt};
+        VkOffset3D so = {0, 0, is3d ? (int32_t)l0 : 0}, doff = {0, 0, is3d ? (int32_t)l0 : 0};
+        VkExtent3D ex = {sw, sh, is3d ? cnt : 1};
+        VkImageCopy rc = {ss, so, ds, doff, ex};
+        vk.vkCmdCopyImage(cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &rc);
+        copied++;
+    }
+    return copied;
+}
+
 vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
     if (!t || !t->serial || !vka_ok()) return NULL;
     pthread_mutex_lock(&g_tmu);
@@ -2036,7 +2089,17 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
             if (t->pool && (im->pool != t->pool || revived)) { uint64_t fin = nvn_pool_fin(), g = nvn_pool_live(t->pool, NULL, NULL); if (g) { im->pool = t->pool; im->pfin = fin; im->pgen = g; im->cpu_vis = !(t->pool->flags & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL)) ? 1 : 0; } } }
         if (!im) im = level_child(t, &f);   // (a texture over mip levels of a live image: that image)
         if (im && !im->par) big_share(im, t);   // (another texture object of the same storage and shape: DM_VK_BIGIMG_MB diagnostic)
-        uint32_t vmin = 0, base = sparse_sampled(t, &f) ? sparse_base(t->pool, t->mem, &t->d, &t->L, &vmin) : 0;
+        vka_img *bc_src = NULL;
+        if (!im && t->mem && f.kind <= 2 && f.bw == 4 && f.bh == 4 && (f.bpb == 8 || f.bpb == 16) && VKA_ENV("DM_VK_BC_ALIAS", 1)) {
+            int blk;
+            for (vka_img *o = live_first(t->mem, &blk); o; o = live_next(o, t->mem, &blk)) {
+                if (o->gpu_owned && bc_alias_match(o, t->mem, &t->d, &f)) {
+                    bc_src = o; bc_src->refs++; bc_src->holds++;
+                    break;
+                }
+            }
+        }
+        uint32_t vmin = 0, base = !bc_src && sparse_sampled(t, &f) ? sparse_base(t->pool, t->mem, &t->d, &t->L, &vmin) : 0;
         int mode = 0;
         int soft = 0;
         uint64_t t_new = 0;
@@ -2044,8 +2107,8 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
             t_new = now_ns();
             vka_tex_prune_locked();
             mode = first_mode(t, &f, cpuw_take(t->serial, 0));
-            soft = !base && soft_want(t, &f, mode);
-            g_zwant = mode == ST_ZERO && !(t->d.flags & NVN_TEXTURE_FLAGS_IMAGE);   // (size: vkz_candidate)
+            soft = !base && !bc_src && soft_want(t, &f, mode);
+            g_zwant = !bc_src && mode == ST_ZERO && !(t->d.flags & NVN_TEXTURE_FLAGS_IMAGE);   // (size: vkz_candidate)
             im = img_create(t, &f, soft ? soft_levels(d_levels_of(t)) : base);
             g_zwant = 0;
             if (im && soft) soft_note(im, t);   // (a soft texture: from level 1, "Soft textures" above)
@@ -2054,12 +2117,32 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
             im->vmin = vmin;
             live_add(im);
             big_note(im, t);
-            // Its first content through the upload batch when cb is the replay's (vka_dev.c "Upload batches"): staging that retires on the batch's own completion
-            VkCommandBuffer ucb = !ds_here(im, cb) && cb && cb == vka_rp_cb() && vka_up_on() ? vka_up_begin() : VK_NULL_HANDLE;
+            // Its first content through the upload batch when cb is the replay's (vka_dev.c "Upload batches"): staging that retires on the batch's own completion.
+            // An image seeded from an in-flight GPU-written storage image (bc_src) stays on cb so its copy is ordered after the compute dispatch in cb.
+            VkCommandBuffer ucb = !bc_src && !ds_here(im, cb) && cb && cb == vka_rp_cb() && vka_up_on() ? vka_up_begin() : VK_NULL_HANDLE;
             img_first_use(im, t, ucb ? ucb : cb, mode);
             if (ucb) { vka_up_point(vka_up_cur(ucb)); vka_up_end(); }   // (an upload of many pieces, upload_mt, checks the batch budget only here)
             throttle = ucb != VK_NULL_HANDLE;
+            if (bc_src && cb && (im->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+                if (im->m.z) img_own(im, cb);
+                vka_barrier(cb);
+                uint32_t nl = bc_src->depth > 1 ? bc_src->depth : bc_src->layers;
+                int copied = bc_copy_levels(bc_src, im, cb, bc_src->base, bc_src->levels, 0, nl);
+                if (copied > 0) {
+                    vka_barrier(cb);
+                    im->gpu_owned = 1;
+                    im->vmin = 0;
+                    uint64_t fnow = vka_fence_last();
+                    if (bc_src->last_fence < fnow) bc_src->last_fence = fnow;
+                    static _Atomic int nbc_init;
+                    if (atomic_fetch_add(&nbc_init, 1) < 16)
+                        VLOG("BC alias init: BC serial %llu (%ux%u fmt %#x) filled from storage serial %llu (%ux%u fmt %#x, %d levels)",
+                             (unsigned long long)im->serial, im->w, im->h, im->d.format,
+                             (unsigned long long)bc_src->serial, bc_src->w, bc_src->h, bc_src->d.format, copied);
+                }
+            }
         }
+        if (bc_src) { im_unhold_locked(bc_src); unref_locked(bc_src); }
         if (t_new) { atomic_fetch_add_explicit(&g_new_ns, now_ns() - t_new, memory_order_relaxed); atomic_fetch_add_explicit(&g_new_n, 1, memory_order_relaxed); }
     }
     if (im) { im->last_frame = vka_frame(); im->last_fence = vka_fence_last(); }
@@ -3243,6 +3326,63 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
         vk.vkUpdateDescriptorSets(V.dev, 1, &wr, 0, NULL);
     }
     return vw;
+}
+void vka_tex_id_bc_sync(int id, VkCommandBuffer cb) {
+    if (!cb || id <= 0 || !VKA_ENV("DM_VK_BC_ALIAS", 1)) return;
+    pthread_mutex_lock(&g_tmu);
+    if (id >= g_ntreg || !g_treg[id].t.serial) { pthread_mutex_unlock(&g_tmu); return; }
+    treg_ent e = g_treg[id];
+    smap_ent *se = map_get(e.t.serial);
+    vka_img *s = se ? se->im : NULL;
+    if (!s || s->par || !s->mem || s->is_video || s->samples != 1 || s->f.kind > 2 || s->f.bw != 1 || s->f.bh != 1
+        || (s->f.bpb != 8 && s->f.bpb != 16) || !(s->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || img_pool_dead(s)) {
+        pthread_mutex_unlock(&g_tmu);
+        return;
+    }
+    const view_t *v = e.has_v ? &e.v : NULL;
+    uint32_t lv0 = v && v->set_levels ? v->base_level : 0;
+    int is3d = s->d.target == NVN_TEXTURE_TARGET_3D;
+    uint32_t dmax = is3d ? ((s->d.depth >> lv0) ? (s->d.depth >> lv0) : 1) : s->layers;
+    uint32_t l0 = v && v->set_layers ? v->min_layer : 0;
+    uint32_t nl = v && v->set_layers && v->nlayers ? v->nlayers : (l0 < dmax ? dmax - l0 : 1);
+    vka_img *dsts[16]; int ndst = 0, lk;
+    for (vka_img *o = live_first(s->mem, &lk); o && ndst < 16; o = live_next(o, s->mem, &lk)) {
+        if (!bc_alias_match_img(s, o)) continue;
+        o->refs++; o->holds++;
+        dsts[ndst++] = o;
+    }
+    if (!ndst) { pthread_mutex_unlock(&g_tmu); return; }
+    s->refs++; s->holds++;
+    pthread_mutex_unlock(&g_tmu);
+
+    vka_barrier(cb);
+    int any_copied = 0;
+    for (int k = 0; k < ndst; k++) {
+        vka_img *d = dsts[k];
+        vka_tex_own(d, cb);
+        int copied = bc_copy_levels(s, d, cb, lv0, 1, l0, nl);
+        if (copied > 0) {
+            any_copied = 1;
+            vka_img_written(d);
+            pthread_mutex_lock(&g_tmu);
+            if (d->vtrack && lv0 < d->vmin) {
+                d->vmin = lv0;
+                redirty_ids(d);
+                atomic_fetch_add_explicit(&g_tgen, 1, memory_order_release);
+            }
+            uint64_t fnow = vka_fence_last();
+            if (s->last_fence < fnow) s->last_fence = fnow;
+            pthread_mutex_unlock(&g_tmu);
+            static _Atomic int nbc;
+            if (atomic_fetch_add(&nbc, 1) < 16)
+                VLOG("BC alias sync: storage serial %llu (%ux%u fmt %#x lv %u) -> BC serial %llu (%ux%u fmt %#x)",
+                     (unsigned long long)s->serial, s->w, s->h, s->d.format, lv0,
+                     (unsigned long long)d->serial, d->w, d->h, d->d.format);
+        }
+    }
+    if (any_copied) vka_barrier(cb);
+    for (int k = 0; k < ndst; k++) vka_tex_drop(dsts[k]);
+    vka_tex_drop(s);
 }
 vka_img *vka_tex_id_img(int id, VkCommandBuffer cb) {   // the image of texture ID id (DM_VK_NANSCAN), NULL = none
     pthread_mutex_lock(&g_tmu);

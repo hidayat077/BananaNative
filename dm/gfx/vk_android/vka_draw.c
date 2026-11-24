@@ -3609,6 +3609,9 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
         else vk.vkCmdDispatch(g_cb, (uint32_t)dp->x, (uint32_t)dp->y, (uint32_t)dp->z);
     }
     disp_count(sh[5]->key, dp->caller, dp->ind ? 0 : (uint64_t)(dp->x > 0 ? dp->x : 0) * (uint64_t)(dp->y > 0 ? dp->y : 0) * (uint64_t)(dp->z > 0 ? dp->z : 0));
+    for (int i = 0; i < g_wk.n[5]; i++)
+        if (g_wk.r[5][i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && (g_wk.r[5][i].flags & DMSH_VK_BF_RW) && g_wk.r[5][i].tid)
+            vka_tex_id_bc_sync(g_wk.r[5][i].tid, g_cb);
     if (sb || vka_nan_on() || VKA_ENV("DM_VK_DISPATCH_ORDER", 0)) vka_barrier(g_cb);   // (a spill: frees the shared memory spill buffer for the next dispatch)
     else {   // "Dispatch order": recorded before the next GPU work that is not a dispatch, unless a barrier comes first
         VkCommandBuffer was = atomic_exchange(&vka_disp_pend, g_cb);
