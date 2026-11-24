@@ -1,4 +1,4 @@
-# Builds the test-app APK with Pokemon Z-A, Zelda TotK, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy and DRAGON BALL: Sparking! ZERO (title IDs below); add a game by adding its ID to nxGames.
+# Builds the test-app APK with Pokemon Z-A, Zelda TotK, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO and Luigi's Mansion 3 (title IDs below); add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F43008C44000,0100F2C0115B6000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000
+  nxGames: 0100F43008C44000,0100F2C0115B6000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000
 
 jobs:
   apk:
@@ -82,8 +82,8 @@ jobs:
         run: ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} apk
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nxnative-android-apk
-          path: android/app/out/nxnative-android.apk
+          name: polar-android
+          path: android/app/out/polar-android.apk
 
 # The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
 # generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \

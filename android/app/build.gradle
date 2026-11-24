@@ -234,7 +234,7 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId nxLive ? 'dev.polar.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.nxnative.android'
+        applicationId nxLive ? 'dev.polar.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.polar.android'
         resValue 'string', 'app_name', nxPlay || nxLive ? 'Polar' : nxApp ? nxLabel : 'Polar test'
         minSdk nxMinSdk
         targetSdk 35
@@ -282,7 +282,7 @@ android {
     // The icon's variant badge: a "T" dot on the test app, none on the play app (res/drawable/ic_launcher_badge*.xml)
     sourceSets {
         main {
-            res.srcDirs += nxPlay || nxLive ? 'src/variant-play/res' : 'src/variant-test/res'
+            res.srcDirs += nxApp ? 'src/variant-test/res' : 'src/variant-play/res'
             java.srcDirs += 'src/ondevice/java'
         }
         // The service and its permissions, merged over the main manifest (a build type's manifest is an overlay)
@@ -376,12 +376,12 @@ def nxFont = tasks.register('nxExtFont') {
 android.sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/nxextfont/assets'))
 tasks.named('preBuild') { dependsOn nxFont }
 
-// ./gradlew apk → out/nxnative-android.apk (-PnxPlay=true: nxnative-android-play.apk; -PnxApp=<suffix>: nxnative-android-<suffix>.apk)
+// ./gradlew apk → out/polar-android.apk (-PnxPlay=true: nxnative-android-play.apk; -PnxApp=<suffix>: nxnative-android-<suffix>.apk)
 tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'
     from(layout.buildDirectory.dir('outputs/apk/release')) { include '*.apk' }
     into layout.projectDirectory.dir('out')
-    rename { nxLive ? "polar-${nxVersion}${nxMinSdk < 33 ? '-android12' : ''}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
+    rename { nxLive ? "polar-${nxVersion}${nxMinSdk < 33 ? '-android12' : ''}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'polar-android.apk' }
 }
 
 // The on-device packer's native side (android/ONDEVICE.md "In the APK"; not with -PnxPackEngine=fake). android/ondevice/build.sh makes its stage on the Mac;

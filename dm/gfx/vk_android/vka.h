@@ -46,6 +46,7 @@
     X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDispatchBase) \
     X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) X(vkCmdSetPrimitiveTopology) \
     X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
+    X(vkCmdSetAttachmentFeedbackLoopEnableEXT) \
     X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdSetDepthBiasEnable) \
     X(vkCmdSetRasterizerDiscardEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetBlendConstants) X(vkCmdSetLineWidth) \
     X(vkCmdPushDescriptorSetKHR) X(vkCmdSetVertexInputEXT) X(vkCmdPushConstants) X(vkCmdDrawMeshTasksEXT) X(vkCmdDrawMeshTasksIndirectEXT) \
@@ -114,10 +115,12 @@ typedef struct {
     // memu: NVN2 task and mesh draws drawn through compute (vka_memu.c): by default where the device lacks meshShader or taskShader, DM_VK_MESH_EMU=1 on any device, =0
     // never (restart). cs_groups: maxComputeWorkGroupCount[0]
     int memu; uint32_t cs_groups;
+    int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (DM_VK_FB_LOOP=0 leaves them off): a draw sampling its own attachment says so (vka_draw.c)
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
     uint32_t subgroup_req_stages;                   // VkShaderStageFlags a pipeline may pin the subgroup size in (requiredSubgroupSizeStages; 0 without subgroupSizeControl)
+    int subgroup_quad;                              // VK_SUBGROUP_FEATURE_QUAD_BIT (quad operations; in the fragment stage wherever it has subgroup operations)
     // The driver (VkPhysicalDeviceDriverProperties.driverID: VK_DRIVER_ID_QUALCOMM_PROPRIETARY, VK_DRIVER_ID_MESA_TURNIP, ...). A per-driver default keys on this and on
     // feature queries, never on the driver's name; each such default keeps its DM_VK_* switch (android/README.md "Custom GPU drivers")
     int driver_id;
@@ -288,8 +291,10 @@ typedef struct vka_img {
     int refs, inited, gpu_owned, cpu_dirty;
     int is_video;
     uint64_t last_frame;
+    uint64_t write_frame;    // last frame marked GPU-written (vka_tex.c fam_evict_locked)
     uint64_t pool_frame;     // the last prune that found a live texture pool slot naming it (vka_tex_prune_locked): shaders may read it through the pool, so it is in use
     uint64_t last_fence;
+    uint8_t fam_elig;        // eligible for resolution-family superseding eviction (vka_famshare.h)
     int no_storage;          // remaking it with storage use was refused (img_storage_upgrade): not tried again
     int holds;               // references taken from outside the recording thread (vka_tex_acquire / vka_tex_ref: the present, frame generation, capture), which read img unlocked: the image is not remade while held (img_storage_upgrade)
     // Content from guest storage (vka_tex.c storage_mode): track = re-uploaded when the CPU writes its pages (write-protected after each upload, nvn_dirty.c),
@@ -448,6 +453,8 @@ int vka_tex_id_class_rec(int id);                   // the same, memoized for th
 VkSampler vka_samp_id_rec(int id);
 VkSampler vka_samp_id(int id);                      // sampler ID id; VK_NULL_HANDLE = not registered
 VkSampler vka_samp_default(void);                   // the sampler an unbound sampler slot reads with (nearest, clamp to edge)
+uint32_t vka_tex_fb_loop_take(void);                // attachment aspects sampled at an attached level of the open pass since the last call, then cleared
+void vka_tex_fb_loop_or(uint32_t mask);             // restore cached feedback loop aspects for a memoized stage write
 
 // ---------- Shaders (vka_shader.c) ----------
 // The game's Vulkan shader library, <pack>/shaders/v-<DMSH_VK_CHAIN>/dmsh_vk.lib (DM_VK_SHLIB overrides the path), loaded at the first program the replay resolves.

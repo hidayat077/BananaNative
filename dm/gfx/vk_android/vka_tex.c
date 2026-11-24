@@ -19,6 +19,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include "vka_zshare.h"
+#include "vka_famshare.h"
 #include "vka_gml.h"
 #include "vka_texlimit.h"
 #include "vka_lowram.h"
@@ -194,6 +195,11 @@ static uint64_t g_img_bytes;
 static uint64_t g_img_made_n, g_img_made_b, g_img_evict_n, g_img_evict_b;
 static vksoft_set g_soft_hard; static uint64_t g_soft_n, g_soft_bytes, g_soft_made, g_soft_whole;   // (under g_tmu) soft textures ("Soft textures" below): live, the storage bytes left out, made, made whole
 static int g_zwant;   // (under g_tmu) img_create_ may make a zero-shared image: vka_tex_get's new image whose content is ST_ZERO ("Zero-shared images" below)
+_Static_assert(VKF_POOL_CPU_NO_ACCESS == NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS && VKF_TARGET_2D == NVN_TEXTURE_TARGET_2D, "vka_famshare pool/target constants");
+_Static_assert(VKF_TEX_DISPLAY == NVN_TEXTURE_FLAGS_DISPLAY && VKF_TEX_VIDEO_DECODE == NVN_TEXTURE_FLAGS_VIDEO_DECODE && VKF_TEX_IMAGE == NVN_TEXTURE_FLAGS_IMAGE
+               && VKF_TEX_COMPRESSIBLE == NVN_TEXTURE_FLAGS_COMPRESSIBLE && VKF_TEX_LINEAR == NVN_TEXTURE_FLAGS_LINEAR && VKF_TEX_SPARSE == NVN_TEXTURE_FLAGS_SPARSE
+               && VKF_TEX_LINEAR_RT == NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET && VKF_TEX_MINIMAL_LAYOUT == NVN_TEXTURE_FLAGS_MINIMAL_LAYOUT, "vka_famshare tex flag constants");
+static uint64_t g_fam_evict_n, g_fam_evict_b;   // resolution-family siblings evicted after being superseded by a GPU write (under g_tmu)
 
 // The images' memory for the stats line: all of it, and the part whose content the GPU wrote (render targets, copy and storage destinations); the rest was filled from the
 // texture's storage in guest memory, which stays in its memory pool, so those bytes are held twice
@@ -582,17 +588,21 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
             *why = 3; free(im); return NULL; }
         fl = sfl;
     }
-    // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered): 2D / 2D-array views of slices need this (Vulkan 1.1 maintenance1)
-    if (is3d && (u & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+    // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered), and NVN TextureViews of a 3D texture may override target to 2D / 2D_ARRAY for sampling or image use (Vulkan 1.1 maintenance1)
+    if (is3d && (u & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT))) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
     // Zero-shared images (below): a large GPU-content image the caller makes (g_zwant: vka_tex_get, its content ST_ZERO) is made to alias the zeroed memory of its create info
     int zs = g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", 4.0) * 1048576.0),
                                                                     vkz_max(f->kind >= 3, V.driver_id == VK_DRIVER_ID_MESA_TURNIP, (int64_t)VKA_ENVF("DM_VK_ZSHARE_MAX_MB", -1.0)), res, im->samples, is3d, compressed(f),
                                                                     (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_DISPLAY)) != 0);
     if (zs) fl |= VK_IMAGE_CREATE_ALIAS_BIT;
     VkImageType it = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    if (V.fb_loop && !res && (u & VK_IMAGE_USAGE_SAMPLED_BIT) && (u & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)))
+        u |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     VkImageFormatProperties ip;
-    for (int k = 0; k < 3 && vk.vkGetPhysicalDeviceImageFormatProperties(V.pd, f->vk, it, VK_IMAGE_TILING_OPTIMAL, u, fl, &ip); k++)
-        u &= k == 0 ? ~(VkImageUsageFlags)VK_IMAGE_USAGE_STORAGE_BIT : ~(VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    for (int k = 0; k < 4 && vk.vkGetPhysicalDeviceImageFormatProperties(V.pd, f->vk, it, VK_IMAGE_TILING_OPTIMAL, u, fl, &ip); k++)
+        u &= k == 0 ? ~(VkImageUsageFlags)VK_IMAGE_USAGE_STORAGE_BIT :
+             k == 1 ? ~(VkImageUsageFlags)VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT :
+             ~(VkImageUsageFlags)(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT);
     im->usage = u; im->cflags = fl; im->nvf = (uint32_t)nfl; memcpy(im->vf, fls, sizeof im->vf);   // (fls: 2 + VKFL_MAX entries, as vf)
     VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .pNext = nfl ? &fli : NULL, .flags = fl, .imageType = it, .format = f->vk, .extent = {im->w, im->h, im->depth}, .mipLevels = im->levels,
         .arrayLayers = im->layers, .samples = (VkSampleCountFlagBits)im->samples, .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = u, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
@@ -624,7 +634,7 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
     } else zs = 0;
     if (!im->m.dm && (r = vka_imem_bind(im->img, mt, &mr, &im->m))) {   // a run of a shared block, or a dedicated allocation (vka_imgmem.c)
         VRED("texture serial %llu: %llu bytes of image memory not allocated (%d; %.0f MiB in %d images, %llu image allocations, at most %u allocations)", (unsigned long long)t->serial,
-             (unsigned long long)mr.size, r, g_img_bytes / 1048576.0, g_nlive, (unsigned long long)vka_imem_allocations(), V.props.limits.maxMemoryAllocationCount);
+             (unsigned long long)mr.size, r, vka_tex_mem_nolock(NULL) / 1048576.0, g_nlive, (unsigned long long)vka_imem_allocations(), V.props.limits.maxMemoryAllocationCount);
         vk.vkDestroyImage(V.dev, im->img, NULL); free(im); return NULL;
     }
     if (zs) {   // its bytes are the shared allocation's, counted once (vka_tex_mem)
@@ -632,8 +642,18 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)
             VLOG("zero-shared image: texture serial %llu %ux%u layers %u levels %u format %#x flags %#x: %.1f MiB of zeroed memory %s (memory of its own at its first write)", (unsigned long long)t->serial,
                  im->w, im->h, im->layers, im->levels, d->format, d->flags, mr.size / 1048576.0, fresh ? "made for its create info" : "shared with images of the same create info");
-    } else { im->bytes = mr.size; g_img_bytes += mr.size; vka_mem_grew(mr.size); }
-    g_img_made_n++; g_img_made_b += im->bytes ? im->bytes : fresh ? mr.size : 0;   // (a zero-shared image's bytes are the shared allocation's: counted once, when it is made)
+        g_img_made_n++; g_img_made_b += fresh ? mr.size : 0;
+    } else {
+        im->bytes = mr.size; g_img_bytes += mr.size; vka_mem_grew(mr.size);
+        g_img_made_n++; g_img_made_b += im->bytes;
+    }
+    {
+        unsigned pf = 0; int psp = 0; uint64_t pgen = t->pool ? nvn_pool_live(t->pool, &pf, &psp) : 0;
+        im->fam_elig = (!res && !base && !im->is_video && !im->vpool && !compressed(f) && pgen && t->mem
+                        && im->layers == 1
+                        && vkf_candidate(1, 1, t->has_layout, pf, psp,
+                                         d->flags, d->target, im->depth, im->layers, im->levels, im->samples, d->stride)) ? 1 : 0;
+    }
     if (mr.size >= (VkDeviceSize)(VKA_ENVF("DM_VK_BIGIMG_MB", 64.0) * 1048576.0)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)   // large images, for memory walls
         VLOG("large image: texture serial %llu %ux%ux%u layers %u levels %u (base %u) samples %u format %#x target %d flags %#x: %.1f MiB of image memory (storage %.1f MiB at %p, pool flags %#x)",
              (unsigned long long)t->serial, im->w, im->h, im->depth, im->layers, im->levels, im->base, im->samples, t->d.format, t->d.target, t->d.flags, mr.size / 1048576.0,
@@ -1672,6 +1692,39 @@ static void img_evict_locked(vka_img *im) {
     im->refs = 1;
     unref_locked(im);
 }
+// When a GPU-only resolution variant is written at (pool, pgen, mem, vk_fmt), other resolution variants at the same pool storage have their Switch
+// content superseded. Evicting idle siblings past their GPU fence frees dynamic-resolution allocations without VK_IMAGE_CREATE_ALIAS_BIT. Caller holds g_tmu.
+static void fam_evict_locked(vka_img *im, uint64_t cur_frame) {
+    if (!VKA_ENV("DM_VK_FAM_EVICT", 1) || !im || !im->fam_elig || im->par || im->m.z || im->pdead || !im->pool || !im->pgen || !im->mem || cur_frame < VKF_MIN_AGE) return;
+    enum { FAM_SCAN_MAX = 128 };
+    vka_img *cand[FAM_SCAN_MAX]; vkf_sib sb[FAM_SCAN_MAX]; int n = 0; int lk;
+    for (vka_img *o = live_first(im->mem, &lk); o && n < FAM_SCAN_MAX; o = live_next(o, im->mem, &lk)) {
+        if (o == im || !o->fam_elig || o->par || o->m.z || o->pdead || o->is_video || o->pool != im->pool || o->pgen != im->pgen || o->f.vk != im->f.vk) continue;
+        if (o->w == im->w && o->h == im->h) continue;
+        cand[n] = o;
+        sb[n] = (vkf_sib){o->last_frame, o->last_fence, o->holds, (int)o->nkids, o->wb_pending};
+        n++;
+    }
+    if (n <= VKF_KEEP_SIBLINGS) return;
+    uint8_t ev[FAM_SCAN_MAX];
+    if (!vkf_select_evict(sb, n, cur_frame, vka_done(), VKF_KEEP_SIBLINGS, ev)) return;
+    int evicted = 0; uint64_t freed_bytes = 0;
+    for (int i = 0; i < n; i++) {
+        if (!ev[i]) continue;
+        uint64_t b = cand[i]->bytes;
+        img_evict_locked(cand[i]);
+        evicted++; freed_bytes += b;
+        g_img_evict_n++; g_img_evict_b += b;
+        g_fam_evict_n++; g_fam_evict_b += b;
+    }
+    if (evicted) {
+        static _Atomic uint64_t nl; uint64_t k = atomic_fetch_add(&nl, 1) + 1;
+        if (k <= 8 || !(k & (k - 1)))
+            VLOG("family-evict: texture serial %llu %ux%u format %#x superseded %d sibling(s) (%.1f MiB freed; %llu evicted, %.1f MiB total)",
+                 (unsigned long long)im->serial, im->w, im->h, im->d.format, evicted, freed_bytes / 1048576.0,
+                 (unsigned long long)g_fam_evict_n, g_fam_evict_b / 1048576.0);
+    }
+}
 // The texture cache's limit (vka_texlimit.h): measured from the device every 60 frames (15 under memory pressure), or DM_VK_IMG_LIMIT_MB. Images over it are evicted least recently
 // used first, never one used in this frame or the last, and never one of the working set (the scene's own images, which evicting only makes the next frames upload again); a working
 // set larger than the limit stays (logged), as uploading it again every frame costs far more than the memory
@@ -2041,7 +2094,7 @@ void vka_tex_drop_pool(const void *pool) {
     for (int i = 0; i < g_nlive; ) {
         vka_img *im = g_live[i];
         if (im->pool == pool) {
-            bytes_dropped += im->m.size;
+            bytes_dropped += im->bytes;
             ndrop++;
             map_del_im(im);
             im->refs = 1;
@@ -2268,15 +2321,20 @@ void vka_img_written_at(vka_img *im, const char *file, int line) {
     if (!im->gpu_owned && im->m.size >= big_min()) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 64)   // large images: the first GPU write (DM_VK_BIGIMG_MB)
         VLOG("large image serial %llu %ux%u layers %u format %#x (%.1f MiB): first GPU write at frame %llu (%s:%d), sampled by %u draws before, %u other textures over its storage", (unsigned long long)im->serial,
              im->w, im->h, im->layers, im->d.format, im->m.size / 1048576.0, (unsigned long long)vka_frame(), file, line, im->nsamp, im->novl); }
+    uint64_t cur_frame = vka_frame();
+    int new_write_frame = im->write_frame != cur_frame;
     im->gpu_owned = 1;
+    im->write_frame = cur_frame;
+    if (im->last_frame < cur_frame) im->last_frame = cur_frame;
     im->last_fence = vka_fence_last();
     if (img_wb_kind(im)) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32)   // which GPU writes a copied-back linear texture takes (the copy-back covers the whole image)
         VLOG("linear texture serial %llu %ux%u format %#x: GPU write at frame %llu (%s:%d)%s", (unsigned long long)im->serial, im->w, im->h, im->d.format,
-             (unsigned long long)vka_frame(), file, line, im->wb_pending ? ", a copy-back already queued" : ""); }
+             (unsigned long long)cur_frame, file, line, im->wb_pending ? ", a copy-back already queued" : ""); }
     if (img_wb_kind(im) && !im->wb_pending) {
         if (g_nwb == g_wbcap) { g_wbcap = g_wbcap ? 2 * g_wbcap : 32; g_wb = realloc(g_wb, (size_t)g_wbcap * sizeof *g_wb); }
         im->wb_pending = 1; im->refs++; g_wb[g_nwb++] = im;
     }
+    if (new_write_frame && im->fam_elig) fam_evict_locked(im, cur_frame);
     pthread_mutex_unlock(&g_tmu);
 }
 // Block-linear colour render targets in CPU-visible pools mirrored back into guest storage (docs/reference/nvn-objects.md
@@ -2791,6 +2849,9 @@ static VkComponentSwizzle swz1(int n) { return n >= 0 && n <= 5 ? (VkComponentSw
 // each drawn from the one above through a view of the whole chain; sampling the attached level is a feedback loop Vulkan leaves undefined (on Adreno: NaN texels, which bloom
 // spread into white blotches and black speckles over the whole level)
 static vka_img *g_fb_im[9]; static uint32_t g_fb_lv[9]; static int g_nfb;
+static _Thread_local uint32_t t_fb_loop;
+uint32_t vka_tex_fb_loop_take(void) { uint32_t m = t_fb_loop; t_fb_loop = 0; return m; }
+void vka_tex_fb_loop_or(uint32_t mask) { t_fb_loop |= mask; }
 void vka_tex_feedback(vka_img *const *ims, const uint32_t *levels, int n) { g_nfb = n > 9 ? 9 : n; for (int i = 0; i < g_nfb; i++) { g_fb_im[i] = ims[i]; g_fb_lv[i] = levels[i]; } }
 static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int storage, VkFormat ovr) {
     vka_fmt f; const view_t *v = e->has_v ? &e->v : NULL;
@@ -2799,14 +2860,20 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     if (im->vtrack && !storage && l0 < im->vmin) { uint32_t cut = im->vmin - l0; nl = nl > cut ? nl - cut : 1; l0 = im->vmin; }   // a sparse texture: from its wholly mapped levels
     vksoft_view(im->base, &l0, &nl);   // texture levels → the image's (a sparse texture's left-out levels, a soft texture's level 0)
     l0 += im->lvk;   // (a level child: from its parent's level lvk)
-    uint32_t a0 = v && v->set_layers ? v->min_layer : 0, na = v && v->set_layers && v->nlayers ? v->nlayers : im->layers - a0;
-    if (im->d.target == NVN_TEXTURE_TARGET_3D) { a0 = 0; na = 1; }   // a 3D texture's view range names slices (a render target view's), which a 3D view does not take
-    if (l0 >= im->levels || a0 >= im->layers) return VK_NULL_HANDLE;
+    if (l0 >= im->levels) return VK_NULL_HANDLE;
+    int img3d = im->d.target == NVN_TEXTURE_TARGET_3D;
+    uint32_t dmax = img3d ? (l0 < 32 && (im->depth >> l0) ? im->depth >> l0 : 1) : im->layers;
+    uint32_t a0 = v && v->set_layers ? v->min_layer : 0, na = v && v->set_layers && v->nlayers ? v->nlayers : (a0 < dmax ? dmax - a0 : 1);
+    if (a0 >= dmax) return VK_NULL_HANDLE;
     if (l0 + nl > im->levels) nl = im->levels - l0;
-    if (a0 + na > im->layers) na = im->layers - a0;
-    if (vt_want >= 0 && !storage) for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im && g_fb_lv[i] > l0 && g_fb_lv[i] < l0 + nl) {
-        static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], l0, nl);
-        nl = g_fb_lv[i] - l0; }
+    if (a0 + na > dmax) na = dmax - a0;
+    if (vt_want >= 0 && !storage) for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im) {
+        if (g_fb_lv[i] > l0 && g_fb_lv[i] < l0 + nl) {
+            static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], l0, nl);
+            nl = g_fb_lv[i] - l0;
+        }
+        if (g_fb_lv[i] >= l0 && g_fb_lv[i] - l0 < nl) t_fb_loop |= im->f.kind >= 3 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    }
     int tgt = v && v->set_target ? v->target : e->t.d.target;
     VkComponentMapping m = {0};
     if (storage) nl = 1;
@@ -2814,13 +2881,10 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     else if (e->t.set_swz) m = (VkComponentMapping){swz1(e->t.swz & 7), swz1(e->t.swz >> 3 & 7), swz1(e->t.swz >> 6 & 7), swz1(e->t.swz >> 9 & 7)};
     else { int fmt = v && v->set_format ? v->format : e->t.d.format; if (fmt == 0x37 || fmt == 0x6D || fmt == 0x6E || fmt == 0x6F || fmt == 0x70 || (fmt >= 0x71 && fmt <= 0x78) || fmt == 0x99 || fmt == 0x9B) m.a = VK_COMPONENT_SWIZZLE_ONE; }
     VkImageViewType vt = vt_want >= 0 ? (VkImageViewType)vt_want : view_type(tgt, na);
-    // What the image's type lets the view be (img_create: 3D for a 3D target, 1D for the 1D targets, cube-compatible for square 2D images of whole cubes)
-    int img3d = im->d.target == NVN_TEXTURE_TARGET_3D;
-    // A shader's 2D sampler bound to a 3D texture reads slice 0 on NVN. Tears of the Kingdom does this with the 8x8x8 format 0x3f volume of shader
-    // 9808aabbd3219e97; refusing the view left that slot unbound (zeros) and its ground tiles wrong. A 3D image made as (or usable as) an attachment
-    // has VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT, so vkCreateImageView takes a 2D view of slice 0; without the bit it simply fails as before.
+    // What the image's type lets the view be (img_create: 3D for a 3D target, 2D / 2D-array slice views of 3D images via 2D_ARRAY_COMPATIBLE_BIT, cube-compatible for square 2D images of whole cubes)
     if (vt == VK_IMAGE_VIEW_TYPE_1D || vt == VK_IMAGE_VIEW_TYPE_1D_ARRAY ||
-        (img3d ? vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
+        (img3d ? (vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
+    if (img3d && vt != VK_IMAGE_VIEW_TYPE_3D) nl = 1;   // Vulkan requires levelCount == 1 for 2D / 2D-array slice views of a 3D image
     if (vt == VK_IMAGE_VIEW_TYPE_CUBE || vt == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
         if (im->w != im->h || im->layers < 6 || im->layers % 6 || im->samples > 1 || na < 6) return VK_NULL_HANDLE;
         if (vt == VK_IMAGE_VIEW_TYPE_CUBE) na = 6; else na -= na % 6;
@@ -3142,6 +3206,8 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
         if (vf.bw != 1 || vf.bh != 1 || vf.bpb != 4 || im->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { pthread_mutex_lock(&g_tmu); im_unhold_locked(im); pthread_mutex_unlock(&g_tmu); return VK_NULL_HANDLE; }
         ovr = force;
     } else if (want != have && !(vf.kind >= 3 && want == 0)) {
+        // Never reinterpret an integer texture into a depth-compare shadow binding (e.g. a R32G32_UINT volume left in a sampler2DArrayShadow slot)
+        if ((dim & DMSH_VK_DIM_DEPTH) && have != 0) { pthread_mutex_lock(&g_tmu); im_unhold_locked(im); pthread_mutex_unlock(&g_tmu); return VK_NULL_HANDLE; }
         // Another class (a compute pass reading a UINT texture as float, or the reverse: Ocarina of Time's UI pass, R16G16_UINT): a view in the same-size format of the shader's
         // class when the image's format list takes it (learned on first use: vka_view, then the next images of this format and size are made with it). Not the bits' own class
         // otherwise: that reads as unbound

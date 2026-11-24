@@ -297,7 +297,7 @@ final class GameSettings {
         if (wide) content = split(a, outer, g, missing == null, keys, labels, t, close);   // the game and its tabs at the left, the tab's page at the right
         else {
             topBar(a, outer, g, missing == null, close);
-            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 4);
+            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 10);
             content = outer;
         }
         if (missing != null) Ui.add(content, Ui.small(a, missing), 12);
@@ -639,28 +639,23 @@ final class GameSettings {
         android.widget.FrameLayout.LayoutParams backLp = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.START);
         backLp.setMargins(Ui.dp(a, 10), Ui.dp(a, 10), 0, 0);
         hero.addView(Ui.back(a, v -> close.run()), backLp);
-        if (play) {   // Play: a round blue button on the banner
-            ImageView b = new ImageView(a);
-            b.setImageDrawable(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_polar));
-            b.setPadding(Ui.dp(a, 10), Ui.dp(a, 10), Ui.dp(a, 6), Ui.dp(a, 10));   // the triangle looks centred a little right of its box
-            b.setBackground(Ui.round(Ui.col(a, R.color.bn_polar), Ui.dp(a, 999), 0, 0));
-            b.setContentDescription(Tx.s(R.string.common_play));
+        if (play) {   // Play: matches Back on the left (44 dp tonal rounded button on the banner)
+            ImageView b = Ui.iconButton(a, R.drawable.ic_play, Tx.s(R.string.common_play), Ui.Kind.TONAL, v -> a.launch(g));
             b.setTooltipText(Tx.s(R.string.common_play));
-            b.setClickable(true);
-            b.setFocusable(true);
-            b.setOnClickListener(v -> a.launch(g));
             android.widget.FrameLayout.LayoutParams pl = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.END);
             pl.setMargins(0, Ui.dp(a, 10), Ui.dp(a, 10), 0);
             hero.addView(b, pl);
         }
         outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 132)));
         LinearLayout bar = Ui.row(a);
+        bar.setMinimumHeight(Ui.dp(a, 52));
+        bar.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
         TextView tile = Ui.tile(a, g.name, 40);
         tile.setTextSize(18);
         bar.addView(tile);
         LinearLayout names = new LinearLayout(a);
         names.setOrientation(LinearLayout.VERTICAL);
-        names.setPadding(Ui.dp(a, 10), 0, 0, 0);
+        names.setPadding(Ui.dp(a, 10), 0, Ui.dp(a, 6), 0);
         TextView name = Ui.text(a, g.name, play ? 16 : 17, R.color.bn_text, 800);
         name.setMaxLines(play ? 2 : 1);   // Play ends a narrow bar: the name may take two lines
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -673,7 +668,7 @@ final class GameSettings {
         names.addView(meta);
         bar.addView(names, Ui.weight());
         bar.addView(Ui.more(a, Tx.s(R.string.game_game_options), v -> a.optionsMenu(g)), new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44)));
-        outer.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 48)));
+        Ui.add(outer, bar, 10, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
         Covers.show(tile, g);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {

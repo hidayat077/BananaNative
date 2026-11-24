@@ -56,3 +56,10 @@ uint32_t *vka_spv_input_remap(const uint32_t *w, size_t nw, uint64_t map, size_t
 // cannot be rewritten
 typedef struct { uint32_t binding, ubo_binding, off; } vka_tabpool;
 uint32_t *vka_spv_table_pool(const uint32_t *w, size_t nw, const vka_tabpool *t, int nt, uint32_t pool_set, uint32_t pool_binding, uint32_t max_id, size_t *out_nw, int *sites, char *err, size_t errn);
+// Preserve the rounding of scalar arithmetic feeding a direct FragDepth store (NoContraction). NULL if no decorations are needed.
+uint32_t *vka_spv_precise_depth(const uint32_t *words, size_t count, size_t *out_count);
+// A pixel shader's warp shuffles inside a quad (the translator's ShuffleXor helper with index 1, 2 or 3, or its Shuffle helper, under a mask that keeps every
+// source lane in its quad) made quad swaps and broadcasts (use_deriv == 0), or core fine derivatives over FragCoord parity (use_deriv != 0, for GPUs without fragment
+// subgroups or quad operations) (vka_spvpatch.c vka_spv_quad_shfl). A malloc'd copy (*out_nw words; *sites the calls replaced); NULL with err empty when there is none,
+// NULL with the reason in err when it cannot be rewritten
+uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t *out_nw, int *sites, char *err, size_t errn);

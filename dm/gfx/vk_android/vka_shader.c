@@ -412,6 +412,17 @@ static void gs_fill(uint64_t key, int stage, uint32_t **w, size_t *nb) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("geometry shader %016llx: emits a degenerate primitive where it would emit none (DM_VK_GS_FILL)", (unsigned long long)key);
     free(*w); *w = o; *nb = on * 4;
 }
+// A pixel shader's warp shuffles inside a quad rewritten as quad operations (Turnip with fragment quad ops) or core fine derivatives (GPUs without fragment subgroups
+// or quad ops, such as Adreno 650). DM_VK_QUAD_SHFL (restart): 1 on VK_DRIVER_ID_MESA_TURNIP or when core fine derivatives are needed, 0 on other drivers; 0 / 1 to choose.
+static void quad_shfl(uint64_t key, int stage, uint32_t **w, size_t *nb) {
+    if (stage != DMSH_VK_STAGE_FS) return;
+    int use_deriv = runs_one_lane(key, stage) || !V.subgroup_quad;
+    if (!VKA_ENV("DM_VK_QUAD_SHFL", use_deriv || V.driver_id == VK_DRIVER_ID_MESA_TURNIP)) return;
+    size_t on = 0; int sites = 0; char e[200] = ""; uint32_t *o = vka_spv_quad_shfl(*w, *nb / 4, use_deriv, &on, &sites, e, sizeof e);
+    if (!o) { if (e[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: warp shuffles inside a quad not made %s: %s", (unsigned long long)key, use_deriv ? "fine derivatives" : "quad operations", e); } return; }
+    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("pixel shader %016llx: %d warp shuffle%s inside a quad made %s (DM_VK_QUAD_SHFL)", (unsigned long long)key, sites, sites == 1 ? "" : "s", use_deriv ? "fine derivatives" : "quad operations");
+    free(*w); *w = o; *nb = on * 4;
+}
 // GLSL.std.450's InverseSqrt of a zero normal gives Inf on Vulkan and the next 0*Inf is NaN; clamp the operand (vka_spv_safe_rsqrt)
 static void safe_rsqrt(uint64_t key, uint32_t **w, size_t *nb) {
     size_t on = 0; int ch = 0; char e[256] = "";
@@ -422,6 +433,12 @@ static void safe_rsqrt(uint64_t key, uint32_t **w, size_t *nb) {
 }
 // The library's words for a module, made ready for this device: subgroups of one lane where the stage has none (single_lane), a geometry shader's empty runs filled (gs_fill)
 static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_t *nb) {
+    if (e->stage == DMSH_VK_STAGE_FS) {
+        size_t count = 0;
+        uint32_t *precise = vka_spv_precise_depth(*w, *nb / sizeof **w, &count);
+        if (precise) { free(*w); *w = precise; *nb = count * sizeof **w; }
+    }
+    if (e->flags & DMSH_VK_F_SUBGROUP) quad_shfl(key, e->stage, w, nb);
     if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
     gs_fill(key, e->stage, w, nb);
     safe_rsqrt(key, w, nb);
