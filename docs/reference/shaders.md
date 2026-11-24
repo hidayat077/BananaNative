@@ -211,6 +211,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Reader:** `kpka_jobs` maps the PAKs, takes the newest copy of each path, peeks at 4 decompressed bytes and inflates only SDF entries (`sdf_shaders`).
 - **Found on:** [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md): 63,111 shaders (30,233 vertex, 21,475 pixel, 11,271 compute, 53 geometry, 33 hull, 46 domain) and 102,345 pairs, in 5 s with 12 jobs.
 
+### Whole-file Oodle chunks in Hello Games' HGPAK archives
+
+- **Symptom:** the split reads all 99 RomFS `.pak` files and reports `shaders: 0`: no BNSH, BAHS, GLSLC magic or SPIR-V header appears anywhere in the uncompressed package data, even though the game's `main` imports `nv::InitializeGraphics` and draws with NVN.
+- **Cause:** the `.pak` files are Hello Games' HGPAK containers (version 2): a 0x30-byte header (file count, chunk count, compressed flag, data offset), a 32-byte-per-file index (`MD5(path)`, `offset`, `decompressed size`), an array of compressed chunk sizes, then data in 0x20000-byte Oodle chunks on Switch. The first member is the CRLF-separated path manifest. `NMSARC.Shaders.pak` holds 21,117 `.nvb` files whose bytes are only visible after Oodle decoding; a chunk whose data did not compress is stored whole at 0x20000 bytes and is not an Oodle stream.
+- **Fix:** `shader_split.py` recognises the `HGPAK\0\0\0` magic (`hgpak_jobs`, `hgpak_shaders`) and decodes chunks through `oodle()` (`DM_OODLE_OOZ` on a PC builder, the game's own decoder on the Mac). It reads the manifest first and only decodes the remaining chunks of a pak that names a `.nvb`, so the 1.65 GB audio pak is not inflated. Each `.nvb` is one NVN program (`nvb_shaders`): the control section begins with `0x98761234` and holds its own length at `+0x20` and the code area's at `+0x704`; the code area begins with `0x12345678` / `0x12345679` and its SPH word at `+0x30` gives the stage. A whole chunk is kept as-is instead of being sent to the decoder.
+- **Found on:** [No Man's Sky](../../dm/games/0100853015E86000/README.md): 10,349 distinct shaders (3,548 vertex, 6 geometry, 6,666 pixel, 129 compute) in one clean full split.
+
 ### Shader records in Snowdrop SDF data slices
 
 - **Symptom:** the split finds no shaders in a RomFS made of `.sdfdata`, `.sdftoc` and `.sdfver` files.

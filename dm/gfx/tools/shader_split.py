@@ -21,6 +21,7 @@
 #       ROMANCE OF THE THREE KINGDOMS 8 REMAKE's newer RDB keeps them in .fdata files (a PDRK header, then IDRK entries of zlib or LZ4 chunks)
 #   · SPKG (the older KTGL of Fire Emblem: Three Houses): shader packages of G2S containers, loose and inside the LINKDATA archive DATA0.bin / DATA1.bin, see kt_shaders and linkdata_jobs
 #   · SDF (Capcom's RE Engine, Monster Hunter Rise): shader definitions inside the PAK archives (KPKA, entries zstd / deflate compressed), only the newest copy of each path, see kpka_jobs and sdf_shaders
+#   · HGPAK (Hello Games, No Man's Sky): NVN shader binaries (.nvb) among the 21,117 members of NMSARC.Shaders.pak, each member stored in Oodle-compressed 0x20000-byte chunks, see hgpak_jobs, hgpak_shaders and nvb_shaders
 #   · Trinity packs (Game Freak, Pokémon Legends: Z-A): BNSH inside the files of arc/data.trpfs (Oodle Mermaid, decoded by the game's own decoder in the Mac host), see trpfs_jobs and trinity_shaders
 #   · SPK (Capcom's MT Framework, The Great Ace Attorney Chronicles): the shader package inside an ARC archive (zlib entries), code area + control section per shader, see mtarc_members and mtspk_shaders
 #   · BEA (NintendoWare Bezel Engine archives, Big Brain Academy: Brain vs. Brain): BNSH in the .bfsha entries of the archives (zstd entries), see bea_members
@@ -917,6 +918,8 @@ def linkdata_shaders(path, rel, rng, out):
             if n: kt_shaders(d[off:off + (stored if comp else n)], f'/{rel}#{i}', out)
 
 KPKA = b'KPKA'
+HGPAK = b'HGPAK\0\0\0'     # Hello Games' pak (No Man's Sky): an index of MD5-named files, then Oodle chunks on Switch
+HGPAK_CHUNK = 0x20000      # the decompressed size of one Oodle chunk of a Switch HGPAK
 KPKA_BLOCKS = 0x20         # header feature: a block table follows the entries
 KPKA_IN_BLOCKS = 0x1000000   # entry attribute: the entry's data is in the block table's blocks
 SDF_STAGES = ['vs', 'hs', 'ds', 'gs', 'ps', 'cs']   # an SDF entry's stage offsets, in BNSH order
@@ -998,6 +1001,85 @@ def sdf_layout(d, n, label):
     lay = [x for x in SDF_LAYOUTS if fits(x)]
     if len(lay) != 1: red(f'{label}: the SDF entries fit {len(lay)} of the {len(SDF_LAYOUTS)} known layouts')
     return lay[0]
+
+def hgpak_jobs(files):
+    """No Man's Sky's HGPAK archives (NMSARC*.pak): one job per pak whose header is a version-2 HGPAK, so a worker reads its index and only the chunks it needs instead of the whole RomFS.
+    The paks a job takes are left out of the plain files list; the rest of the RomFS keeps being scanned as before"""
+    jobs, taken = [], set()
+    for p, r in files:
+        if not p.endswith('.pak'): continue
+        try:
+            with open(p, 'rb') as f: h = f.read(0x30)
+        except OSError: continue
+        if len(h) < 0x30 or h[:8] != HGPAK: continue
+        ver, nfiles, nchunks, compressed, dataoff = struct.unpack_from('<QQQ?7xQ', h, 8)
+        size = os.path.getsize(p)
+        if ver != 2 or not nfiles or not 0x30 + 0x20 * nfiles + (8 * nchunks if compressed else 0) <= dataoff <= size: continue
+        jobs.append((p, r, (HGPAK,))); taken.add(p)
+    return jobs, taken
+
+def nvb_shaders(d, label):
+    """Hello Games' NVN shader binary (a .nvb member of NMSARC.Shaders.pak): one control section followed by its code area. The control magic is at the section's start,
+    its own length at +0x20 and the code area's length at +0x704; the code area starts at the graphics / compute header magic (0x12345678 / 0x12345679), with the SPH word at +0x30.
+    No file table is needed: the control and code magics and the two lengths are enough, as they are for the game's own nvnShaderData"""
+    out = []
+    for m in re.finditer(re.escape(CTL_MAGIC), d):
+        c = m.start()
+        if c + 0x708 > len(d): continue
+        nctl = struct.unpack_from('<I', d, c + 0x20)[0]
+        ncode = struct.unpack_from('<I', d, c + 0x704)[0]
+        if not (0x760 <= nctl <= 0x880) or not ncode or c + nctl > len(d): continue
+        starts = [d.find(magic, c + nctl) for magic in (bytes.fromhex('78563412'), bytes.fromhex('79563412'))]
+        k = min((x for x in starts if x >= 0), default=-1)
+        if k < 0 or k + ncode > len(d): continue
+        ctl, code = d[c:c + nctl], d[k:k + ncode]
+        st = glslc_stage(ctl, code)
+        why = check(label, st, ctl, code)
+        if why: red(f'{label}: control section @{c:#x}: {why}')
+        out.append((f'{label}#NVB@{c:#x}', st, ctl, code))
+    return out
+
+def hgpak_shaders(path, rel, out):
+    """Read a Switch HGPAK (No Man's Sky): header {magic, version 2, file count, chunk count, compressed, data offset}, file index {md5 name hash, offset, decompressed size},
+    then one Oodle stream per 0x20000-byte chunk (its stored size in the chunk index, rounded up to 16 bytes on disk). The first member is the manifest: CRLF-separated paths.
+    Only paks whose manifest names a .nvb are decoded past that member, so the game's 1.65 GB audio pak is not inflated. Each .nvb is read as an NVN shader binary"""
+    with open(path, 'rb') as f:
+        h = f.read(0x30)
+        if len(h) < 0x30 or h[:8] != HGPAK: return
+        ver, nfiles, nchunks, compressed, dataoff = struct.unpack_from('<QQQ?7xQ', h, 8)
+        if ver != 2: red(f'/{rel}: HGPAK version {ver}')
+        f.seek(0); tab = f.read(dataoff)
+    ents = [struct.unpack_from('<16sQQ', tab, 0x30 + 0x20 * i) for i in range(nfiles)]
+    if not ents or ents[0][2] < 2: return
+    moff, msize = ents[0][1] - dataoff, ents[0][2]
+    decoded = {}
+    if compressed:
+        sizes = struct.unpack_from(f'<{nchunks}Q', tab, 0x30 + 0x20 * nfiles)
+        where, at = [], dataoff
+        for s in sizes: where.append((at, s)); at += (s + 15) & ~15
+        def chunk(i):
+            if i not in decoded:
+                with open(path, 'rb') as f: f.seek(where[i][0]); comp = f.read(where[i][1])
+                decoded[i] = comp if len(comp) == HGPAK_CHUNK else oodle(comp, HGPAK_CHUNK)   # a chunk whose data did not compress is stored whole
+            return decoded[i]
+        def part(off, n):
+            first, last = off // HGPAK_CHUNK, (off + n - 1) // HGPAK_CHUNK
+            return b''.join(chunk(i)[off - i * HGPAK_CHUNK if i == first else 0:
+                                   off + n - i * HGPAK_CHUNK if i == last else HGPAK_CHUNK] for i in range(first, last + 1))
+        manifest = part(moff, msize)
+    else:
+        def part(off, n):   # an uncompressed pak's files are read where they lie: the 1.65 GB audio pak is never held in memory
+            with open(path, 'rb') as f: f.seek(dataoff + off); return f.read(n)
+        manifest = part(moff, msize)
+    names = manifest.rstrip(b'\r\n').split(b'\r\n')
+    nvbs = [i for i, name in enumerate(names) if name.endswith(b'.nvb')]
+    if not nvbs: return
+    for i in nvbs:
+        off, size = ents[i + 1][1] - dataoff, ents[i + 1][2]
+        if not off or not size or off + size > (nchunks * HGPAK_CHUNK if compressed else os.path.getsize(path) - dataoff):
+            red(f'/{rel}/{names[i].decode("utf-8", "replace")}: a file outside the pak data')
+        d = part(off, size)
+        out += nvb_shaders(d, f'/{rel}/{names[i].decode("utf-8", "replace")}')
 
 def sdf_shaders(d, label):
     """RE Engine shader definition ('SDF\\0'): u16 version 1, u16 entry count, then one of three layouts (sdf_layout picks the one the file's offsets fit). Each entry has six u64 offsets at +0x10
@@ -3458,6 +3540,9 @@ def scan_file_in(args):
     if len(args) > 2 and head[:4] == KPKA:   # entries of an RE Engine PAK (kpka_jobs)
         kpka_shaders(path, rel, args[2], found)
         return rel, uniq_keys(found), var_pairs(found), trees
+    if head[:8] == HGPAK:   # a No Man's Sky HGPAK, its .nvb members decoded from Oodle chunks (hgpak_jobs)
+        hgpak_shaders(path, rel, found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and head[:8] == SMASH_ARC:   # files of Super Smash Bros. Ultimate's data.arc (smash_arc_jobs)
         smash_arc_shaders(path, rel, args[2], found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -3997,6 +4082,7 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     want, only the jobs of those files are kept, in the full scan's order. nros: the game's runtime NROs (runtime_nros), where Camelot's archive keeps its file table"""
     big = [j for p, r in files for j in (linkdata_jobs(p, r) or [])]   # Three Houses' 6.9 GB DATA1.bin: one job per range of entries, not one read of the whole file
     pak_jobs, paks = kpka_jobs(files)   # Monster Hunter Rise's PAKs: the newest copy of each path, in ranges of entries
+    hg_jobs, hg_paks = hgpak_jobs(files)   # No Man's Sky's HGPAK archives, read chunk by chunk for their .nvb shaders
     tr_jobs, trp = trpfs_jobs(files)   # Pokémon Legends: Z-A's Trinity packs (data.trpfs and its index data.trpfd), decoded by the game's own Oodle in the Mac host
     ue_jobs, uep = ue_legacy_jobs(files, mains=mains)   # Unreal paks with inline shaders: DRAGON QUEST XI S's legacy ones (the game's own LZ5 in the Mac host), OCTOPATH TRAVELER II's (Zlib)
     bd_jobs, bdts = bdt_jobs(files)   # Dark Souls Remastered's dvdbnd archives: the entries of each .bdt by its .bhd5 index, in ranges
@@ -4012,8 +4098,8 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     ah_jobs, arhs = arh_jobs(files)   # Monolith's ARH1/ARD archives and embedded XBC1/HCPS programs
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
     pd_jobs, pdats = pdat_jobs(by_head)
-    big += pak_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats]
+    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats]
     if want is not None: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]
     return big, files
 
