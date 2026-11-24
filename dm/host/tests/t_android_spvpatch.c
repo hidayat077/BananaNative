@@ -351,7 +351,7 @@ int main(void) {
             0x00000048, 0x0004007c, 0x00000008, 0x00000060, 0x0000005e, 0x00060159, 0x00000009, 0x00000061, 0x0000001c, 0x0000005f, 0x00000060, 0x0004007c,
             0x00000007, 0x00000062, 0x00000061, 0x000600a9, 0x00000007, 0x00000063, 0x0000005b, 0x00000062, 0x00000048, 0x000200fe, 0x00000063, 0x00010038};
         size_t qn = sizeof QSHFL_FRAG / 4, qo = 0; int sites = 0; err[0] = 0;
-        uint32_t *x = vka_spv_quad_shfl(QSHFL_FRAG, qn, &qo, &sites, err, sizeof err);
+        uint32_t *x = vka_spv_quad_shfl(QSHFL_FRAG, qn, 0, &qo, &sites, err, sizeof err);
         CHECK(x && sites == 3, "quad shuffles: %d calls made quad operations (%s)", sites, err);
         if (x) {
             CHECK(count_op(x, qo, 366) == 2 && count_op(x, qo, 365) == 1, "two OpGroupNonUniformQuadSwap and one OpGroupNonUniformQuadBroadcast");
@@ -363,7 +363,23 @@ int main(void) {
             if (val) CHECK(validate(x, qo, "quad shuffles"), "valid SPIR-V");
             free(x);
         }
-        CHECK(!vka_spv_quad_shfl(tab_frag, sizeof tab_frag / 4, &qo, &sites, err, sizeof err) && !err[0] && !sites, "a module without shuffles is left alone, with no error");
+        x = vka_spv_quad_shfl(QSHFL_FRAG, qn, 1, &qo, &sites, err, sizeof err);
+        CHECK(x && sites == 3, "quad shuffles (deriv): %d calls made fine derivatives (%s)", sites, err);
+        if (x) {
+            CHECK(count_op(x, qo, 209) >= 2 && count_op(x, qo, 210) >= 2, "at least two OpDPdxFine and two OpDPdyFine (%d %d)", count_op(x, qo, 209), count_op(x, qo, 210));
+            CHECK(count_op(x, qo, 366) == 0 && count_op(x, qo, 365) == 0, "no quad subgroup ops emitted");
+            CHECK(count_op(x, qo, 57) == 1, "the BFLY 4 call is left as it is (deriv)");
+            if (val) CHECK(validate(x, qo, "quad shuffles deriv"), "valid SPIR-V (deriv)");
+            size_t sn = 0; int sch = 0;
+            uint32_t *sx = vka_spv_subgroup_single(x, qo, &sn, &sch, err, sizeof err);
+            CHECK(sx && sch, "quad shuffles (deriv) + single lane (%s)", err);
+            if (sx) {
+                if (val) CHECK(validate(sx, sn, "quad shuffles deriv + single lane"), "valid SPIR-V (deriv + single lane)");
+                free(sx);
+            }
+            free(x);
+        }
+        CHECK(!vka_spv_quad_shfl(tab_frag, sizeof tab_frag / 4, 0, &qo, &sites, err, sizeof err) && !err[0] && !sites, "a module without shuffles is left alone, with no error");
     }
     {   // A geometry shader writing only gl_Position between the selftest's vertex and pixel shaders (vka_spv_gs_link): the pixel input at location 0 added, copied
         size_t gn = sizeof SPV_PASS_GEOM / 4, vn = sizeof SPV_TRI_VERT / 4, fn = sizeof SPV_TRI_FRAG / 4; uint32_t cp = 0, nl = 0;
