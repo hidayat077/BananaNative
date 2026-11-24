@@ -12,7 +12,11 @@ typedef void (*fn0)(void); typedef void (*fn2)(uint64_t, uint64_t); typedef void
 static void *req(const char *n){ void *p=guest_sym(n); if(!p) die("missing symbol %s", n); return p; }
 
 // Game arguments: argv[0] is fixed to "game", and whatever follows "--" is appended as is (else the profile's game_args), then DM_GAME_ARGS_ADD's words (on a real device nn::init takes them from the process argument area and hands them to the SDK through SetHostArgc/Argv)
-static char *g_argv[64] = {"game"}; static int g_argc = 1;
+// The game may write into the argument strings (No Man's Sky lowercases each one in place at
+// main+0x1300e0); on the console they come from writable process memory. A literal would be in the
+// host's read-only .rodata and the write would fault (SEGV_MAPERR on libnxhost+0x92e70).
+static char g_argv0[] = "game";
+static char *g_argv[64] = {g_argv0}; static int g_argc = 1;
 
 static void guest_main(void) {
     guest_thread_init();

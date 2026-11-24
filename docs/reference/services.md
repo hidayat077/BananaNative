@@ -1332,3 +1332,12 @@ Most service calls can be found before they crash, before the first boot or the 
 - **Cause:** `PlayReport::Send` returns a nontrivial `AsyncContext` in the caller's x8 storage that expects an initialized state and connects to `prepo:u` if unhandled.
 - **Fix:** in `dm/host/hle_offline.c`, `h_prepo_SendU` invokes the guest's `nn::prepo::AsyncContext::AsyncContext(Result)` constructor with `RES_OK` via x8, completing the asynchronous telemetry report offline without requiring a service session.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+## Game arguments
+
+### An argument string the host keeps read-only
+
+- **Symptom:** `CRASH sig=11` soon after `>>> nnMain`, code 1 (SEGV_MAPERR), a **write** into an address in `libnxhost_<id>.so`'s `r--p` mapping (`fault maps` shows the host library, not guest memory). No host `[RED]` line before it. No Man's Sky: `pc=main+0x1300e0`, `lr=main+0x1300dc`, the fault address `libnxhost+0x92e70`, and the string bytes at it begin with `game`.
+- **Cause:** the host's `g_argv[0]` was the literal `"game"` (`dm/host/main.c`), so `nn::os::GetHostArgv` handed the guest a pointer into the host's read-only `.rodata`. On the console the arguments live in writable process memory. The game lowercases each argument in place (the decompiled loop at `main+0x130050`: `strlen` → `tolower` → `strb` back into the string), so the first byte written faults. Arguments added from the profile or `DM_GAME_ARGS_ADD` are already `strdup`'d and writable; only `argv[0]` was a literal.
+- **Fix:** make `argv[0]` a writable `static char[]` (`g_argv0` in `dm/host/main.c`) before passing `SetHostArgc` / `SetHostArgv` to the guest. No profile key or game-specific branch: this applies to every game that edits its argument strings.
+- **Found on:** [No Man's Sky](../../dm/games/0100853015E86000/README.md) (v5308416, SDK 20.5.17), first frame after the heap fix.
