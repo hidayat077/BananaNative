@@ -202,7 +202,7 @@ static void post(pop o) {
 enum { OQ_N = 16384, OQ_RB = 256 };   // queries in the ring; results read at a time
 static struct { VkQueryPool pool; int precise; PFN_vkCmdBeginQuery begin; PFN_vkCmdEndQuery end; PFN_vkResetQueryPool hreset; PFN_vkGetQueryPoolResults get; } OQ;
 static int g_oq = -1;                           // 1 counted; 0 the constant 1 (DM_VK_OCCLUSION=0, no device, no host query reset or no pool); -1 not decided yet
-static int g_oq_count, g_oq_fresh, g_oq_open;   // a samples-passed reset came (draws count); a reset since the last report (its count starts from 0); a query is active in the open pass
+static int g_oq_count, g_oq_fresh, g_oq_open, g_oq_reported;   // a samples-passed reset came (draws count); a reset since the last report (its count starts from 0); a query is active in the open pass; a report came since the last reset
 static uint32_t g_oq_lost;                      // draws of the segment that count 1 sample each (no query, or skipped by the replay)
 static uint64_t g_oq_head, g_oq_seg0;           // the next query's sequence number; the segment's first
 static _Atomic uint64_t g_oq_ready;             // queries below it are reset and may begin (the completion thread moves it on)
@@ -245,7 +245,7 @@ static void oq_reset(void) {   // OP_RESET_COUNTER(SAMPLES_PASSED)
     if (!oq_on()) return;
     oq_close(); vka_draw_run_break();
     if (g_oq_head > g_oq_seg0 && g_cb) post((pop){6, 0, 0, 0, 0, g_oq_seg0, g_oq_head});   // the queries since the last report: no report reads them (after a hang they are not given back)
-    g_oq_seg0 = g_oq_head; g_oq_count = 1; g_oq_fresh = 1; g_oq_lost = 0;
+    g_oq_seg0 = g_oq_head; g_oq_count = 1; g_oq_fresh = 1; g_oq_reported = 0; g_oq_lost = 0;
 }
 static int oq_report(uint64_t ad, uint32_t t) {   // OP_REPORT_COUNTER(SAMPLES_PASSED): 1 = counted (its segment goes to the completion thread), 0 = the constant 1
     g_oqs_rep++;
@@ -258,7 +258,7 @@ static int oq_report(uint64_t ad, uint32_t t) {   // OP_REPORT_COUNTER(SAMPLES_P
                 VKA_ENV("DM_VK_OQ_SPLIT_PASS", DM_GAME_OCCLUSION_SPLIT_PASS && V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY);
     oq_close(); vka_draw_run_break();   // (draws after it begin a new query; an instanced run is not extended across the report, even with no query open)
     post((pop){5, (uint32_t)g_oq_fresh, g_oq_lost, t, ad, g_oq_seg0, g_oq_head});
-    g_oq_seg0 = g_oq_head; g_oq_fresh = 0; g_oq_lost = 0;
+    g_oq_seg0 = g_oq_head; g_oq_fresh = 0; g_oq_reported = 1; g_oq_lost = 0;
     if (split) vka_rp_end();
     return 1;
 }
@@ -267,9 +267,20 @@ static void oq_lost(uint64_t skipped0) {   // after a draw while counting: one t
     uint64_t sk = 0; vka_draw_stats(NULL, &sk, NULL, NULL);
     if (sk > skipped0) { g_oq_lost++; g_oqs_skip++; }
 }
+// Drain pending occlusion queries at submission commit so queries recorded between a reset and a later report (or while idle after a report) are read back and reset instead
+// of filling the 16,384-query ring across frames, and pause counting after a report until the next reset so unrelated render passes pay no precise-query cost (DM_VK_OQ_PAUSE_IDLE=0 off).
+static void oq_sub_commit(void) {
+    if (!g_oq_count || !g_cb) return;
+    oq_close();
+    if (g_oq_head > g_oq_seg0) {
+        post((pop){9, (uint32_t)g_oq_fresh, g_oq_lost, 0, 0, g_oq_seg0, g_oq_head});
+        g_oq_seg0 = g_oq_head; g_oq_fresh = 0; g_oq_lost = 0;
+    }
+    if (g_oq_reported && VKA_ENV("DM_VK_OQ_PAUSE_IDLE", 1)) g_oq_count = 0;
+}
 static void oq_done(const pop *o, uint64_t ticks) {   // post_run, after the fence of the submission that recorded o
     pthread_mutex_lock(&g_oq_mu);
-    if (o->kind == 5) {
+    if (o->kind == 5 || o->kind == 9) {
         uint64_t sum = o->v, r[2 * OQ_RB];   // (the draws that count 1)
         for (uint64_t q = o->q0; q < o->q1;) {
             uint32_t s = (uint32_t)(q % OQ_N), k = (uint32_t)(o->q1 - q < OQ_N - s ? o->q1 - q : OQ_N - s); if (k > OQ_RB) k = OQ_RB;
@@ -280,8 +291,10 @@ static void oq_done(const pop *o, uint64_t ticks) {   // post_run, after the fen
         }
         if (o->mode) g_oq_acc = 0;
         g_oq_acc += sum;
-        if (!g_oq_acc) atomic_fetch_add_explicit(&g_oqs_zero, 1, memory_order_relaxed);
-        uint64_t rec[2] = {g_oq_acc, ticks}; memcpy((void *)(uintptr_t)o->addr, rec, sizeof rec);
+        if (o->kind == 5) {
+            if (!g_oq_acc) atomic_fetch_add_explicit(&g_oqs_zero, 1, memory_order_relaxed);
+            uint64_t rec[2] = {g_oq_acc, ticks}; memcpy((void *)(uintptr_t)o->addr, rec, sizeof rec);
+        }
     }
     if (o->q1 > o->q0) {   // given back, in order
         for (uint64_t q = o->q0; q < o->q1;) { uint32_t s = (uint32_t)(q % OQ_N), k = (uint32_t)(o->q1 - q < OQ_N - s ? o->q1 - q : OQ_N - s); OQ.hreset(V.dev, OQ.pool, s, k); q += k; }
@@ -361,7 +374,7 @@ static void post_run(void *ops_, int n) {   // the completion thread, in submiss
         if (nt && atomic_fetch_sub(&tslog, 1) > 0) VLOG("ts log: submission completes at %.2f ms, %d timestamp reports spanning %.2f ms (%s):%s ... last%s", fmod((double)g / 1e6, 100000.0), nt, (double)(last - first) / 1e6, g_sqp ? "segment" : "submission", b, lb); }
     for (int i = 0, q = 0; i < n; i++) {
         if (ops[i].kind == 4) { atomic_store(&g_rc_done, ops[i].addr); continue; }   // DM_VK_RC_LOG: this submission's reports up to here are written
-        if (ops[i].kind == 5 || ops[i].kind == 6) { oq_done(&ops[i], ticks); continue; }   // a counted samples-passed report, queries given back (Occlusion queries)
+        if (ops[i].kind == 5 || ops[i].kind == 6 || ops[i].kind == 9) { oq_done(&ops[i], ticks); continue; }   // a counted samples-passed report or idle drain, queries given back (Occlusion queries)
         if (ops[i].kind == 7) { atomic_store(&g_cal_post[(ops[i].q0 - 1) % 8], now_ns()); continue; }   // this slot's submission had its completion processed now
         if (ops[i].kind == 8) { vka_tex_blwb_done(ops[i].addr); continue; }   // block-linear colour targets mirrored back into guest storage
         if (ops[i].kind == 3) {   // the frame's span to here (the adaptive GPU clock floor)
@@ -840,6 +853,7 @@ static uint64_t sub_commit(uint64_t reserved, int has_sig, uint64_t signal) {
         if (tscal()) { g_cal_on[kc] = 1; g_cal_draws[kc] = (uint32_t)(g_stat_draws - g_sub_draws0); g_cal_sig[kc] = signal; }
     }
     if (g_cb && vka_tex_blwb_pending()) post((pop){8, 0, 0, 0, fence, 0});
+    if (g_cb) oq_sub_commit();
     pop *ops = g_npost ? malloc((size_t)g_npost * sizeof *ops) : NULL; if (ops) memcpy(ops, g_post, (size_t)g_npost * sizeof *ops);
     int n = g_npost; g_npost = 0;
     ops = carry_take(fence, signal, ops, &n);
