@@ -1116,7 +1116,7 @@ public final class MainActivity extends Activity {
         FrameLayout c = artTile(Ondevice.jobName(), st, new LinearLayout(this), v -> Ondevice.sheet(this));
         TextView tile = (TextView) c.getChildAt(0);
         File dump = Ondevice.jobDump();
-        if (dump != null) GameMeta.load(dump, m -> { if (m.icon != null) Ui.tileIcon(tile, m.icon); });
+        if (dump != null) GameMeta.load(dump, m -> { if (m != null && m.icon != null) Ui.tileIcon(tile, m.icon); });
         return c;
     }
 

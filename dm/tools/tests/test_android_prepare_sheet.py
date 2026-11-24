@@ -49,6 +49,14 @@ class PrepareSheet(unittest.TestCase):
     def test_tile_opens_the_sheet(self):
         self.assertIn('Ondevice.sheet(this)', MAIN)
 
+    def test_no_game_meta_cannot_fault_a_prepare_card(self):
+        # GameMeta.loadControl always calls back, including with null when the dump has no NACP / .nup meta
+        # (5429cfdd). Both Prepare tiles must handle that: m.icon / m.line() on null killed the main thread.
+        meta = (J / 'main/java/dev/nxnative/android/GameMeta.java').read_text()
+        self.assertIn('main.post(() -> done.accept(m));', meta)
+        self.assertRegex(ONDEVICE, r'(?s)GameMeta\.load\(job\.dump\(\), m -> \{.*?if \(m == null\) return;')
+        self.assertRegex(MAIN, r'(?s)GameMeta\.load\(dump, m -> \{[^}]*if \(m != null && m\.icon != null\)')
+
 
 if __name__ == '__main__':
     unittest.main()

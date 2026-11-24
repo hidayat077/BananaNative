@@ -719,6 +719,7 @@ final class Ondevice {
                 metaLine = null;
                 GameMeta.load(job.dump(), m -> {
                     if (!key.equals(placedFor)) return;
+                    if (m == null) return;   // no NACP / .nup meta: the placeholder cleared above stays, and m.line() below would fault
                     if (m.icon != null) Ui.tileIcon(tile, m.icon);
                     metaLine = m.line();
                     if (metaLine != null) show();
