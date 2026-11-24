@@ -1044,7 +1044,7 @@ NVN(nvnProgramFinalize, void, NVNprogram *p) {
 // ctl: an NVN2 stage's control section (its first 0xd8 bytes), copied at nvnProgramSetShaders (the guest's section is valid only during that call), for the Android shader layer
 // (vka_shader.c: a shader the library lacks is built from its control section and code); ctl_ok bit i = stage i has one
 #define PROG_CTL_LEN 0xd8
-typedef struct { uint8_t key[6][8]; uint8_t ok; uint8_t ctl_ok; uint8_t ctl[6][PROG_CTL_LEN]; } prog_keys_t;
+typedef struct { uint8_t key[6][8]; uint8_t alt_key[6][8]; uint8_t ok; uint8_t alt_ok; uint8_t ctl_ok; uint8_t ctl[6][PROG_CTL_LEN]; } prog_keys_t;
 static pthread_mutex_t g_pk_mu = PTHREAD_MUTEX_INITIALIZER; static plat_ptrmap_t *g_pk;   // a dedicated table (keys not shared with other side tables)
 static prog_keys_t *pk_get(const void *p, int make) {
     pthread_mutex_lock(&g_pk_mu);
@@ -1074,10 +1074,11 @@ void nvn_ctl_lens(const void *control, uint32_t *nctl, uint32_t *ncode) {
     memcpy(&own, c + 0x20, 4);
     *nctl = own >= 0x760 && own < 0x880 ? own : 0x880;
 }
-static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
+static int keys_hash_ex(const NVNshaderData *sd, int mapped, int zero_early_z, uint8_t out[8]) {
     uint32_t ncode = 0, nctl; void *mb; uint64_t mo;
     if (!sd->control) return 0;
     nvn_ctl_lens(sd->control, &nctl, &ncode);
+    if (zero_early_z && (nvn2_ctl(sd->control) || nctl <= 0x718 || ((const uint8_t *)sd->control)[0x718] == 0)) return 0;
     int code = sd->data && ncode && ncode < (1u << 24);
     if (mapped && !(code && (mtl_addr(sd->data, ncode, &mb, &mo) || nvn_shader_code_readable(sd->data, ncode)))) return 0;   // (a shader-code pool not placed: guest memory, read here as placed memory is)
     uint8_t md[32]; plat_sha256_t hc; plat_sha256_init(&hc);
@@ -1086,8 +1087,11 @@ static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
     if (nvn2_ctl(sd->control)) {
         uint8_t ctl[NVN2_KEY_CTL]; memcpy(ctl, sd->control, NVN2_KEY_CTL); memset(ctl + 0x30, 0, 4);
         plat_sha256_update(&hc, ctl, NVN2_KEY_CTL);
-    } else if (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl) {
-        uint8_t ctl[0x880]; memcpy(ctl, sd->control, nctl); memset(ctl + DM_GAME_SHADER_KEY_SKIP_OFF, 0, DM_GAME_SHADER_KEY_SKIP_LEN);
+    } else if (zero_early_z || (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl)) {
+        uint8_t ctl[0x880]; memcpy(ctl, sd->control, nctl);
+        if (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl)
+            memset(ctl + DM_GAME_SHADER_KEY_SKIP_OFF, 0, DM_GAME_SHADER_KEY_SKIP_LEN);
+        if (zero_early_z) ctl[0x718] = 0;   // some engines (No Man's Sky) flip early_fragment_tests (+0x718) at run time before nvnProgramSetShaders
         plat_sha256_update(&hc, ctl, nctl);
     } else plat_sha256_update(&hc, sd->control, nctl);
     if (code) plat_sha256_update(&hc, (const void *)(uintptr_t)sd->data, ncode);
@@ -1097,13 +1101,23 @@ static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
 int prog_key(const prog_t *p, unsigned st, uint8_t key[8]) {
     if (st >= p->nstage) return 0;
     prog_keys_t *k = pk_get(p, 1);
-    if (!(k->ok >> st & 1)) { keys_hash(&p->sd[st], 0, k->key[st]); k->ok |= (uint8_t)(1u << st); }
+    if (!(k->ok >> st & 1)) {
+        keys_hash_ex(&p->sd[st], 0, 0, k->key[st]); k->ok |= (uint8_t)(1u << st);
+        if (keys_hash_ex(&p->sd[st], 0, 1, k->alt_key[st])) k->alt_ok |= (uint8_t)(1u << st);
+    }
     memcpy(key, k->key[st], 8);
+    return 1;
+}
+int prog_key_alt(const prog_t *p, unsigned st, uint8_t key[8]) {
+    if (st >= p->nstage) return 0;
+    prog_keys_t *k = pk_get(p, 0);
+    if (!k || !(k->alt_ok >> st & 1)) return 0;
+    memcpy(key, k->alt_key[st], 8);
     return 1;
 }
 const uint8_t *nvn_prog_ctl(const prog_t *p, unsigned st) { prog_keys_t *k = st < 6 ? pk_get(p, 0) : NULL; return k && (k->ctl_ok >> st & 1) ? k->ctl[st] : NULL; }
 // The Android frame replayer (vka_replay.c): a captured program's stage keys (its shader data is not in the capture)
-void nvn_prog_keys_set(const prog_t *p, const uint8_t key[6][8], uint8_t ok) { prog_keys_t *k = pk_get(p, 1); memcpy(k->key, key, sizeof k->key); k->ok = ok; }
+void nvn_prog_keys_set(const prog_t *p, const uint8_t key[6][8], uint8_t ok) { prog_keys_t *k = pk_get(p, 1); memcpy(k->key, key, sizeof k->key); k->ok = ok; k->alt_ok = 0; }
 NVN(nvnProgramSetShaders, NVNboolean, NVNprogram *p, int n, const NVNshaderData *sd) {
     prog_t *o = (prog_t *)p;
     if (n < 0 || n > 6) { LOG("[RED] ProgramSetShaders stage count %d", n); return 0; }
@@ -1113,9 +1127,10 @@ NVN(nvnProgramSetShaders, NVNboolean, NVNprogram *p, int n, const NVNshaderData 
     static const char *trace; static int trace_init;
     if (!trace_init) { trace = getenv("DM_NVN_PROGTRACE"); trace_init = 1; }
     prog_keys_t *k = pk_get(p, 1);
-    k->ok = 0; k->ctl_ok = 0;
+    k->ok = 0; k->alt_ok = 0; k->ctl_ok = 0;
     for (int i = 0; i < n; i++) {
-        if (keys_hash(&sd[i], 1, k->key[i])) k->ok |= (uint8_t)(1u << i);
+        if (keys_hash_ex(&sd[i], 1, 0, k->key[i])) k->ok |= (uint8_t)(1u << i);
+        if (keys_hash_ex(&sd[i], 1, 1, k->alt_key[i])) k->alt_ok |= (uint8_t)(1u << i);
         if (sd[i].control && nvn2_ctl(sd[i].control)) { memcpy(k->ctl[i], sd[i].control, PROG_CTL_LEN); k->ctl_ok |= (uint8_t)(1u << i); }
         // Diagnostic: trace the loader of selected shader keys (comma-separated hex).
         if (trace && (k->ok & (1u << i))) {

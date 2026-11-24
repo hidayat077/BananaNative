@@ -1996,3 +1996,10 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Open:** a chain change that translates such tables through the pool in the library itself (and on Metal, where the array is still 32 long).
 - **Found on:** [Hogwarts Legacy](../../dm/games/0100F7E00C70E000/README.md).
 - **Check:** `t_android_spvpatch` (a pixel shader with such an array: rewritten, valid, and its pool reads given the feedback code); `t_android_shlib` (two arrays over one table as their samplers' records: the walk binds the samplers and marks a pool reader, the table's texture IDs come once).
+
+### Runtime `early_fragment_tests` flag (+0x718) changes pixel shader keys
+
+- **Symptom:** missing terrain and geometry with dozens of `[RED] vk: shader <key> (program stage 1) is not in the shader library` lines (`DM_NVN_SHDUMP` dumps shaders whose code area and control section match `.nvb` entries byte-for-byte except control `+0x718`: `0x00` on disk → `0x01` at run time).
+- **Cause:** control `+0x718` carries Maxwell's `early_fragment_tests` flag. Some engines toggle `+0x718` in memory before calling `nvnProgramSetShaders`, changing the SHA-256 key computed over the raw control bytes so it misses the unmodified entry built into `dmsh_vk.lib`.
+- **Fix:** `hle_nvn.c` (`prog_key_alt`) also hashes an alternate key with control `+0x718` cleared to `0` whenever `+0x718` is non-zero; `vka_shader.c` falls back to `prog_key_alt` when the exact key is absent from the library, requiring no shader repack.
+- **Found on:** [No Man's Sky](../../dm/games/0100853015E86000/README.md) (62 of 62 dumped pixel shaders).
