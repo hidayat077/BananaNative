@@ -85,19 +85,17 @@ VkResult vka_imem_bind(VkImage img, uint32_t type, const VkMemoryRequirements *m
 // Zero-shared memory (vka_zshare.h; vka_tex.c "Zero-shared images"): the image is bound at offset 0 of the allocation its key names, made (size mr->size, type) at the key's
 // first image. *fresh: 1 when this call made it (the caller counts its bytes once). VK_SUCCESS, or the Vulkan error with nothing bound (the caller binds the image as before).
 // An image the driver requires a dedicated allocation for is refused (VK_ERROR_FEATURE_NOT_PRESENT): a dedicated allocation names one image
-static int reqs_dedicated(VkImage img) {
-    if (!vk.vkGetImageMemoryRequirements2) return 0;
-    VkMemoryDedicatedRequirements dr = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
-    VkMemoryRequirements2 r2 = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dr};
-    VkImageMemoryRequirementsInfo2 ri = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, NULL, img};
-    vk.vkGetImageMemoryRequirements2(V.dev, &ri, &r2);
-    return dr.requiresDedicatedAllocation != 0;
-}
 static vkz_tab Z;
 VkResult vka_imem_bind_zero(VkImage img, uint32_t type, const VkMemoryRequirements *mr, const void *key, uint32_t klen, vka_imem *m, int *fresh) {
     memset(m, 0, sizeof *m); *fresh = 0;
     if (klen > VKZ_KEY) return VK_ERROR_FEATURE_NOT_PRESENT;
-    if (reqs_dedicated(img)) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (vk.vkGetImageMemoryRequirements2) {
+        VkMemoryDedicatedRequirements dr = {VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+        VkMemoryRequirements2 r2 = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dr};
+        VkImageMemoryRequirementsInfo2 ri = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2, NULL, img};
+        vk.vkGetImageMemoryRequirements2(V.dev, &ri, &r2);
+        if (dr.requiresDedicatedAllocation) return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
     pthread_mutex_lock(&g_imu);
     int i = vkz_ref(&Z, key, klen);
     VkDeviceMemory dm = i >= 0 ? (VkDeviceMemory)(uintptr_t)Z.e[i].h : VK_NULL_HANDLE;
@@ -121,74 +119,12 @@ uint64_t vka_imem_zbytes(void) { uint64_t b; pthread_mutex_lock(&g_imu); vkz_sta
 uint64_t vka_imem_zbytes_nolock(void) { uint64_t b = 0; for (int i = 0; i < Z.n; i++) b += Z.e[i].size; return b; }   // (a log line's value, read without the lock)
 void vka_imem_zowned(void) { pthread_mutex_lock(&g_imu); vkz_note_own(&Z); pthread_mutex_unlock(&g_imu); }
 
-// Resolution-family shared memory (vka_famshare.h; vka_tex.c): all live resolution variants at one (pool, pgen, off, vk_fmt, mem_type) alias offset 0 of one VkDeviceMemory.
-static vkf_mem_tab F;
-VkResult vka_imem_bind_fam_existing(VkImage img, const vkf_key *k, const VkMemoryRequirements *mr, vka_imem *m, uint64_t *alloc_size) {
-    memset(m, 0, sizeof *m);
-    if (reqs_dedicated(img) || k->mem_type >= 32 || !((mr->memoryTypeBits >> k->mem_type) & 1u)) return VK_ERROR_FEATURE_NOT_PRESENT;
-    uint64_t h = 0, asz = 0;
-    pthread_mutex_lock(&g_imu);
-    int idx = vkf_mem_ref(&F, k, mr->size, &h, &asz);
-    pthread_mutex_unlock(&g_imu);
-    if (idx < 0) return VK_NOT_READY;
-    VkDeviceMemory dm = (VkDeviceMemory)(uintptr_t)h;
-    VkResult r = vk.vkBindImageMemory(V.dev, img, dm, 0);
-    if (r) {
-        pthread_mutex_lock(&g_imu); int last = vkf_mem_unref(&F, h, mr->size); pthread_mutex_unlock(&g_imu);
-        if (last == 1) vk.vkFreeMemory(V.dev, dm, NULL);
-        return r;
-    }
-    m->dm = dm; m->size = mr->size; m->fam = 1;
-    if (alloc_size) *alloc_size = asz;
-    return VK_SUCCESS;
-}
-VkResult vka_imem_bind_fam_new(VkImage img, const vkf_key *k, uint64_t alloc_size, const VkMemoryRequirements *mr, vka_imem *m) {
-    memset(m, 0, sizeof *m);
-    if (reqs_dedicated(img) || k->mem_type >= 32 || !((mr->memoryTypeBits >> k->mem_type) & 1u)) return VK_ERROR_FEATURE_NOT_PRESENT;
-    if (alloc_size < mr->size) alloc_size = mr->size;
-    VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = alloc_size, .memoryTypeIndex = k->mem_type};
-    VkDeviceMemory dm = VK_NULL_HANDLE; VkResult r;
-    if ((r = vk.vkAllocateMemory(V.dev, &ai, NULL, &dm))) return r;
-    if ((r = vk.vkBindImageMemory(V.dev, img, dm, 0))) { vk.vkFreeMemory(V.dev, dm, NULL); return r; }
-    pthread_mutex_lock(&g_imu);
-    int idx = vkf_mem_add(&F, k, (uint64_t)(uintptr_t)dm, alloc_size, mr->size);
-    pthread_mutex_unlock(&g_imu);
-    if (idx < 0) { m->dm = dm; return VK_SUCCESS; }
-    m->dm = dm; m->size = mr->size; m->fam = 1;
-    return VK_SUCCESS;
-}
-VkResult vka_imem_bind_fam_alias(VkImage img, VkDeviceMemory dm, uint64_t img_size, vka_imem *m) {
-    memset(m, 0, sizeof *m);
-    if (!dm) return VK_ERROR_UNKNOWN;
-    uint64_t h = (uint64_t)(uintptr_t)dm;
-    pthread_mutex_lock(&g_imu);
-    int idx = vkf_mem_ref_h(&F, h, img_size);
-    pthread_mutex_unlock(&g_imu);
-    if (idx < 0) return VK_ERROR_UNKNOWN;
-    VkResult r = vk.vkBindImageMemory(V.dev, img, dm, 0);
-    if (r) {
-        pthread_mutex_lock(&g_imu); int last = vkf_mem_unref(&F, h, img_size); pthread_mutex_unlock(&g_imu);
-        if (last == 1) vk.vkFreeMemory(V.dev, dm, NULL);
-        return r;
-    }
-    m->dm = dm; m->size = img_size; m->fam = 1;
-    return VK_SUCCESS;
-}
-uint64_t vka_imem_fbytes(void) { uint64_t b; pthread_mutex_lock(&g_imu); vkf_mem_stats(&F, NULL, NULL, &b, NULL); pthread_mutex_unlock(&g_imu); return b; }
-uint64_t vka_imem_fbytes_nolock(void) { uint64_t b = 0; for (int i = 0; i < F.n; i++) b += F.e[i].size; return b; }
-
 // The memory back (after vkDestroyImage of the image bound to it, once the GPU is done with it)
 void vka_imem_free(vka_imem *m) {
     if (!m->dm) return;
     if (m->z) {   // a zero-shared allocation: freed with its last image
         pthread_mutex_lock(&g_imu); int last = vkz_unref(&Z, (uint64_t)(uintptr_t)m->dm); pthread_mutex_unlock(&g_imu);
         if (last < 0) VRED_ONCE("zero-shared image memory given back twice or never taken (left as it is)");
-        if (last == 1) vk.vkFreeMemory(V.dev, m->dm, NULL);
-        memset(m, 0, sizeof *m); return;
-    }
-    if (m->fam) {   // a family-shared allocation: freed with its last alias
-        pthread_mutex_lock(&g_imu); int last = vkf_mem_unref(&F, (uint64_t)(uintptr_t)m->dm, m->size); pthread_mutex_unlock(&g_imu);
-        if (last < 0) VRED_ONCE("family-shared image memory given back twice or never taken (left as it is)");
         if (last == 1) vk.vkFreeMemory(V.dev, m->dm, NULL);
         memset(m, 0, sizeof *m); return;
     }
@@ -224,9 +160,7 @@ void vka_imem_stats(char *o, size_t n) {
     if (S.fail) { size_t l = strlen(o); snprintf(o + l, n - l, "; %llu block allocations failed (those images dedicated)", (unsigned long long)S.fail); }
     if (Z.made) { uint64_t zi, za, zb, zs; vkz_stats(&Z, &zi, &za, &zb, &zs); size_t l = strlen(o);
         snprintf(o + l, n - l, "; zero-shared: %llu images in %llu allocations (%.0f MiB, %.0f MiB saved), %llu made their own", (unsigned long long)zi, (unsigned long long)za, zb / 1048576.0, zs / 1048576.0, (unsigned long long)Z.owned); }
-    if (F.made) { uint64_t fi, fa, fb, fs; vkf_mem_stats(&F, &fi, &fa, &fb, &fs); size_t l = strlen(o);
-        snprintf(o + l, n - l, "; family-shared: %llu images in %llu allocations (%.0f MiB, %.0f MiB saved)", (unsigned long long)fi, (unsigned long long)fa, fb / 1048576.0, fs / 1048576.0); }
     pthread_mutex_unlock(&g_imu);
 }
-uint64_t vka_imem_allocations(void) { pthread_mutex_lock(&g_imu); uint64_t c = S.blocks + S.ded + (uint64_t)Z.n + (uint64_t)F.n; pthread_mutex_unlock(&g_imu); return c; }
+uint64_t vka_imem_allocations(void) { pthread_mutex_lock(&g_imu); uint64_t c = S.blocks + S.ded + (uint64_t)Z.n; pthread_mutex_unlock(&g_imu); return c; }
 #endif

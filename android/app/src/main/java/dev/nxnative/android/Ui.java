@@ -751,37 +751,45 @@ final class Ui {
     }
 
     /**
-     * A page's tabs under its header (a game's page: Performance, Saves, Storage): the words in a row that scrolls sideways when they do not fit, the current
-     * one in the accent over a short bar, a hairline under them all. pick gets the index when the player picks another
+     * A page's tabs under its header (a game's page: Game Info, Game Settings, Misc): a full-width rounded pill track that balances every tab across
+     * the bar (while scrolling sideways if a large font overflows), the picked one in the accent pill. pick gets the index when the player picks another
      */
     static LinearLayout tabs(Context c, String[] labels, int sel, java.util.function.IntConsumer pick) {
         LinearLayout out = new LinearLayout(c);
         out.setOrientation(LinearLayout.VERTICAL);
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(c);
+        hs.setFillViewport(true);
         hs.setHorizontalScrollBarEnabled(false);
         hs.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout row = row(c);
+        row.setBackground(round(col(c, R.color.bn_tint), dp(c, 999), col(c, R.color.bn_card_stroke), dp(c, 1)));
+        int tp = dp(c, 4);
+        row.setPadding(tp, tp, tp, tp);
         for (int k = 0; k < labels.length; k++) {
             int i = k;
             boolean on = k == sel;
             LinearLayout tab = new LinearLayout(c);
             tab.setOrientation(LinearLayout.VERTICAL);
-            TextView t = text(c, labels[k], 14, on ? R.color.bn_on_polar : R.color.bn_text_2, on ? 700 : 600);
+            tab.setGravity(Gravity.CENTER);
+            tab.setMinimumHeight(dp(c, 36));
+            TextView t = text(c, labels[k], 13, on ? R.color.bn_on_polar : R.color.bn_text_2, on ? 700 : 600);
             t.setSingleLine(true);
             t.setGravity(Gravity.CENTER);
-            t.setPadding(dp(c, 14), dp(c, 7), dp(c, 14), dp(c, 7));
+            t.setPadding(dp(c, 12), dp(c, 6), dp(c, 12), dp(c, 6));
             tab.addView(t);
-            tab.setBackground(ripple(c, round(on ? col(c, R.color.bn_polar) : col(c, R.color.bn_tint), dp(c, 999), 0, 0)));
+            tab.setBackground(on ? round(col(c, R.color.bn_polar), dp(c, 999), 0, 0)
+                                 : ripple(c, round(Color.TRANSPARENT, dp(c, 999), 0, 0)));
             tab.setClickable(true);
             tab.setFocusable(true);
             tab.setSelected(on);
             tab.setContentDescription(Tx.s(on ? R.string.common_tab_selected : R.string.common_tab, labels[k]));
             tab.setOnClickListener(v -> { if (i != sel) pick.accept(i); });
-            row.addView(tab, wrap());
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (k > 0) lp.setMarginStart(dp(c, 4));
+            row.addView(tab, lp);
         }
         hs.addView(row);
         out.addView(hs, fill());
-        out.addView(divider(c));
         return out;
     }
 
