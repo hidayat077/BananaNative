@@ -2,7 +2,7 @@
 
 Base game v5308416 (display 7.10.0), SDK 20.5.17, Hello Games' own engine with Havok and Wwise, on NVN. Modules `main` and `sdk`; `rtld` is replaced by the host. The package is a `.nup` read in place: its RomFS is 99 `NMSARC*.pak` archives (3.71 GB), with no BNSH / BAHS at the top level.
 
-Status: surveyed, profiled, shader-mapped and packed for Android; no phone run yet. A full split finds 10,349 distinct shaders (3,548 vertex, 6 geometry, 6,666 pixel, 129 compute); the Vulkan library translated all of them and every module passed `spirv-val --target-env vulkan1.3`. The rewriter patched `main` (2.0 MB, 74 gates) and `sdk` (0.7 MB, 109 gates) for Android. `sdk` is build `0023a1b0…`, the same build [STEINS;GATE RE:BOOT](../01008BC024FDE000/README.md) ships, so that profile is the closest reference for the SDK layer.
+Status: surveyed, profiled, shader-mapped and packed for Android. The first phone run aborted at startup on the heap/used-memory mismatch; the profile now reports the modules' size and needs a rebuilt APK and a confirming run. A full split finds 10,349 distinct shaders (3,548 vertex, 6 geometry, 6,666 pixel, 129 compute); the Vulkan library translated all of them and every module passed `spirv-val --target-env vulkan1.3`. The rewriter patched `main` (2.0 MB, 74 gates) and `sdk` (0.7 MB, 109 gates) for Android. `sdk` is build `0023a1b0…`, the same build [STEINS;GATE RE:BOOT](../01008BC024FDE000/README.md) ships, so that profile is the closest reference for the SDK layer.
 
 ## What it needs
 
@@ -11,6 +11,7 @@ Status: surveyed, profiled, shader-mapped and packed for Android; no phone run y
 | `modules main sdk` | [`game.tsv`](game.tsv) | what the survey found in the ExeFS; there is no `subsdk0` |
 | 4 GB layout: `mem_reserve 0x100000000`, `mem_alias 0x10000000`, `mem_stack 0x10000000`, `app_pool 0xCD500000` | `game.tsv` | the survey's guess from `main`'s heap request and the NPDM's zero system resource, as the other games without virtual address memory; **not measured** |
 | `romfs_marker NMSARC.Shaders.pak` | `game.tsv` | a file in every copy of this version's RomFS, to tell it from another version's data |
+| `mem_used 0x6000000` | `game.tsv` | the rewritten modules are 92 MB, so the default 64 MB of used memory made the game's `SetHeapSize(pool − used)` fail at boot ([Heap sized from the application pool less used memory](../../../docs/reference/memory.md#heap-sized-from-the-application-pool-less-used-memory)) |
 
 ## Survey
 
@@ -30,7 +31,7 @@ Status: surveyed, profiled, shader-mapped and packed for Android; no phone run y
 
 ## Found on this game
 
-Nothing from a run yet; the mapping above is from the game's files.
+- **Startup abort, resolved:** the first phone run aborted in `nninitStartup` at `main+0x2614c58` with `nn::diag` Result `0x1003`. The log's `[mem] SetHeapSize 0xc9400000 + modules 0x5c00000 > app pool 0xcd500000 (used memory reported 0x4000000 + bss 0)` is the known [heap-sized-from-used-memory case](../../../docs/reference/memory.md#heap-sized-from-the-application-pool-less-used-memory): the game takes its heap as pool − used memory, but the host checks the request against the real 92 MB of rewritten modules. The profile now reports `mem_used 0x6000000` (96 MB), as [Catherine: Full Body](../0100BF00112C0000/README.md) does for the same module size. Needs a rebuilt APK and a confirming run.
 
 ## Open
 
