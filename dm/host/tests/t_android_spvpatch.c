@@ -368,6 +368,8 @@ int main(void) {
         if (x) {
             CHECK(count_op(x, qo, 209) >= 2 && count_op(x, qo, 210) >= 2, "at least two OpDPdxFine and two OpDPdyFine (%d %d)", count_op(x, qo, 209), count_op(x, qo, 210));
             CHECK(count_op(x, qo, 366) == 0 && count_op(x, qo, 365) == 0, "no quad subgroup ops emitted");
+            CHECK(count_op(x, qo, 110) == 0 && count_op(x, qo, 111) == 0 && count_op(x, qo, 112) == 0, "no int<->float conversions emitted");
+            CHECK(count_op(x, qo, 124) == count_op(QSHFL_FRAG, qn, 124) + 6, "two OpBitcast per rewritten site");
             CHECK(count_op(x, qo, 57) == 1, "the BFLY 4 call is left as it is (deriv)");
             if (val) CHECK(validate(x, qo, "quad shuffles deriv"), "valid SPIR-V (deriv)");
             size_t sn = 0; int sch = 0;
@@ -378,6 +380,40 @@ int main(void) {
                 free(sx);
             }
             free(x);
+        }
+        {   // float bits across Function-scope OpVariable (OpStore/OpLoad) + non-float integer shuffle skipped under use_deriv
+            static const uint32_t QSHFL_FNVAR[258] = {
+                0x07230203, 0x00010600, 0x00070000, 0x00000032, 0x00000000, 0x00020011, 0x00000001, 0x00020011, 0x00000041, 0x0003000e, 0x00000000, 0x00000001,
+                0x0008000f, 0x00000004, 0x00000001, 0x6e69616d, 0x00000000, 0x00000002, 0x00000003, 0x00000004, 0x00030010, 0x00000001, 0x00000007, 0x00040047,
+                0x00000002, 0x0000000b, 0x0000000f, 0x00030047, 0x00000003, 0x0000000e, 0x00040047, 0x00000003, 0x0000001e, 0x00000000, 0x00040047, 0x00000004,
+                0x0000001e, 0x00000000, 0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00040015, 0x00000007, 0x00000020, 0x00000001, 0x00040015,
+                0x00000008, 0x00000020, 0x00000000, 0x00030016, 0x00000009, 0x00000020, 0x00020014, 0x0000000a, 0x00040017, 0x0000000b, 0x00000009, 0x00000004,
+                0x00040020, 0x0000000c, 0x00000007, 0x00000007, 0x00040020, 0x0000000d, 0x00000001, 0x00000008, 0x00040020, 0x0000000e, 0x00000001, 0x0000000b,
+                0x00040020, 0x0000000f, 0x00000001, 0x00000009, 0x00040020, 0x00000010, 0x00000003, 0x0000000b, 0x00070021, 0x00000011, 0x00000007, 0x00000007,
+                0x00000007, 0x00000007, 0x0000000c, 0x0004003b, 0x0000000e, 0x00000002, 0x00000001, 0x0004003b, 0x0000000d, 0x00000003, 0x00000001, 0x0004003b,
+                0x00000010, 0x00000004, 0x00000003, 0x0004002b, 0x00000007, 0x00000012, 0x00000000, 0x0004002b, 0x00000007, 0x00000013, 0x00000001, 0x0004002b,
+                0x00000007, 0x00000014, 0x00001c03, 0x0004002b, 0x00000008, 0x00000015, 0x00000000, 0x0004002b, 0x00000008, 0x00000016, 0x00000003, 0x00050036,
+                0x00000007, 0x00000017, 0x00000000, 0x00000011, 0x00030037, 0x00000007, 0x00000018, 0x00030037, 0x00000007, 0x00000019, 0x00030037, 0x00000007,
+                0x0000001a, 0x00030037, 0x0000000c, 0x0000001b, 0x000200f8, 0x0000001c, 0x0004007c, 0x00000007, 0x0000001d, 0x00000015, 0x000500c6, 0x00000007,
+                0x0000001e, 0x0000001d, 0x00000019, 0x000500ab, 0x0000000a, 0x0000001f, 0x0000001e, 0x0000001a, 0x0003003e, 0x0000001b, 0x0000001e, 0x00060159,
+                0x00000007, 0x00000020, 0x00000016, 0x00000018, 0x00000015, 0x000200fe, 0x00000020, 0x00010038, 0x00050036, 0x00000005, 0x00000001, 0x00000000,
+                0x00000006, 0x000200f8, 0x00000021, 0x0004003b, 0x0000000c, 0x00000022, 0x00000007, 0x0004003b, 0x0000000c, 0x00000023, 0x00000007, 0x0004003b,
+                0x0000000c, 0x00000024, 0x00000007, 0x00050041, 0x0000000f, 0x00000025, 0x00000002, 0x00000012, 0x0004003d, 0x00000009, 0x00000026, 0x00000025,
+                0x0004007c, 0x00000007, 0x00000027, 0x00000026, 0x0003003e, 0x00000022, 0x00000027, 0x0004003d, 0x00000007, 0x00000028, 0x00000022, 0x00080039,
+                0x00000007, 0x00000029, 0x00000017, 0x00000028, 0x00000013, 0x00000014, 0x00000024, 0x0003003e, 0x00000023, 0x00000029, 0x0004003d, 0x00000007,
+                0x0000002a, 0x00000023, 0x0004007c, 0x00000009, 0x0000002b, 0x0000002a, 0x0004003d, 0x00000008, 0x0000002c, 0x00000003, 0x0004007c, 0x00000007,
+                0x0000002d, 0x0000002c, 0x00080039, 0x00000007, 0x0000002e, 0x00000017, 0x0000002d, 0x00000013, 0x00000014, 0x00000024, 0x0004006f, 0x00000009,
+                0x0000002f, 0x0000002e, 0x0004007c, 0x00000009, 0x00000030, 0x00000012, 0x00070050, 0x0000000b, 0x00000031, 0x0000002b, 0x0000002f, 0x00000030,
+                0x00000030, 0x0003003e, 0x00000004, 0x00000031, 0x000100fd, 0x00010038};
+            size_t fn = sizeof QSHFL_FNVAR / 4, fo = 0; int fsites = 0; err[0] = 0;
+            uint32_t *y = vka_spv_quad_shfl(QSHFL_FNVAR, fn, 1, &fo, &fsites, err, sizeof err);
+            CHECK(y && fsites == 1, "quad shuffles (fn-var deriv): 1 float site rewritten (%d, %s)", fsites, err);
+            if (y) {
+                CHECK(count_op(y, fo, 209) == 1 && count_op(y, fo, 57) == 1, "float fn-var site became OpDPdxFine, non-float call stayed");
+                CHECK(count_op(y, fo, 110) == 0 && count_op(y, fo, 111) == 1 && count_op(y, fo, 112) == 0, "no extra int<->float conversions added");
+                if (val) CHECK(validate(y, fo, "quad shuffles fn-var deriv"), "valid SPIR-V (fn-var deriv)");
+                free(y);
+            }
         }
         CHECK(!vka_spv_quad_shfl(tab_frag, sizeof tab_frag / 4, 0, &qo, &sites, err, sizeof err) && !err[0] && !sites, "a module without shuffles is left alone, with no error");
     }

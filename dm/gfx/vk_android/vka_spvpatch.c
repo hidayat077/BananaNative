@@ -1753,8 +1753,8 @@ done:
 // and a constant mask whose segment and clamp keep every lane's source inside its own quad (e.g. Maxwell's 0x1c03), a BFLY of 1, 2 or 3 is a quad swap (horizontal,
 // vertical, diagonal) and an IDX a quad broadcast of one lane. On Turnip, Vulkan quad operations keep helper invocations alive; on GPUs without fragment subgroups
 // or quad operations (e.g. Adreno 650), core OpDPdxFine / OpDPdyFine + FragCoord parity evaluate the same neighbour values without subgroup operations.
-enum { QX_Capability = 17, QX_CapDeriv = 51, QX_CapGroupNonUniformQuad = 68, QX_FunctionCall = 57, QX_CompositeExtract = 81, QX_ConvertFToU = 109, QX_ConvertFToS = 110,
-       QX_ConvertSToF = 111, QX_ConvertUToF = 112, QX_FNegate = 127, QX_FAdd = 129, QX_FSub = 131, QX_FMul = 133, QX_FDiv = 136, QX_INotEqual = 171,
+enum { QX_Capability = 17, QX_CapDeriv = 51, QX_CapGroupNonUniformQuad = 68, QX_SCFunction = 7, QX_FunctionCall = 57, QX_CompositeExtract = 81,
+       QX_ConvertFToU = 109, QX_FNegate = 127, QX_FAdd = 129, QX_FSub = 131, QX_FMul = 133, QX_FDiv = 136, QX_INotEqual = 171,
        QX_BitwiseXor = 198, QX_BitwiseAnd = 199, QX_DPdxFine = 209, QX_DPdyFine = 210, QX_GNUQuadBroadcast = 365, QX_GNUQuadSwap = 366,
        QX_BIFragCoord = 15, QX_FragModel = 4 };
 // The quad operation equal to the helper call for every lane: 0-2 a swap direction (BFLY), 4 + q a broadcast of quad lane q (IDX), -1 none.
@@ -1768,8 +1768,14 @@ static int qx_quad_op(int kind, uint32_t b, uint32_t c) {
     }
     return kind == 1 ? (int)b - 1 : 4 + q;
 }
-#define QX_OP(i) ((w[i] & 0xffff) == QX_FunctionCall && (w[i] >> 16) == 8 && w[(i) + 3] < bound && helper[w[(i) + 3]] && w[(i) + 5] < bound && w[(i) + 6] < bound \
-                  && isconst[w[(i) + 5]] && isconst[w[(i) + 6]] ? qx_quad_op(hkind[w[(i) + 3]], cval[w[(i) + 5]], cval[w[(i) + 6]]) : -1)
+static int qx_site_op(const uint32_t *w, size_t i, uint32_t bound, int use_deriv, const uint32_t *helper, const uint8_t *hkind,
+                      const uint8_t *isconst, const uint32_t *cval, const uint8_t *val_is_f32) {
+    if ((w[i] & 0xffff) != QX_FunctionCall || (w[i] >> 16) != 8) return -1;
+    uint32_t fn = w[i + 3], b = w[i + 5], c = w[i + 6];
+    if (fn >= bound || !helper[fn] || b >= bound || c >= bound || !isconst[b] || !isconst[c]) return -1;
+    if (use_deriv && !((w[i + 2] < bound && val_is_f32[w[i + 2]]) || (w[i + 4] < bound && val_is_f32[w[i + 4]]))) return -1;
+    return qx_quad_op(hkind[fn], cval[b], cval[c]);
+}
 static int qx_parity(vec_t *o, uint32_t *next, uint32_t p_in_f32, uint32_t t_f32, uint32_t t_u32, uint32_t t_bool, uint32_t fc_var, uint32_t k_idx, uint32_t k0, uint32_t k1, uint32_t *out) {
     uint32_t px = (*next)++, fx = (*next)++, ix = (*next)++, bx = (*next)++, ex = (*next)++;
     uint32_t seq[] = {
@@ -1809,11 +1815,11 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
     if (nw < 5 || w[0] != 0x07230203 || !w[3] || w[3] > 0x3fffff) return NULL;
     uint32_t bound = w[3], t_u32 = 0, t_f32 = 0, t_bool = 0, t_v4f = 0, p_in_v4f = 0, p_in_f32 = 0, fc_dec = 0, fc_var = 0;
     uint32_t *cval = calloc(bound, 4), *ctype = calloc(bound, 4), *ptee = calloc(bound, 4), *helper = calloc(bound, 4);
-    uint8_t *isconst = calloc(bound, 1), *hkind = calloc(bound, 1), *is_f32 = calloc(bound, 1), *val_is_f32 = calloc(bound, 1);
+    uint8_t *isconst = calloc(bound, 1), *hkind = calloc(bound, 1), *is_f32 = calloc(bound, 1), *val_is_f32 = calloc(bound, 1), *var_fn = calloc(bound, 1);
     int has_quad = 0, has_deriv = 0, has_frag_ep = 0; size_t cap_end = 0, type0 = 0, func0 = 0;
     vec_t o = {0};
     const char *why = NULL;
-    if (!cval || !ctype || !ptee || !helper || !isconst || !hkind || !is_f32 || !val_is_f32) { why = "out of memory"; goto done; }
+    if (!cval || !ctype || !ptee || !helper || !isconst || !hkind || !is_f32 || !val_is_f32 || !var_fn) { why = "out of memory"; goto done; }
     for (size_t i = 5; i < nw;) {   // declarations: constants, pointer pointees, capabilities, FragCoord and float/bool types
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || len > nw - i) { why = "malformed module"; goto done; }
@@ -1861,13 +1867,16 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
         if (np == 4 && shuf == 1 && !other && (xor_idx || and_idx) && f < bound && ptype < bound && ptee[ptype]) helper[f] = 1 + ptee[ptype], hkind[f] = xor_idx ? 1 : 2;
         i = j;
     }
-    if (use_deriv && t_f32) {   // detect integer shuffle operands/results bitcasted from/to float32 so DPdxFine operates on true float values
-        for (size_t i = func0; i < nw; i += w[i] >> 16) {
+    if (use_deriv && t_f32) {   // trace float32 bit patterns across OpBitcast, Function-scope variables, OpCopyObject, OpSelect and OpPhi
+        for (size_t i = 5; i < nw; i += w[i] >> 16) {
             uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+            if ((op == OpConstant || op == OpUndef) && len >= 3 && w[i + 1] == t_f32 && w[i + 2] < bound) is_f32[w[i + 2]] = 1;
+            if (i < func0) continue;
+            if (op == OpVariable && len >= 4 && w[i + 3] == QX_SCFunction && w[i + 2] < bound) var_fn[w[i + 2]] = 1;
             if (len >= 3 && w[i + 2] < bound && w[i + 1] == t_f32 &&
                 (op == OpLoad || op == OpBitcast || op == QX_CompositeExtract || op == OpSelect || op == OpPhi || op == OpCopyObject ||
                  op == QX_FNegate || op == QX_FAdd || op == QX_FSub || op == QX_FMul || op == QX_FDiv || op == OpExtInst ||
-                 op == QX_FunctionCall || op == QX_ConvertSToF || op == QX_ConvertUToF || (op >= 87 && op <= 98)))
+                 op == QX_FunctionCall || (op >= 87 && op <= 98)))
                 is_f32[w[i + 2]] = 1;
         }
         for (size_t i = func0; i < nw; i += w[i] >> 16) {
@@ -1877,12 +1886,25 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
                 if (w[i + 1] == t_f32) val_is_f32[w[i + 3]] = 1;
             }
         }
+        #define QX_PROP(a, b) do { uint32_t x_ = (a), y_ = (b); if (x_ < bound && y_ < bound && val_is_f32[x_] != val_is_f32[y_]) { val_is_f32[x_] = val_is_f32[y_] = 1; ch = 1; } } while (0)
+        for (int pass = 0, ch = 1; pass < 16 && ch; pass++) {
+            ch = 0;
+            for (size_t i = func0; i < nw; i += w[i] >> 16) {
+                uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+                if (op == OpCopyObject && len == 4) QX_PROP(w[i + 2], w[i + 3]);
+                else if (op == OpSelect && len == 6) { QX_PROP(w[i + 2], w[i + 4]); QX_PROP(w[i + 2], w[i + 5]); }
+                else if (op == OpPhi && len >= 5) { for (uint32_t k = 3; k < len; k += 2) QX_PROP(w[i + 2], w[i + k]); }
+                else if (op == OpStore && len >= 3 && w[i + 1] < bound && var_fn[w[i + 1]]) QX_PROP(w[i + 1], w[i + 2]);
+                else if (op == OpLoad && len >= 4 && w[i + 3] < bound && var_fn[w[i + 3]]) QX_PROP(w[i + 2], w[i + 3]);
+            }
+        }
+        #undef QX_PROP
     }
     // the constants the operations need: directions / quad lanes 0-3 and -1 for each valid flag type
     uint32_t next = bound, kid[4] = {0}, m1_type[8] = {0}, m1_id[8] = {0}; int nm1 = 0;
     for (uint32_t q = 0; q < 4; q++) for (uint32_t id = 1; id < bound && !kid[q]; id++) if (isconst[id] && ctype[id] == t_u32 && cval[id] == q) kid[q] = id;
     for (size_t i = func0; i < nw; i += w[i] >> 16) {
-        if (QX_OP(i) < 0) continue;
+        if (qx_site_op(w, i, bound, use_deriv, helper, hkind, isconst, cval, val_is_f32) < 0) continue;
         uint32_t vt = helper[w[i + 3]] - 1; int have = 0;
         for (int m = 0; m < nm1; m++) if (m1_type[m] == vt) have = 1;
         if (!have) {
@@ -1932,7 +1954,7 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
         for (int m = 0; m < nm1 && ok; m++) if (!m1_id[m]) { m1_id[m] = next++; uint32_t x[4] = {4u << 16 | OpConstant, m1_type[m], m1_id[m], 0xffffffffu}; ok = put_n(&o, x, 4); }
     }
     for (size_t i = func0; i < nw && ok; i += w[i] >> 16) {
-        int q = QX_OP(i);
+        int q = qx_site_op(w, i, bound, use_deriv, helper, hkind, isconst, cval, val_is_f32);
         if (q < 0) { ok = put_n(&o, w + i, w[i] >> 16); continue; }
         uint32_t vt = helper[w[i + 3]] - 1, m1 = 0;
         for (int m = 0; m < nm1; m++) if (m1_type[m] == vt) m1 = m1_id[m];
@@ -1943,9 +1965,8 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
             continue;
         }
         uint32_t res_ty = w[i + 1], res_id = w[i + 2], arg_v = w[i + 4], valid_ptr = w[i + 7];
-        int is_float = (res_id < bound && val_is_f32[res_id]) || (arg_v < bound && val_is_f32[arg_v]);
         uint32_t f = next++, rf = 0, ex = 0, ey = 0;
-        uint32_t to_f[4] = {4u << 16 | (is_float ? OpBitcast : res_ty == t_u32 ? QX_ConvertUToF : QX_ConvertSToF), t_f32, f, arg_v};
+        uint32_t to_f[4] = {4u << 16 | OpBitcast, t_f32, f, arg_v};
         ok = put_n(&o, to_f, 4);
         if (ok && q != 1) ok = qx_parity(&o, &next, p_in_f32, t_f32, t_u32, t_bool, fc_var, kid[0], kid[0], kid[1], &ex);
         if (ok && q != 0) ok = qx_parity(&o, &next, p_in_f32, t_f32, t_u32, t_bool, fc_var, kid[1], kid[0], kid[1], &ey);
@@ -1959,7 +1980,7 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
             }
         }
         if (ok) {
-            uint32_t tail[7] = {4u << 16 | (is_float ? OpBitcast : res_ty == t_u32 ? QX_ConvertFToU : QX_ConvertFToS), res_ty, res_id, rf,
+            uint32_t tail[7] = {4u << 16 | OpBitcast, res_ty, res_id, rf,
                                 3u << 16 | OpStore, valid_ptr, m1};
             ok = put_n(&o, tail, 7);
         }
@@ -1967,9 +1988,8 @@ uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t 
     if (!ok) { why = "out of memory"; *sites = 0; goto done; }
     o.w[3] = next; *out_nw = o.n;
 done:
-    free(cval); free(ctype); free(ptee); free(helper); free(isconst); free(hkind); free(is_f32); free(val_is_f32);
+    free(cval); free(ctype); free(ptee); free(helper); free(isconst); free(hkind); free(is_f32); free(val_is_f32); free(var_fn);
     if (why) { if (err && errn) snprintf(err, errn, "%s", why); free(o.w); return NULL; }
     if (!*sites) { free(o.w); return NULL; }
     return o.w;
 }
-#undef QX_OP

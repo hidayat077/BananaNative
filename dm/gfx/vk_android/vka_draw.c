@@ -46,7 +46,7 @@ static struct {
     int valid, nw;
     const vka_shader *sh;
     uint64_t s_ubo, s_ssbo, s_tex, s_push, tgen, mgen, ub_gen, rp_gen, tw_gen, sub_id;
-    uint32_t sgen, base_instance, samples, tex_base, samp_base, alpha_ref;
+    uint32_t sgen, base_instance, samples, tex_base, samp_base, alpha_ref, fb_loop;
     uint8_t alpha_func;
     int pool;
     VkWriteDescriptorSet w[SWM_MAX];
@@ -1475,6 +1475,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
                     else if (m->pkind[j] == 3) g_w.w[idx].pTexelBufferView = &g_w.bv[idx];
                 }
                 g_w.n += (uint32_t)m->nw;
+                if (V.fb_loop && m->fb_loop) vka_tex_fb_loop_or(m->fb_loop);
                 return 1;
             }
         }
@@ -1490,6 +1491,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
         mgen = vka_mem_gen();
         tw_gen = vka_tbuf_wrote_gen();
     }
+    uint32_t fbl_prev = V.fb_loop ? vka_tex_fb_loop_take() : 0;
     for (int i = 0; i < n; i++) {
         if (g_w.n == 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
         uint32_t k = g_w.n;
@@ -1576,6 +1578,8 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
         }
         g_w.n++;
     }
+    uint32_t fbl_stage = V.fb_loop ? vka_tex_fb_loop_take() : 0;
+    if (V.fb_loop && (fbl_prev | fbl_stage)) vka_tex_fb_loop_or(fbl_prev | fbl_stage);
     if (cacheable && g_w.n >= start_n && g_w.n - start_n <= SWM_MAX && vka_tex_tabpool_gen() == tgen &&
         vka_tex_sreg_gen() == sgen && vka_mem_gen() == mgen && vka_tbuf_wrote_gen() == tw_gen) {
         typeof(g_swm[0]) *m = &g_swm[st];
@@ -1598,6 +1602,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
         m->samp_base = (uint32_t)d->b.samp_base;
         m->alpha_ref = aref_u32;
         m->alpha_func = afunc;
+        m->fb_loop = fbl_stage;
         m->pool = pool;
         m->nw = (int)nw;
         if (nw) {

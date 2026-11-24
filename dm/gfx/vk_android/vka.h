@@ -454,6 +454,7 @@ VkSampler vka_samp_id_rec(int id);
 VkSampler vka_samp_id(int id);                      // sampler ID id; VK_NULL_HANDLE = not registered
 VkSampler vka_samp_default(void);                   // the sampler an unbound sampler slot reads with (nearest, clamp to edge)
 uint32_t vka_tex_fb_loop_take(void);                // attachment aspects sampled at an attached level of the open pass since the last call, then cleared
+void vka_tex_fb_loop_or(uint32_t mask);             // restore cached feedback loop aspects for a memoized stage write
 
 // ---------- Shaders (vka_shader.c) ----------
 // The game's Vulkan shader library, <pack>/shaders/v-<DMSH_VK_CHAIN>/dmsh_vk.lib (DM_VK_SHLIB overrides the path), loaded at the first program the replay resolves.
