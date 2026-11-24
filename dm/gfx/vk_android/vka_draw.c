@@ -27,7 +27,7 @@ static int g_prof_all, g_prof_every;   // DM_VK_PROF: every draw timed; the pace
 static int g_vin_skip = 1;             // DM_VK_VIN_SKIP (vin_build_kept)
 static int g_inst_on;   // DM_VK_INSTANCE (the instanced runs below)
 static int g_push_dedup = 1, g_push_delta = 1, g_tex_retype = 1, g_fout_retype = 1, g_shader_stats;
-static int g_ub_defer = 1, g_bc_rt = 1, g_rp_area = 1, g_lrz_touch, g_bar_keep = 1, g_xp_scissor, g_img_retype = 1, g_class_log, g_walk_memo = 1, g_write_memo = 1;
+static int g_ub_defer = 1, g_bc_rt = 1, g_rp_area = 1, g_lrz_touch, g_bar_keep = 1, g_xp_scissor, g_img_retype = 1, g_class_log, g_walk_memo = 1, g_write_memo = 1, g_rd_gw = 1;
 static int g_sb_peek_on = -1, g_ub_peek_on = -1, g_tex_peek_on = -1;
 static uint64_t g_ub_gen, g_sub_id;
 void vka_draw_ub_bump(void) { g_ub_gen++; }
@@ -86,10 +86,11 @@ static uint32_t g_claim_words;   // the draw's claim words (an upper bound of it
 
 // Whether draws and dispatches run. Without placed guest memory (an emulator's driver) the GPU sees no memory pool, so a game's draws would read nothing and only cost:
 // pipeline compiles there take minutes each. Off there by default, on with placed memory; DM_VK_DRAW=0 / 1 overrides, the selftest turns them on for its own memory
-static int g_force_draws;
+static int g_force_draws, g_draws_env = -2;
 void vka_draw_force(int on) { g_force_draws = on; }
 static int draws_on(void) {
-    int env = VKA_ENV("DM_VK_DRAW", -1); if (env > 0) env = 1;
+    int env = g_draws_env;
+    if (env == -2) { env = VKA_ENV("DM_VK_DRAW", -1); if (env > 0) env = 1; }
     int on = g_force_draws || (env >= 0 ? env : (V.placed || V.fd_alias));
     if (!on) VRED_ONCE("draws and dispatches are off (%s): their records are skipped; events, counters and fences still signal", env == 0 ? "DM_VK_DRAW=0" : "no placed guest memory, so the GPU would see no pool; DM_VK_DRAW=1 turns them on");
     return on;
@@ -226,6 +227,8 @@ void vka_draw_sub_begin(VkCommandBuffer cb, unsigned slot) {
     g_class_log = VKA_ENV("DM_VK_CLASS_LOG", 0);
     g_walk_memo = VKA_ENV("DM_VK_WALK_MEMO", 1);
     g_write_memo = VKA_ENV("DM_VK_WRITE_MEMO", 1);
+    g_rd_gw = VKA_ENV("DM_VK_RD_GW", 1);
+    { int e = VKA_ENV("DM_VK_DRAW", -1); g_draws_env = e > 0 ? 1 : e; }
     vka_texu_elem = VKA_ENV("DM_VK_TEXU_ELEM", 1);   // see vka_bind.h (live, A/B)
     for (int i = 0; i < g_ndp[g_slot]; i++) vk.vkResetDescriptorPool(V.dev, g_dp[g_slot][i], 0);   // the slot's last submission is done (mtl_sub_begin waited for it)
     g_cur_dp[g_slot] = 0;
@@ -945,7 +948,7 @@ static int cpu_read(uint64_t addr, void *out, size_t n) {   // guest bytes as th
 // inline updates land nowhere else.
 static int rd_cb(void *ctx, uint64_t addr, void *out, size_t n) {
     (void)ctx;
-    if (n && VKA_ENV("DM_VK_RD_GW", 1) && vka_addr(addr, n, NULL, NULL, NULL) && vka_tex_gw_read(addr, n, out)) { if (UB.n) ub_apply(addr, out, n); return 1; }
+    if (n && g_rd_gw && vka_addr(addr, n, NULL, NULL, NULL) && vka_tex_gw_read(addr, n, out)) { if (UB.n) ub_apply(addr, out, n); return 1; }
     return cpu_read(addr, out, n);
 }
 int vka_cpu_read(uint64_t addr, void *out, size_t n) { return cpu_read(addr, out, n); }
@@ -1436,7 +1439,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
     uint64_t tgen = 0, mgen = 0, tw_gen = 0;
     uint32_t sgen = 0, aref_u32 = 0;
     uint8_t afunc = (uint8_t)d->color.alpha_func;
-    int eligible = g_write_memo && !g_prof && st != 5 && !sh->has_ubo_ind && g_wk_prev[st].valid &&
+    int eligible = g_write_memo && st != 5 && !sh->has_ubo_ind && g_wk_prev[st].valid &&
                    n <= SWM_MAX && !g_class_log && !g_tex_peek_on && !g_sb_peek_on && !g_ub_peek_on &&
                    !atomic_load_explicit(&g_nsbw, memory_order_relaxed);
     int gens_loaded = 0;

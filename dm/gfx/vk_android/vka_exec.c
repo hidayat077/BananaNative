@@ -26,7 +26,7 @@ enum { NSLOT = 8 };
 enum { NCHUNK = 32 };
 static struct { VkCommandBuffer cb; uint64_t fence; VkCommandBuffer x[NCHUNK]; VkFence vf; int vf_on; } g_slot[NSLOT];   // vf: set when its commit had no timeline signal (vf_on)   // x: the command buffers a submission goes on in once it hands its first part to the queue (chunk)
 static unsigned g_slot_i;
-static int g_chunk_draws = -1, g_nx; static uint64_t g_chunk_d0;   // chunk(): draws a part, parts this submission, draws at its part's start
+static int g_chunk_draws = -1, g_chunk_pass = 300, g_partlog, g_nx; static uint64_t g_chunk_d0;   // chunk(): draws a part, mid-pass split threshold, parts this submission, draws at its part's start
 static VkCommandPool g_pool;
 static VkCommandBuffer g_cb;   // the submission being recorded (NULL without a device)
 VkCommandBuffer vka_rp_cb(void) { return g_cb; }
@@ -697,6 +697,8 @@ void vka_rp_sub_begin(void) {
     // about 3 ms a frame, below the clock governor's step-up. Breath of the Wild's field on the AYN Thor (Turnip): 47.2 -> 52.5 fps, idle 3.4 -> 1.9 ms,
     // GPU clock 615 -> 680 MHz; 64 draws was worse (39 fps), 100 and 250 a little worse than 150 (Peanuts Native 213133f, 2026-11-21)
     g_chunk_draws = VKA_ENV("DM_VK_CHUNK", 150);   // live: from the next submission
+    g_chunk_pass = VKA_ENV("DM_VK_CHUNK_PASS", 300);   // live: from the next submission (300 reduces mid-pass tiler GMEM store+load splits)
+    g_partlog = VKA_ENV("DM_VK_PARTLOG", 0);
     g_nx = 0; g_chunk_d0 = g_stat_draws;
     g_t_begin += now_ns() - tb0;
 }
@@ -783,11 +785,11 @@ static inline void chunk_check(void) {
     if (!g_cb || g_nx >= NCHUNK) return;   // no part left: chunk() would do nothing and leave the draw count, so every later draw would end its pass
     uint64_t in = g_stat_draws - g_chunk_d0;
     if (g_chunk_draws > 0 && in >= (uint64_t)g_chunk_draws && vka_rp_split_ok(&S.rt, S.has_rt)) { vka_rp_end(); chunk(); return; }
-    int cp = VKA_ENV("DM_VK_CHUNK_PASS", 150);   // 150 (was 600): see DM_VK_CHUNK
+    int cp = g_chunk_pass;
     if (cp > 0 && in >= (uint64_t)cp && vka_rp_open_for(&S.rt, S.has_rt)) {
         uint32_t w = 0, h = 0; int dep = vka_rp_depth(&w, &h);
         if ((uint64_t)w * h >= (16ull << 20)) return;   // a 6400x6400 ink map costs ~400 MB to store and load on a tiler: never split it mid-pass for chunking
-        if (VKA_ENV("DM_VK_PARTLOG", 0)) VLOG("part split inside a pass of %ux%u%s", w, h, dep ? " with depth" : "");
+        if (g_partlog) VLOG("part split inside a pass of %ux%u%s", w, h, dep ? " with depth" : "");
         vka_rp_end(); chunk();
     }
 }

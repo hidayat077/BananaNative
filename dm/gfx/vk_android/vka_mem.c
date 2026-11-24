@@ -1632,7 +1632,7 @@ static int fb_kinds(void) {   // bit 1 shader, bit 2 texture; 0 off
     static int v = -1;
     if (v >= 0) return v;
     const char *e = getenv("DM_MEM_FILEBACK"), *k = getenv("DM_MEM_FILEBACK_KINDS");
-    int on = e && *e ? atoi(e) > 0 : 1; v = 0;   // (default on: the shader kind)
+    int on = e && *e ? atoi(e) > 0 : 0; v = 0;   // (default off: opt-in via DM_MEM_FILEBACK=1 or launcher RAM saver)
     if (on) { const char *ks = k && *k ? k : "shader"; v = (strstr(ks, "shader") ? 1 : 0) | (strstr(ks, "texture") ? 2 : 0);
               if ((v & 1) && !nvn_shader_pools_deferred()) { v &= ~1; VLOG("file-backed pools: shader kind off: DM_VK_PLACE_SHADER_POOLS=1 places shader-code pools for their address"); }
               if (v) VLOG("file-backed pools (DM_MEM_FILEBACK): %s%s%s (DM_MEM_FILEBACK_KINDS=%s), an unlinked file in %s", v & 1 ? "shader-code pools" : "", v == 3 ? " and " : "",
