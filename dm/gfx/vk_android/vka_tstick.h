@@ -32,7 +32,21 @@ static inline double vktk_add(vktk *k, uint64_t ticks, uint64_t host_ns) {
     if (ticks <= k->t0 || host_ns <= k->h0 || host_ns - k->h0 < VKTK_WINDOW_NS) return 0;
     k->w[k->n++] = (double)(host_ns - k->h0) / (double)(ticks - k->t0);
     k->t0 = ticks; k->h0 = host_ns;
-    return k->n >= VKTK_N ? vktk_median(k) : 0;
+    if (k->n < VKTK_N) return 0;
+    // If GPU idle slumber (e.g. during loading screens) inflated some windows while the GPU counter stood still,
+    // the sorted windows will not form a tight plateau; drop the highest outlier and wait for another window.
+    double v[VKTK_N];
+    for (int i = 0; i < VKTK_N; i++) {
+        double x = k->w[i]; int j = i;
+        while (j > 0 && v[j - 1] > x) { v[j] = v[j - 1]; j--; }
+        v[j] = x;
+    }
+    if (v[VKTK_N - 2] > v[1] * 1.05) {
+        for (int i = 0; i < VKTK_N - 1; i++) k->w[i] = v[i];
+        k->n = VKTK_N - 1;
+        return 0;
+    }
+    return v[VKTK_N / 2];
 }
 // The tick to use: the driver's, unless the measure is off it by more than VKTK_TOL
 static inline double vktk_pick(double driver_ns, double measured_ns) {

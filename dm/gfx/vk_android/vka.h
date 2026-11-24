@@ -432,12 +432,16 @@ int vka_tbuf_pending(int id, uint8_t dim);           // buffer texture id read a
 void vka_tbuf_refresh(int id, uint8_t dim, VkCommandBuffer cb);   // copies buffer texture id's guest memory into its image (outside a render pass)
 VkImageView vka_tbuf_image_view(int id, uint8_t dim);   // that image's view (after vka_tbuf_refresh); VK_NULL_HANDLE = none
 void vka_tbuf_wrote(uint64_t addr, uint64_t n);     // GPU work that writes guest memory [addr, addr+n) was recorded (vka_tex.c gw_add): images of buffer textures over it are copied again at their next use
+void vka_tbuf_sub_begin(void);                      // submission start: resets per-submission unaligned texel buffer scratch copy cache
+uint64_t vka_tbuf_wrote_gen(void);                  // monotonic generation bumped when a GPU write overlaps a cached buffer texture
 int vka_tex_id_pending(int id);                     // texture ID id is registered and its image is not made yet (its first use records commands)
 VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same on the recording thread, through a memo (DM_VK_TEX_MEMO)
 VkFormat vka_tex_id_vkfmt(int id);   // the format texture ID id is viewed in, not its (possibly shared) image's (vka_tex.c)
 VkImageView vka_tex_id_view_bits(int id, VkCommandBuffer cb, VkImageLayout *layout);   // a storage view of its image as R32_UINT (4-byte texels), not written into the bindless table (vka_tex.c)
 int vka_tex_id_pending_rec(int id, uint8_t dim);
 uint64_t vka_tex_tabpool_gen(void);                 // monotonic generation for tabpool premake memoization (g_tgen | g_treg_gen)
+uint32_t vka_tex_id_ver(int id);                    // per-texture registration version (no lock)
+uint32_t vka_tex_sreg_gen(void);                    // monotonic sampler registration generation (no lock)
 int vka_tex_id_storage_pending(int id);            // texture ID id's image exists without storage use and would be remade with it at its next storage binding (a draw ends its pass first)
 int vka_tex_id_class(int id);                       // the numeric class of texture ID id's view format: 1 uint, 2 sint, 0 other
 int vka_tex_id_class_rec(int id);                   // the same, memoized for the recording thread (by the ID's registration version)

@@ -217,9 +217,15 @@ void vka_tex_alias_stats(char *b, size_t n) {
     snprintf(b, n, "images not GPU-written: cleared %.0f MB (%d, %.0f MB would fit their storage), filled once %.0f MB (%d, %.0f MB fit), tracked %.0f MB (%d, %.0f MB fit); GPU-written %.0f MB",
              by[0][0] / 1e6, cnt[0], by[0][1] / 1e6, by[1][0] / 1e6, cnt[1], by[1][1] / 1e6, by[2][0] / 1e6, cnt[2], by[2][1] / 1e6, gw / 1e6);
 }
-static _Atomic uint32_t g_tgen, g_treg_gen, *g_tver, *g_sver;   // the recording thread's view memo: see unref_locked
+static _Atomic uint32_t g_tgen, g_treg_gen, g_sreg_gen, *g_tver, *g_sver;   // the recording thread's view memo: see unref_locked
 uint64_t vka_tex_tabpool_gen(void) {
     return (uint64_t)atomic_load_explicit(&g_tgen, memory_order_acquire) << 32 | atomic_load_explicit(&g_treg_gen, memory_order_acquire);
+}
+uint32_t vka_tex_id_ver(int id) {
+    return id > 0 && id < (1 << 20) && g_tver ? atomic_load_explicit(&g_tver[id], memory_order_acquire) : 0;
+}
+uint32_t vka_tex_sreg_gen(void) {
+    return atomic_load_explicit(&g_sreg_gen, memory_order_acquire);
 }
 static _Atomic uint8_t *g_tisbuf;                   // per texture ID: registered as a buffer texture (vka_tex_id_is_buffer)
 static smap_ent *map_get(uint64_t s) { return vksm_get(&g_smap, s); }
@@ -2735,6 +2741,7 @@ void mtl_reg_samp(int id, const samp_par *p) {
     g_sreg[id] = *p; dirty(&g_sdirty, &g_nsd, &g_sdcap, &g_sdflag, 4096 * 4, id);
     if (!g_sver) g_sver = calloc(4096 * 4, sizeof *g_sver);
     if (g_sver) atomic_fetch_add_explicit(&g_sver[id], 1, memory_order_release);
+    atomic_fetch_add_explicit(&g_sreg_gen, 1, memory_order_release);
     pthread_mutex_unlock(&g_tmu);
 }
 void mtl_set_tex_pool_n(int n) { (void)n; }
