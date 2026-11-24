@@ -82,8 +82,8 @@ jobs:
         run: ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} apk
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: nxnative-android-apk
-          path: android/app/out/nxnative-android.apk
+          name: polar-android
+          path: android/app/out/polar-android.apk
 
 # The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
 # generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \

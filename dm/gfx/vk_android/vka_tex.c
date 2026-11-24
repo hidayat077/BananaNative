@@ -588,8 +588,8 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
             *why = 3; free(im); return NULL; }
         fl = sfl;
     }
-    // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered): 2D / 2D-array views of slices need this (Vulkan 1.1 maintenance1)
-    if (is3d && (u & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+    // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered), and NVN TextureViews of a 3D texture may override target to 2D / 2D_ARRAY for sampling or image use (Vulkan 1.1 maintenance1)
+    if (is3d && (u & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT))) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
     // Zero-shared images (below): a large GPU-content image the caller makes (g_zwant: vka_tex_get, its content ST_ZERO) is made to alias the zeroed memory of its create info
     int zs = g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", 4.0) * 1048576.0),
                                                                     vkz_max(f->kind >= 3, V.driver_id == VK_DRIVER_ID_MESA_TURNIP, (int64_t)VKA_ENVF("DM_VK_ZSHARE_MAX_MB", -1.0)), res, im->samples, is3d, compressed(f),
@@ -2853,11 +2853,13 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     if (im->vtrack && !storage && l0 < im->vmin) { uint32_t cut = im->vmin - l0; nl = nl > cut ? nl - cut : 1; l0 = im->vmin; }   // a sparse texture: from its wholly mapped levels
     vksoft_view(im->base, &l0, &nl);   // texture levels → the image's (a sparse texture's left-out levels, a soft texture's level 0)
     l0 += im->lvk;   // (a level child: from its parent's level lvk)
-    uint32_t a0 = v && v->set_layers ? v->min_layer : 0, na = v && v->set_layers && v->nlayers ? v->nlayers : im->layers - a0;
-    if (im->d.target == NVN_TEXTURE_TARGET_3D) { a0 = 0; na = 1; }   // a 3D texture's view range names slices (a render target view's), which a 3D view does not take
-    if (l0 >= im->levels || a0 >= im->layers) return VK_NULL_HANDLE;
+    if (l0 >= im->levels) return VK_NULL_HANDLE;
+    int img3d = im->d.target == NVN_TEXTURE_TARGET_3D;
+    uint32_t dmax = img3d ? (l0 < 32 && (im->depth >> l0) ? im->depth >> l0 : 1) : im->layers;
+    uint32_t a0 = v && v->set_layers ? v->min_layer : 0, na = v && v->set_layers && v->nlayers ? v->nlayers : (a0 < dmax ? dmax - a0 : 1);
+    if (a0 >= dmax) return VK_NULL_HANDLE;
     if (l0 + nl > im->levels) nl = im->levels - l0;
-    if (a0 + na > im->layers) na = im->layers - a0;
+    if (a0 + na > dmax) na = dmax - a0;
     if (vt_want >= 0 && !storage) for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im && g_fb_lv[i] > l0 && g_fb_lv[i] < l0 + nl) {
         static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], l0, nl);
         nl = g_fb_lv[i] - l0; }
@@ -2868,13 +2870,10 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     else if (e->t.set_swz) m = (VkComponentMapping){swz1(e->t.swz & 7), swz1(e->t.swz >> 3 & 7), swz1(e->t.swz >> 6 & 7), swz1(e->t.swz >> 9 & 7)};
     else { int fmt = v && v->set_format ? v->format : e->t.d.format; if (fmt == 0x37 || fmt == 0x6D || fmt == 0x6E || fmt == 0x6F || fmt == 0x70 || (fmt >= 0x71 && fmt <= 0x78) || fmt == 0x99 || fmt == 0x9B) m.a = VK_COMPONENT_SWIZZLE_ONE; }
     VkImageViewType vt = vt_want >= 0 ? (VkImageViewType)vt_want : view_type(tgt, na);
-    // What the image's type lets the view be (img_create: 3D for a 3D target, 1D for the 1D targets, cube-compatible for square 2D images of whole cubes)
-    int img3d = im->d.target == NVN_TEXTURE_TARGET_3D;
-    // A shader's 2D sampler bound to a 3D texture reads slice 0 on NVN. Tears of the Kingdom does this with the 8x8x8 format 0x3f volume of shader
-    // 9808aabbd3219e97; refusing the view left that slot unbound (zeros) and its ground tiles wrong. A 3D image made as (or usable as) an attachment
-    // has VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT, so vkCreateImageView takes a 2D view of slice 0; without the bit it simply fails as before.
+    // What the image's type lets the view be (img_create: 3D for a 3D target, 2D / 2D-array slice views of 3D images via 2D_ARRAY_COMPATIBLE_BIT, cube-compatible for square 2D images of whole cubes)
     if (vt == VK_IMAGE_VIEW_TYPE_1D || vt == VK_IMAGE_VIEW_TYPE_1D_ARRAY ||
-        (img3d ? vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
+        (img3d ? (vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
+    if (img3d && vt != VK_IMAGE_VIEW_TYPE_3D) nl = 1;   // Vulkan requires levelCount == 1 for 2D / 2D-array slice views of a 3D image
     if (vt == VK_IMAGE_VIEW_TYPE_CUBE || vt == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
         if (im->w != im->h || im->layers < 6 || im->layers % 6 || im->samples > 1 || na < 6) return VK_NULL_HANDLE;
         if (vt == VK_IMAGE_VIEW_TYPE_CUBE) na = 6; else na -= na % 6;
