@@ -698,6 +698,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - `nvnWindowGetPresentInterval`, `nvnCommandBufferSetCopyImageStride` missing. → [SDK 8 window and copy-stride entry points](../reference/nvn-objects.md#sdk-8-window-and-copy-stride-entry-points)
 - `[RED] texture bound to an image slot lacks the shader-write usage`, and compute image writes go to a dummy texture. → [Image bindings supply shader-write intent](../reference/nvn-objects.md#image-bindings-supply-shader-write-intent)
 - memory ballooning (e.g. 18,930 MiB on Mac or out-of-memory crash on devices) during 3D scenes when processing bindless texture pool updates. → [A bindless pool churns finalized textures within a submission](../reference/nvn-objects.md#a-bindless-pool-churns-finalized-textures-within-a-submission)
+- startup `SIGSEGV` at a small address (`addr=0x200` in `memcpy`, `lr=main+0x2483248`) reading/writing `NULL + offset` after reserving a sparse virtual memory pool (`flags=0x221`) and initializing a texture (`nvnTextureBuilderGetStorageClass`); also `[RED] NVN unimplemented function called: nvnDeviceRegisterFastClearColorui`. → [Texture storage classes are non-zero](../reference/nvn-objects.md#texture-storage-classes-are-non-zero)
 
 ## Rendering
 

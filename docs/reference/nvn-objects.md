@@ -807,3 +807,10 @@ Games read this count as a position in their own command memory and size their h
 - **Cause:** textures finalized by the game within a frame or submission churned the ghost ring, causing the bindless pool walks to allocate new backing storage for thousands of dead texture descriptors on every submission.
 - **Fix:** implement submission-local backing and filter finalized texture descriptors from churn walks, stabilizing memory residency to ~7.9 GiB.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+### Texture storage classes are non-zero
+
+- **Symptom:** startup `SIGSEGV` at a small address (`addr=0x200` in `memcpy`, `lr=main+0x2483248`) reading/writing `NULL + offset` after reserving a sparse virtual memory pool (`flags=0x221`) and initializing a texture (`nvnTextureBuilderGetStorageClass`); also `[RED] NVN unimplemented function called: nvnDeviceRegisterFastClearColorui`.
+- **Cause:** `nvnTextureBuilderGetStorageClass` and `nvnTextureGetStorageClass` returned `0`. On Tegra NVN, valid storage classes always set `NVN_STORAGE_CLASS_VALID_BIT` (`0x100`), such as `0x100` for linear layouts and `0x1fe` (`0x100 | 0xfe`) for block-linear textures. The engine records the builder's storage class on sparse allocations (`0` on non-sparse allocations) and uses `storage_class == 0` to choose direct `nvnMemoryPoolMap` instead of its sparse physical-pool upload path; calling `nvnMemoryPoolMap` on the `VIRTUAL | CPU_NO_ACCESS` pool returns `NULL`.
+- **Fix:** `tex_storage_class` in `hle_nvn.c` returns `0x100` for `NVN_TEXTURE_FLAGS_LINEAR` / `LINEAR_RENDER_TARGET` textures and `0x1fe` for block-linear textures in both `nvnTextureBuilderGetStorageClass` and `nvnTextureGetStorageClass`. Also implemented `nvnDeviceRegisterFastClearColori` and `nvnDeviceRegisterFastClearColorui` alongside `nvnDeviceRegisterFastClearColor`.
+- **Found on:** [No Man's Sky](../../dm/games/0100853015E86000/README.md) (SDK 20.5.17, NVN 55.15).
