@@ -1044,7 +1044,7 @@ NVN(nvnProgramFinalize, void, NVNprogram *p) {
 // ctl: an NVN2 stage's control section (its first 0xd8 bytes), copied at nvnProgramSetShaders (the guest's section is valid only during that call), for the Android shader layer
 // (vka_shader.c: a shader the library lacks is built from its control section and code); ctl_ok bit i = stage i has one
 #define PROG_CTL_LEN 0xd8
-typedef struct { uint8_t key[6][8]; uint8_t ok; uint8_t ctl_ok; uint8_t ctl[6][PROG_CTL_LEN]; } prog_keys_t;
+typedef struct { uint8_t key[6][8]; uint8_t alt_key[6][8]; uint8_t ok; uint8_t alt_ok; uint8_t ctl_ok; uint8_t ctl[6][PROG_CTL_LEN]; } prog_keys_t;
 static pthread_mutex_t g_pk_mu = PTHREAD_MUTEX_INITIALIZER; static plat_ptrmap_t *g_pk;   // a dedicated table (keys not shared with other side tables)
 static prog_keys_t *pk_get(const void *p, int make) {
     pthread_mutex_lock(&g_pk_mu);
@@ -1074,10 +1074,11 @@ void nvn_ctl_lens(const void *control, uint32_t *nctl, uint32_t *ncode) {
     memcpy(&own, c + 0x20, 4);
     *nctl = own >= 0x760 && own < 0x880 ? own : 0x880;
 }
-static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
+static int keys_hash_ex(const NVNshaderData *sd, int mapped, int zero_early_z, uint8_t out[8]) {
     uint32_t ncode = 0, nctl; void *mb; uint64_t mo;
     if (!sd->control) return 0;
     nvn_ctl_lens(sd->control, &nctl, &ncode);
+    if (zero_early_z && (nvn2_ctl(sd->control) || nctl <= 0x718 || ((const uint8_t *)sd->control)[0x718] == 0)) return 0;
     int code = sd->data && ncode && ncode < (1u << 24);
     if (mapped && !(code && (mtl_addr(sd->data, ncode, &mb, &mo) || nvn_shader_code_readable(sd->data, ncode)))) return 0;   // (a shader-code pool not placed: guest memory, read here as placed memory is)
     uint8_t md[32]; plat_sha256_t hc; plat_sha256_init(&hc);
@@ -1086,8 +1087,11 @@ static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
     if (nvn2_ctl(sd->control)) {
         uint8_t ctl[NVN2_KEY_CTL]; memcpy(ctl, sd->control, NVN2_KEY_CTL); memset(ctl + 0x30, 0, 4);
         plat_sha256_update(&hc, ctl, NVN2_KEY_CTL);
-    } else if (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl) {
-        uint8_t ctl[0x880]; memcpy(ctl, sd->control, nctl); memset(ctl + DM_GAME_SHADER_KEY_SKIP_OFF, 0, DM_GAME_SHADER_KEY_SKIP_LEN);
+    } else if (zero_early_z || (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl)) {
+        uint8_t ctl[0x880]; memcpy(ctl, sd->control, nctl);
+        if (DM_GAME_SHADER_KEY_SKIP_LEN && DM_GAME_SHADER_KEY_SKIP_OFF + DM_GAME_SHADER_KEY_SKIP_LEN <= nctl)
+            memset(ctl + DM_GAME_SHADER_KEY_SKIP_OFF, 0, DM_GAME_SHADER_KEY_SKIP_LEN);
+        if (zero_early_z) ctl[0x718] = 0;   // some engines (No Man's Sky) flip early_fragment_tests (+0x718) at run time before nvnProgramSetShaders
         plat_sha256_update(&hc, ctl, nctl);
     } else plat_sha256_update(&hc, sd->control, nctl);
     if (code) plat_sha256_update(&hc, (const void *)(uintptr_t)sd->data, ncode);
@@ -1097,13 +1101,23 @@ static int keys_hash(const NVNshaderData *sd, int mapped, uint8_t out[8]) {
 int prog_key(const prog_t *p, unsigned st, uint8_t key[8]) {
     if (st >= p->nstage) return 0;
     prog_keys_t *k = pk_get(p, 1);
-    if (!(k->ok >> st & 1)) { keys_hash(&p->sd[st], 0, k->key[st]); k->ok |= (uint8_t)(1u << st); }
+    if (!(k->ok >> st & 1)) {
+        keys_hash_ex(&p->sd[st], 0, 0, k->key[st]); k->ok |= (uint8_t)(1u << st);
+        if (keys_hash_ex(&p->sd[st], 0, 1, k->alt_key[st])) k->alt_ok |= (uint8_t)(1u << st);
+    }
     memcpy(key, k->key[st], 8);
+    return 1;
+}
+int prog_key_alt(const prog_t *p, unsigned st, uint8_t key[8]) {
+    if (st >= p->nstage) return 0;
+    prog_keys_t *k = pk_get(p, 0);
+    if (!k || !(k->alt_ok >> st & 1)) return 0;
+    memcpy(key, k->alt_key[st], 8);
     return 1;
 }
 const uint8_t *nvn_prog_ctl(const prog_t *p, unsigned st) { prog_keys_t *k = st < 6 ? pk_get(p, 0) : NULL; return k && (k->ctl_ok >> st & 1) ? k->ctl[st] : NULL; }
 // The Android frame replayer (vka_replay.c): a captured program's stage keys (its shader data is not in the capture)
-void nvn_prog_keys_set(const prog_t *p, const uint8_t key[6][8], uint8_t ok) { prog_keys_t *k = pk_get(p, 1); memcpy(k->key, key, sizeof k->key); k->ok = ok; }
+void nvn_prog_keys_set(const prog_t *p, const uint8_t key[6][8], uint8_t ok) { prog_keys_t *k = pk_get(p, 1); memcpy(k->key, key, sizeof k->key); k->ok = ok; k->alt_ok = 0; }
 NVN(nvnProgramSetShaders, NVNboolean, NVNprogram *p, int n, const NVNshaderData *sd) {
     prog_t *o = (prog_t *)p;
     if (n < 0 || n > 6) { LOG("[RED] ProgramSetShaders stage count %d", n); return 0; }
@@ -1113,9 +1127,10 @@ NVN(nvnProgramSetShaders, NVNboolean, NVNprogram *p, int n, const NVNshaderData 
     static const char *trace; static int trace_init;
     if (!trace_init) { trace = getenv("DM_NVN_PROGTRACE"); trace_init = 1; }
     prog_keys_t *k = pk_get(p, 1);
-    k->ok = 0; k->ctl_ok = 0;
+    k->ok = 0; k->alt_ok = 0; k->ctl_ok = 0;
     for (int i = 0; i < n; i++) {
-        if (keys_hash(&sd[i], 1, k->key[i])) k->ok |= (uint8_t)(1u << i);
+        if (keys_hash_ex(&sd[i], 1, 0, k->key[i])) k->ok |= (uint8_t)(1u << i);
+        if (keys_hash_ex(&sd[i], 1, 1, k->alt_key[i])) k->alt_ok |= (uint8_t)(1u << i);
         if (sd[i].control && nvn2_ctl(sd[i].control)) { memcpy(k->ctl[i], sd[i].control, PROG_CTL_LEN); k->ctl_ok |= (uint8_t)(1u << i); }
         // Diagnostic: trace the loader of selected shader keys (comma-separated hex).
         if (trace && (k->ok & (1u << i))) {
@@ -1140,7 +1155,7 @@ NVN(nvnSyncFinalize, void, NVNsync *s) { ((sync_t *)s)->magic = 0; }
 NVN(nvnSyncSetDebugLabel, void, NVNsync *s, const char *l) { (void)s; (void)l; }
 // Fence = "all commands previously submitted to the queue have completed": record the fence value of the most recent submit
 NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) { (void)q; (void)c; (void)f; ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = mtl_last_fence(); }
-// A sync object that was never fenced waits until timeout, as on a real device; a fenced one is released only after the GPU has actually completed up to that fence value
+// A newly initialized sync object starts signaled (no pending GPU work to wait for, as in NVN); once fenced, it is released only after the GPU has completed up to that fence value
 // A GPU-side wait on a sync: the host has a single Metal queue that executes submissions in order, so commands before the fence are always done first and nothing needs waiting. A sync not fenced yet (fenced later by another thread) is not waited for here; logged once
 // The Android replay (vka_worker.c) orders the queue's later work after the fence's submission; a sync not fenced yet passes at once, as a snapshot of nothing to wait for (the
 // SDK's semantics: DRAGON BALL Sparking! ZERO waits on its own queue before that queue's first fence of the sync, upstream 9b69d27d)
@@ -1160,11 +1175,11 @@ NVN(nvnCommandBufferSaveZCullData, void, NVNcommandBuffer *c, NVNbufferAddress a
 NVN_NOPROTO(nvnCommandBufferSetStencilCullCriteria, void, NVNcommandBuffer *c, int func, int ref) { (void)c; (void)func; (void)ref; }
 static _Atomic uint64_t g_sync_ns;
 // SyncWait's answers by kind, and QueueFinish calls, for diagnostics (vka_draw.c, DM_VK_DISP_OBJ): [0] already signaled, [1] satisfied after a wait, [2] timed out on a fenced
-// sync, [3] a sync never fenced (timed out at once), [4] QueueFinish
+// sync, [3] a sync never fenced (already signaled at once), [4] QueueFinish
 _Atomic uint64_t nvn_sync_wait_n[5];
 NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
     const sync_t *o = (const sync_t *)s;
-    if (!o->fenced) { atomic_fetch_add_explicit(&nvn_sync_wait_n[3], 1, memory_order_relaxed); return NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED; }
+    if (!o->fenced) { atomic_fetch_add_explicit(&nvn_sync_wait_n[3], 1, memory_order_relaxed); return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED; }
     int (*w)(uint64_t, uint64_t) = o->fenced == 2 ? mtl_wait_acq : mtl_wait;
     if (w(o->fence, 0)) { atomic_fetch_add_explicit(&nvn_sync_wait_n[0], 1, memory_order_relaxed); return NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED; }
     uint64_t t0 = now_ns(); int ok = w(o->fence, timeout); atomic_fetch_add(&g_sync_ns, now_ns() - t0);   // the frame's blocked SyncWait time (@sync_ms)
@@ -2822,13 +2837,19 @@ NVN(nvnTextureBuilderSetSwizzle, void, NVNtextureBuilder *b, NVNtextureSwizzle r
 // on the depth buffer's storage, built in stencil mode (DRAGON QUEST VII Reimagined's character occlusion mask, edbfc7a088be545e, tests stencil bits 0x1 and 0x84 of two of them; read as depth, the
 // bits followed the depth values and the hero was drawn as a dithered silhouette inside a dithered square)
 NVN(nvnTextureBuilderSetDepthStencilMode, void, NVNtextureBuilder *b, NVNtextureDepthStencilMode m) { TB(b)->stencil = m == NVN_TEXTURE_DEPTH_STENCIL_MODE_STENCIL; }
-NVN(nvnTextureBuilderGetStorageClass, NVNstorageClass, const NVNtextureBuilder *b) { (void)b; return 0; }
-// Used by Bowser's Fury: the texture's channel swizzle (set by TextureBuilderSetSwizzle at build time, identity R G B A when unset) and storage class (the host has none, 0 as for the builder)
+// Tegra NVN storage classes always set bit 8 (0x100, NVN_STORAGE_CLASS_VALID_BIT): 0x100 for linear/buffer layouts
+// (NVN_STORAGE_CLASS_BUFFER) and 0x1fe (0x100 | 0xfe) for block-linear textures. Games (No Man's Sky) treat 0 as "no
+// sparse storage class" and fall back to nvnMemoryPoolMap on a virtual pool, dereferencing NULL.
+static NVNstorageClass tex_storage_class(int flags) {
+    return (flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) ? 0x100 : 0x1fe;
+}
+NVN(nvnTextureBuilderGetStorageClass, NVNstorageClass, const NVNtextureBuilder *b) { return tex_storage_class(TB(b)->d.flags); }
+// Used by Bowser's Fury: the texture's channel swizzle (set by TextureBuilderSetSwizzle at build time, identity R G B A when unset) and storage class
 NVN(nvnTextureGetSwizzle, void, const NVNtexture *t, NVNtextureSwizzle *r, NVNtextureSwizzle *g, NVNtextureSwizzle *b, NVNtextureSwizzle *a) {
     unsigned w = tex_swz(CTX(t));
     if (r) *r = (NVNtextureSwizzle)(w & 7); if (g) *g = (NVNtextureSwizzle)(w >> 3 & 7); if (b) *b = (NVNtextureSwizzle)(w >> 6 & 7); if (a) *a = (NVNtextureSwizzle)(w >> 9 & 7);
 }
-NVN(nvnTextureGetStorageClass, NVNstorageClass, const NVNtexture *t) { (void)t; return 0; }
+NVN(nvnTextureGetStorageClass, NVNstorageClass, const NVNtexture *t) { return tex_storage_class(CTX(t)->d.flags); }
 // Metroid Prime 4: Beyond reads a builder's swizzle back before building (identity R G B A when TextureBuilderSetSwizzle was not called, as for the texture)
 NVN(nvnTextureBuilderGetSwizzle, void, const NVNtextureBuilder *b, NVNtextureSwizzle *r, NVNtextureSwizzle *g, NVNtextureSwizzle *bl, NVNtextureSwizzle *a) {
     const tex_builder_t *o = (const tex_builder_t *)b; unsigned w = o->set_swz ? o->swz : 2u | 3u << 3 | 4u << 6 | 5u << 9;
@@ -2969,6 +2990,8 @@ NVN_NOPROTO(nvnDeviceCalculateAccelerationStructureMemoryRequirements, void, con
     ONCE_LOG("nvnDeviceCalculateAccelerationStructureMemoryRequirements: 256 bytes each (no ray tracing on the host)");
 }
 NVN(nvnDeviceRegisterFastClearColor, NVNboolean, NVNdevice *d, const float *c, NVNformat f) { (void)d; (void)c; (void)f; return 1; }
+NVN(nvnDeviceRegisterFastClearColori, NVNboolean, NVNdevice *d, const int *c, NVNformat f) { (void)d; (void)c; (void)f; return 1; }
+NVN(nvnDeviceRegisterFastClearColorui, NVNboolean, NVNdevice *d, const uint32_t *c, NVNformat f) { (void)d; (void)c; (void)f; return 1; }
 // Same as the color one: a fast clear value is only a hint to the Tegra hardware (Tears of the Kingdom registers its depth clear at startup)
 NVN(nvnDeviceRegisterFastClearDepth, NVNboolean, NVNdevice *d, float v) { (void)d; (void)v; return 1; }
 // The size of the driver's cache for shaders it compiles from intermediate code (The Great Ace Attorney Chronicles sets 10 at startup); the host compiles nothing at run time

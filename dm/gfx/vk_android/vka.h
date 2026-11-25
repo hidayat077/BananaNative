@@ -115,7 +115,7 @@ typedef struct {
     // memu: NVN2 task and mesh draws drawn through compute (vka_memu.c): by default where the device lacks meshShader or taskShader, DM_VK_MESH_EMU=1 on any device, =0
     // never (restart). cs_groups: maxComputeWorkGroupCount[0]
     int memu; uint32_t cs_groups;
-    int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (DM_VK_FB_LOOP=0 leaves them off): a draw sampling its own attachment says so (vka_draw.c)
+    int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (default off; DM_VK_FB_LOOP=1 turns them on): a draw sampling its own attachment says so (vka_draw.c)
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
@@ -139,13 +139,8 @@ extern vka_dev V;
 // system libvulkan.so. vka_driver_open returns the libvulkan handle (NULL = use the system one); vka_driver_tag is a file-name-safe name of the custom driver in use, NULL for the system's
 void *vka_driver_open(void);
 const char *vka_driver_tag(void);
-// The system's Vulkan loader, opened when no custom driver is (vka_dev.c, vka_readiness.c): libvulkan.so on Android (the NDK's name); libvulkan.so.1 on Linux,
-// the loader's soname, since a desktop distribution has libvulkan.so only with its -dev package
-#ifdef NX_LINUX
-#define VKA_SYSTEM_LOADER "libvulkan.so.1"
-#else
+// The system's Vulkan loader, opened when no custom driver is (vka_dev.c, vka_readiness.c): libvulkan.so on Android (the NDK's name).
 #define VKA_SYSTEM_LOADER "libvulkan.so"
-#endif
 int vka_init(void);   // 1 = the device is up (idempotent, any thread); 0 = no Vulkan: every op logs and does nothing
 #include "vka_fpenv.h"
 // The host's FPCR (0) on this thread (vka_fpenv.h): who names a thread the host made, logged the first few times one started with the game's FPCR (NULL: not logged);
@@ -441,6 +436,7 @@ void vka_tbuf_sub_begin(void);                      // submission start: resets 
 uint64_t vka_tbuf_wrote_gen(void);                  // monotonic generation bumped when a GPU write overlaps a cached buffer texture
 int vka_tex_id_pending(int id);                     // texture ID id is registered and its image is not made yet (its first use records commands)
 VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same on the recording thread, through a memo (DM_VK_TEX_MEMO)
+VkImageView vka_tex_id_view_samp_rec(int id, int sid, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same paired with sampler ID sid (DM_VK_FB_PIN)
 VkFormat vka_tex_id_vkfmt(int id);   // the format texture ID id is viewed in, not its (possibly shared) image's (vka_tex.c)
 VkImageView vka_tex_id_view_bits(int id, VkCommandBuffer cb, VkImageLayout *layout);   // a storage view of its image as R32_UINT (4-byte texels), not written into the bindless table (vka_tex.c)
 int vka_tex_id_pending_rec(int id, uint8_t dim);
@@ -455,6 +451,7 @@ VkSampler vka_samp_id(int id);                      // sampler ID id; VK_NULL_HA
 VkSampler vka_samp_default(void);                   // the sampler an unbound sampler slot reads with (nearest, clamp to edge)
 uint32_t vka_tex_fb_loop_take(void);                // attachment aspects sampled at an attached level of the open pass since the last call, then cleared
 void vka_tex_fb_loop_or(uint32_t mask);             // restore cached feedback loop aspects for a memoized stage write
+void vka_tex_id_bc_sync(int id, VkCommandBuffer cb);   // a storage image written by compute: copy its blocks into any aliased BC-compressed image over the same memory
 
 // ---------- Shaders (vka_shader.c) ----------
 // The game's Vulkan shader library, <pack>/shaders/v-<DMSH_VK_CHAIN>/dmsh_vk.lib (DM_VK_SHLIB overrides the path), loaded at the first program the replay resolves.

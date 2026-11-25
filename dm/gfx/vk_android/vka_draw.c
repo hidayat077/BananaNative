@@ -1547,7 +1547,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
                     if (!v && !V.null_desc) v = placeholder(r[i].dim, storage);
                     if (!v && !V.null_desc) { VRED_ONCE("an unbound image of shape %#x and no null descriptors: the draw is skipped", r[i].dim); g_skip_dev[VKS_FEATURE]++; return 0; }
                     tid = 0;
-                } else if (tid) v = vka_tex_id_view_rec(tid, g_cb, r[i].dim, wbf_view_of_binding(storage, r[i].flags, DMSH_VK_BF_RW), &lay);   // (a shader image only read: not a GPU write)
+                } else if (tid) v = vka_tex_id_view_samp_rec(tid, r[i].sid, g_cb, r[i].dim, wbf_view_of_binding(storage, r[i].flags, DMSH_VK_BF_RW), &lay);   // (a shader image only read: not a GPU write)
                 if (g_class_log && tid && v) class_note(sh, st, &r[i], tid, storage);
                 if (tid && g_tex_peek_on) tex_peek(sh->key, st, &r[i], v, storage);
                 // A 2D texture in a 3D or cube slot: what the game leaves bound where a shader's branch does not sample (DKB's materials keep a 1x1 2D texture in their volume slot 12).
@@ -3609,6 +3609,9 @@ void vka_dispatch(vka_dstate *d, const p_dispatch *dp) {
         else vk.vkCmdDispatch(g_cb, (uint32_t)dp->x, (uint32_t)dp->y, (uint32_t)dp->z);
     }
     disp_count(sh[5]->key, dp->caller, dp->ind ? 0 : (uint64_t)(dp->x > 0 ? dp->x : 0) * (uint64_t)(dp->y > 0 ? dp->y : 0) * (uint64_t)(dp->z > 0 ? dp->z : 0));
+    for (int i = 0; i < g_wk.n[5]; i++)
+        if (g_wk.r[5][i].desc == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && (g_wk.r[5][i].flags & DMSH_VK_BF_RW) && g_wk.r[5][i].tid)
+            vka_tex_id_bc_sync(g_wk.r[5][i].tid, g_cb);
     if (sb || vka_nan_on() || VKA_ENV("DM_VK_DISPATCH_ORDER", 0)) vka_barrier(g_cb);   // (a spill: frees the shared memory spill buffer for the next dispatch)
     else {   // "Dispatch order": recorded before the next GPU work that is not a dispatch, unless a barrier comes first
         VkCommandBuffer was = atomic_exchange(&vka_disp_pend, g_cb);

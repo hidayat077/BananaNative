@@ -39,6 +39,7 @@ def branch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD'])
 def dirty = gitOut(['status', '--porcelain', '--untracked-files=no']) ? '+dirty' : ''
 // Lossless Scaling frame generation (GPL-3.0-or-later, dm/gfx/vk_android/lsfg): in by default, which makes the APK GPL-3.0-or-later; -PnxLsfg=false builds without it (the packer's libdmsh_xlate.so is GPL-3.0-or-later too: android/NOTICE.md)
 def nxLsfg = providers.gradleProperty('nxLsfg').getOrElse('true') != 'false'
+def nxCcache = providers.gradleProperty('nxCcache').getOrElse('false') == 'true' || System.getenv('NX_CCACHE') == '1'
 // Preparing the game on the phone (android/ONDEVICE.md): "+ Add game" on a dump without a usable pack offers Prepare, which runs PackService (a foreground service
 // in :pack) with the embedded packer: CPython 3.14 with the repository's tools, the translator (libdmsh_xlate.so) and SPIRV-Tools (libSPIRV-Tools-shared.so). Part of
 // every APK (test and play). -PnxPackStage=<android/ondevice/build.sh work dir>/stage (or NX_PACK_STAGE) names the native side's stage; -PnxPackEngine=fake builds a
@@ -272,7 +273,7 @@ android {
         buildConfigField 'String', 'NX_REWRITER', "\"$nxRewriter\""
         externalNativeBuild {
             cmake {
-                arguments "-DNX_GAMES=${nxGames.join(',')}", '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON', "-DNX_LSFG=${nxLsfg ? 'ON' : 'OFF'}"
+                arguments(*(["-DNX_GAMES=${nxGames.join(',')}", '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON', "-DNX_LSFG=${nxLsfg ? 'ON' : 'OFF'}"] + (nxCcache ? ['-DCMAKE_C_COMPILER_LAUNCHER=ccache', '-DCMAKE_CXX_COMPILER_LAUNCHER=ccache'] : [])))
                 // a host and its shim per game, then the custom GPU drivers' loader and hooks (DM_VK_DRIVER)
                 targets(*(nxGames.collectMany { ["nxhost_$it".toString(), "nxlaunch_$it".toString()] } + ['nxadreno', 'hook_impl', 'main_hook']))
             }

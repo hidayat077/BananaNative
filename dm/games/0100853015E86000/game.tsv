@@ -1,0 +1,43 @@
+# Game profile of No Man's Sky (Switch, base game v5308416 = 7.10.0). From a .nup package read in place.
+# Format: see dm/games/README.md
+# Hello Games' own engine, SDK 20.5.17, Havok, Wwise, NVN. Modules main and sdk; rtld is replaced by the host.
+# RomFS: 99 NMSARC*.pak archives (3.71 GB); the shaders are .nvb records in NMSARC.Shaders.pak.
+# Closest reference: 01008BC024FDE000 (STEINS;GATE RE:BOOT, SDK 20.5.17 and the same sdk build).
+# The address-space keys are the survey's guesses; mem_used was measured on a phone boot.
+
+# ---- Identity ----
+title_id	0100853015E86000
+program_id	0100853015E86000
+
+# ---- App ----
+name	No Man's Sky
+ipa	NoMansSky.ipa
+app_category	public.app-category.action-games
+pad_layout	full
+
+# ---- Versions ----
+build	v5308416	7.10.0	main=157fa464786a74d276a8ec7da9d5a385	sdk=0023a1b06130cd795f7bc4613772af0a
+package	v5308416
+shader_versions	v5308416
+
+# ---- Files ----
+modules	main sdk
+romfs_marker	NMSARC.Shaders.pak
+
+# ---- Memory ----
+# The NPDM declares no system resource (META +0x14 = 0): IsVirtualAddressMemoryEnabled is false.
+# The survey's 4 GB / 256 MB layout, as the other games without virtual address memory; not measured yet.
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+sys_resource	0x0
+# The rewritten modules take 0x5c00000 (92 MB), more than the default 64 MB of used memory. The game sizes its heap as
+# pool − used, so SetHeapSize(pool − 64 MB) failed at boot with Result 0x1003 and nn::diag aborted in nninitStartup
+# (main+0x2614c58). As in Catherine: Full Body, report 96 MB used; the heap request then fits beside the modules.
+mem_used	0x6000000
+
+# ---- Shader split (shader_split.py) ----
+# The whole RomFS is NMSARC*.pak; the compiled shaders are expected in NMSARC.Shaders.pak.
+shader_groups	/NMSARC.Shaders.pak=shaders .pak=pak
+shader_note	No Man's Sky shaders

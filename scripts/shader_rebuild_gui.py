@@ -88,6 +88,29 @@ class BuildWorker(QtCore.QThread):
         self._proc = None
         return rc
 
+    def _resolve_ooz(self, ctx: sfr.GameContext) -> Path | None:
+        p = self.params
+        if not p.get('use_ooz'):
+            return None
+        raw = (p.get('ooz_path') or '').strip()
+        if raw and Path(raw).is_file():
+            return Path(raw)
+        found = sfr.find_ooz(ctx.work_dir)
+        if found:
+            return found
+        exe = 'unoodle.exe' if WINDOWS else 'unoodle'
+        target = ctx.work_dir / 'tools' / exe
+        self.stage_changed.emit('Building ooz Oodle decoder (unoodle)...')
+        self.log_line.emit(f'$ sh {sfr.OOZ_BUILD_SH} {target}', False)
+        ok, out = sfr.build_ooz(target)
+        if out:
+            for line in out.splitlines():
+                self.log_line.emit(line, not ok)
+        if not ok:
+            raise RuntimeError(f'Failed to build ooz Oodle decoder: {out}')
+        self.log_line.emit(f'ooz ready: {target}', False)
+        return target
+
     def run(self):
         p = self.params
         ctx: sfr.GameContext = p['ctx']
@@ -97,7 +120,8 @@ class BuildWorker(QtCore.QThread):
             if mode == 'full':
                 self.stage_changed.emit('Running full build (Normal Mode)...')
                 if p['use_pack_android'] and ctx.game_source:
-                    cmd, env = sfr.build_pack_command(ctx, threads, keep_code=p['keep_code'])
+                    ooz_path = self._resolve_ooz(ctx)
+                    cmd, env = sfr.build_pack_command(ctx, threads, keep_code=p['keep_code'], ooz_path=ooz_path)
                     rc = self._run_subprocess(cmd, env, 'Pack & Build')
                 else:
                     if not ctx.pkg_exists:
@@ -120,7 +144,8 @@ class BuildWorker(QtCore.QThread):
                 if not ctx.game_source:
                     raise RuntimeError('pkg/ folder missing and no dump/.nup source selected.')
                 self.stage_changed.emit('pkg/ missing: splitting dump & rewriting code first...')
-                cmd_sp, env_sp = sfr.build_pack_command(ctx, threads)
+                ooz_path = self._resolve_ooz(ctx)
+                cmd_sp, env_sp = sfr.build_pack_command(ctx, threads, ooz_path=ooz_path)
                 cmd_sp.append('--no-shaders')
                 rc = self._run_subprocess(cmd_sp, env_sp, 'Split & Code')
                 if rc != 0:
@@ -188,56 +213,86 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
     def __init__(self, initial: str | None = None):
         super().__init__()
         self.setWindowTitle('Polar — Shader Rebuild Studio')
-        self.resize(980, 760)
+        self.setMinimumSize(880, 680)
+        self.resize(1040, 820)
         self.ctx: sfr.GameContext | None = None
         self.scan: sfr.LibraryScan | None = None
         self.ps_to_vs: dict[str, set[str]] = {}
         self.worker: BuildWorker | None = None
 
+        self._apply_theme()
+
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         outer = QtWidgets.QVBoxLayout(central)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(10)
+
         self.tabs = QtWidgets.QTabWidget()
         outer.addWidget(self.tabs)
 
         builder_tab = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(builder_tab)
+        root.setContentsMargins(10, 12, 10, 10)
         root.setSpacing(10)
         self.tabs.addTab(builder_tab, 'Builder')
 
+        # Scrollable top configuration pane so cards never crush the build log
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        cfg_host = QtWidgets.QWidget()
+        cfg_lay = QtWidgets.QVBoxLayout(cfg_host)
+        cfg_lay.setContentsMargins(0, 0, 4, 0)
+        cfg_lay.setSpacing(10)
+        scroll.setWidget(cfg_host)
+
         # 1. Source Picker
         src_box = QtWidgets.QGroupBox('1. Game / Work Folder')
-        src_lay = QtWidgets.QGridLayout(src_box)
+        src_lay = QtWidgets.QVBoxLayout(src_box)
+        src_lay.setSpacing(8)
+        src_row = QtWidgets.QHBoxLayout()
+        src_row.setSpacing(8)
         self.path_edit = QtWidgets.QLineEdit()
-        self.path_edit.setPlaceholderText('Select a .nup file, dump folder (base/, updates/), or <titleID>-work folder...')
-        btn_nup = QtWidgets.QPushButton('.nup File…')
+        self.path_edit.setPlaceholderText('Select a .nup / .nsp file, dump folder (base/, updates/), or <titleID>-work folder...')
+        btn_nup = QtWidgets.QPushButton('.nup / .nsp…')
         btn_dir = QtWidgets.QPushButton('Folder…')
         btn_load = QtWidgets.QPushButton('Load')
+        btn_load.setObjectName('secondaryBtn')
         btn_nup.clicked.connect(self.pick_nup)
         btn_dir.clicked.connect(self.pick_dir)
         btn_load.clicked.connect(lambda: self.load_target(self.path_edit.text().strip()))
-        src_lay.addWidget(self.path_edit, 0, 0)
-        src_lay.addWidget(btn_nup, 0, 1)
-        src_lay.addWidget(btn_dir, 0, 2)
-        src_lay.addWidget(btn_load, 0, 3)
+        src_row.addWidget(self.path_edit, 1)
+        src_row.addWidget(btn_nup)
+        src_row.addWidget(btn_dir)
+        src_row.addWidget(btn_load)
+        src_lay.addLayout(src_row)
 
         self.info_lbl = QtWidgets.QLabel('No game selected.')
         self.info_lbl.setWordWrap(True)
-        src_lay.addWidget(self.info_lbl, 1, 0, 1, 4)
-        root.addWidget(src_box)
+        self.info_lbl.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.info_lbl.setObjectName('infoBox')
+        src_lay.addWidget(self.info_lbl)
+        cfg_lay.addWidget(src_box)
 
         # 2. Mode + Old Source
         mode_box = QtWidgets.QGroupBox('2. Build Mode')
         mode_lay = QtWidgets.QVBoxLayout(mode_box)
+        mode_lay.setSpacing(8)
         top_mode = QtWidgets.QHBoxLayout()
+        top_mode.setSpacing(18)
         self.rb_fast = QtWidgets.QRadioButton('Fast Hack Rebuild (skip unaffected shaders from an older library)')
-        self.rb_full = QtWidgets.QRadioButton('First-Time / Full Build (split & translate all shaders)')
+        self.rb_full = QtWidgets.QRadioButton('First-Time / Full Build (split && translate all shaders)')
         self.rb_fast.toggled.connect(self._update_mode_ui)
         top_mode.addWidget(self.rb_fast)
         top_mode.addWidget(self.rb_full)
+        top_mode.addStretch()
         mode_lay.addLayout(top_mode)
 
-        old_row = QtWidgets.QHBoxLayout()
+        self.old_row_widget = QtWidgets.QWidget()
+        old_row = QtWidgets.QHBoxLayout(self.old_row_widget)
+        old_row.setContentsMargins(0, 0, 0, 0)
+        old_row.setSpacing(8)
         old_row.addWidget(QtWidgets.QLabel('Source library:'))
         self.lib_combo = QtWidgets.QComboBox()
         self.lib_combo.currentIndexChanged.connect(self._on_lib_selected)
@@ -245,11 +300,12 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         btn_browse_lib = QtWidgets.QPushButton('Browse .lib…')
         btn_browse_lib.clicked.connect(self.pick_old_lib)
         old_row.addWidget(btn_browse_lib)
-        mode_lay.addLayout(old_row)
+        mode_lay.addWidget(self.old_row_widget)
 
         self.full_opts = QtWidgets.QWidget()
         fo_lay = QtWidgets.QHBoxLayout(self.full_opts)
         fo_lay.setContentsMargins(0, 0, 0, 0)
+        fo_lay.setSpacing(16)
         self.chk_pack_android = QtWidgets.QCheckBox('Run via pack_android.py (split + code rewrite + shaders + pack.tsv)')
         self.chk_pack_android.setChecked(True)
         self.chk_pack_android.setToolTip('Recommended for first-time setup or full pack refresh from a .nup or dump folder.')
@@ -259,13 +315,31 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         fo_lay.addWidget(self.chk_keep_code)
         fo_lay.addStretch()
         mode_lay.addWidget(self.full_opts)
-        root.addWidget(mode_box)
+
+        ooz_row = QtWidgets.QHBoxLayout()
+        ooz_row.setSpacing(8)
+        self.chk_ooz = QtWidgets.QCheckBox('Use ooz Oodle decoder (DM_OODLE_OOZ)')
+        self.chk_ooz.setToolTip('Enable for Oodle-compressed games (e.g. Unreal, Trinity, PKZ) when the profile has shader_map.tsv.')
+        self.ooz_edit = QtWidgets.QLineEdit()
+        self.ooz_edit.setPlaceholderText('Auto-build via dm/third_party/ooz/build.sh when needed...')
+        self.btn_build_ooz = QtWidgets.QPushButton('Build ooz')
+        self.btn_build_ooz.clicked.connect(self.build_ooz_now)
+        btn_browse_ooz = QtWidgets.QPushButton('Browse…')
+        btn_browse_ooz.clicked.connect(self.pick_ooz)
+        ooz_row.addWidget(self.chk_ooz)
+        ooz_row.addWidget(self.ooz_edit, 1)
+        ooz_row.addWidget(self.btn_build_ooz)
+        ooz_row.addWidget(btn_browse_ooz)
+        mode_lay.addLayout(ooz_row)
+        cfg_lay.addWidget(mode_box)
 
         # 3. Simplified Preset + Auto-detect + Collapsible Advanced Filters
         self.filter_box = QtWidgets.QGroupBox('3. What Needs Rebuilding? (Fast Mode)')
         flt_lay = QtWidgets.QVBoxLayout(self.filter_box)
+        flt_lay.setSpacing(8)
 
         preset_row = QtWidgets.QHBoxLayout()
+        preset_row.setSpacing(8)
         preset_row.addWidget(QtWidgets.QLabel('Preset:'))
         self.preset_combo = QtWidgets.QComboBox()
         for key, (label, _) in sfr.PRESETS.items():
@@ -282,6 +356,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         flt_lay.addWidget(self.preset_note_lbl)
 
         custom_row = QtWidgets.QHBoxLayout()
+        custom_row.setSpacing(8)
         custom_row.addWidget(QtWidgets.QLabel('Paste error log or shader keys:'))
         self.custom_edit = QtWidgets.QLineEdit()
         self.custom_edit.setPlaceholderText('Paste [RED] log lines or 16-hex shader IDs (auto-extracted)...')
@@ -306,7 +381,9 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         self.adv_panel = QtWidgets.QWidget()
         self.adv_panel.setVisible(False)
         grid = QtWidgets.QGridLayout(self.adv_panel)
-        grid.setContentsMargins(0, 4, 0, 4)
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(6)
         self.chk_cs = QtWidgets.QCheckBox('Compute shaders (cs)')
         self.chk_cs.setToolTip('Rebuild all compute shaders (e.g. after AstOptimizer / compute lowering fixes).')
         self.chk_buf_comb = QtWidgets.QCheckBox('Buffer + COMBINED_IMAGE_SAMPLER')
@@ -342,19 +419,30 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         flt_lay.addWidget(self.adv_panel)
 
         self.preview_lbl = QtWidgets.QLabel('Select or scan an older dmsh_vk.lib to preview shader counts.')
-        self.preview_lbl.setStyleSheet('font-weight: bold;')
+        self.preview_lbl.setStyleSheet('font-weight: 600; color: #93C5FD;')
         flt_lay.addWidget(self.preview_lbl)
-        root.addWidget(self.filter_box)
+        cfg_lay.addWidget(self.filter_box)
+        cfg_lay.addStretch(1)
 
-        # 4. Run options + Controls
-        ctrl_row = QtWidgets.QHBoxLayout()
+        # Bottom execution + log pane
+        bottom_pane = QtWidgets.QWidget()
+        bot_lay = QtWidgets.QVBoxLayout(bottom_pane)
+        bot_lay.setContentsMargins(0, 4, 0, 0)
+        bot_lay.setSpacing(8)
+
+        ctrl_card = QtWidgets.QFrame()
+        ctrl_card.setObjectName('ctrlCard')
+        ctrl_row = QtWidgets.QHBoxLayout(ctrl_card)
+        ctrl_row.setContentsMargins(12, 10, 12, 10)
+        ctrl_row.setSpacing(12)
         ctrl_row.addWidget(QtWidgets.QLabel('Threads (J):'))
         self.spin_j = QtWidgets.QSpinBox()
         self.spin_j.setRange(1, max(16, (os.cpu_count() or 8) * 2))
         self.spin_j.setValue(min(4, os.cpu_count() or 4))
+        self.spin_j.setMinimumWidth(64)
         ctrl_row.addWidget(self.spin_j)
 
-        self.chk_sync_pack = QtWidgets.QCheckBox('Copy to android-pack & update pack.tsv')
+        self.chk_sync_pack = QtWidgets.QCheckBox('Copy to android-pack && update pack.tsv')
         self.chk_sync_pack.setChecked(True)
         self.chk_req_all = QtWidgets.QCheckBox('DMSH_VK_REQUIRE_ALL=1')
         self.chk_req_all.setChecked(True)
@@ -364,9 +452,11 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         ctrl_row.addStretch()
 
         self.btn_start = QtWidgets.QPushButton('Start Build')
-        self.btn_start.setMinimumWidth(130)
+        self.btn_start.setObjectName('primaryBtn')
+        self.btn_start.setMinimumWidth(120)
         self.btn_start.clicked.connect(self.start_build)
         self.btn_stop = QtWidgets.QPushButton('Stop')
+        self.btn_stop.setObjectName('dangerBtn')
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop_build)
         self.btn_open = QtWidgets.QPushButton('Open Pack')
@@ -378,20 +468,40 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         ctrl_row.addWidget(self.btn_stop)
         ctrl_row.addWidget(self.btn_open)
         ctrl_row.addWidget(self.btn_help)
-        root.addLayout(ctrl_row)
+        bot_lay.addWidget(ctrl_card)
 
+        prog_row = QtWidgets.QHBoxLayout()
+        prog_row.setSpacing(10)
         self.stage_lbl = QtWidgets.QLabel('Ready.')
-        root.addWidget(self.stage_lbl)
+        self.stage_lbl.setStyleSheet('font-weight: 600; color: #D1D5DB;')
+        prog_row.addWidget(self.stage_lbl, 1)
+        btn_clear_log = QtWidgets.QPushButton('Clear Log')
+        btn_clear_log.setFixedHeight(26)
+        btn_clear_log.clicked.connect(lambda: self.log_box.clear())
+        prog_row.addWidget(btn_clear_log)
+        bot_lay.addLayout(prog_row)
+
         self.pbar = QtWidgets.QProgressBar()
         self.pbar.setRange(0, 100)
-        root.addWidget(self.pbar)
+        self.pbar.setFixedHeight(20)
+        bot_lay.addWidget(self.pbar)
 
         self.log_box = QtWidgets.QPlainTextEdit()
         self.log_box.setReadOnly(True)
+        self.log_box.setMinimumHeight(180)
         font = QtGui.QFont('Monospace', 9)
         font.setStyleHint(QtGui.QFont.StyleHint.TypeWriter)
         self.log_box.setFont(font)
-        root.addWidget(self.log_box, 1)
+        bot_lay.addWidget(self.log_box, 1)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(scroll)
+        splitter.addWidget(bottom_pane)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([380, 340])
+        root.addWidget(splitter, 1)
 
         guide_tab = QtWidgets.QTextBrowser()
         guide_tab.setOpenExternalLinks(False)
@@ -406,8 +516,156 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
             self._update_mode_ui()
         self._on_preset_changed()
 
+    def _apply_theme(self):
+        self.setStyleSheet("""
+            QMainWindow, QWidget {
+                background-color: #11141B;
+                color: #E5E7EB;
+                font-size: 13px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #232A38;
+                border-radius: 8px;
+                background-color: #151922;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background-color: #1A1F2B;
+                color: #9CA3AF;
+                border: 1px solid #232A38;
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 8px 18px;
+                margin-right: 4px;
+                font-weight: 600;
+            }
+            QTabBar::tab:selected {
+                background-color: #151922;
+                color: #FFFFFF;
+                border-color: #3B82F6;
+            }
+            QGroupBox {
+                background-color: #1A1F2A;
+                border: 1px solid #262E3D;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding: 14px 12px 12px 12px;
+                font-weight: 600;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 12px;
+                padding: 0 6px;
+                color: #93C5FD;
+                background-color: #151922;
+                border-radius: 4px;
+            }
+            QFrame#ctrlCard {
+                background-color: #1A1F2A;
+                border: 1px solid #262E3D;
+                border-radius: 8px;
+            }
+            QLabel#infoBox {
+                background-color: #10131A;
+                border: 1px solid #222938;
+                border-radius: 6px;
+                padding: 8px 10px;
+                color: #D1D5DB;
+            }
+            QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextBrowser {
+                background-color: #0E1117;
+                color: #F3F4F6;
+                border: 1px solid #2C3546;
+                border-radius: 6px;
+                padding: 6px 9px;
+                selection-background-color: #2563EB;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
+                border-color: #3B82F6;
+            }
+            QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+                color: #6B7280;
+                background-color: #141821;
+            }
+            QPushButton {
+                background-color: #232A38;
+                color: #E5E7EB;
+                border: 1px solid #323C4F;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #2C3547;
+                border-color: #4B5563;
+            }
+            QPushButton:pressed {
+                background-color: #1E2430;
+            }
+            QPushButton:disabled {
+                background-color: #181C26;
+                color: #525B6C;
+                border-color: #222836;
+            }
+            QPushButton#primaryBtn {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border-color: #3B82F6;
+            }
+            QPushButton#primaryBtn:hover {
+                background-color: #1D4ED8;
+            }
+            QPushButton#primaryBtn:disabled {
+                background-color: #1E3A5F;
+                color: #93C5FD;
+                border-color: #1E3A5F;
+            }
+            QPushButton#dangerBtn:enabled {
+                background-color: #991B1B;
+                color: #FEE2E2;
+                border-color: #DC2626;
+            }
+            QPushButton#dangerBtn:enabled:hover {
+                background-color: #B91C1C;
+            }
+            QToolButton {
+                background-color: #202634;
+                color: #D1D5DB;
+                border: 1px solid #2E3748;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-weight: 600;
+            }
+            QToolButton:hover {
+                background-color: #283042;
+            }
+            QProgressBar {
+                background-color: #0E1117;
+                border: 1px solid #262E3D;
+                border-radius: 6px;
+                text-align: center;
+                color: #F3F4F6;
+                font-weight: 600;
+            }
+            QProgressBar::chunk {
+                background-color: #3B82F6;
+                border-radius: 5px;
+            }
+            QSplitter::handle {
+                background-color: #262E3D;
+                height: 4px;
+                margin: 2px 24px;
+                border-radius: 2px;
+            }
+            QSplitter::handle:hover {
+                background-color: #3B82F6;
+            }
+        """)
+
     def pick_nup(self):
-        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select .nup file', '', 'NUP (*.nup);;All Files (*)')
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select .nup or .nsp file', '', 'Game Package (*.nup *.nsp);;NUP (*.nup);;NSP (*.nsp);;All Files (*)')
         if p:
             self.path_edit.setText(p)
             self.load_target(p)
@@ -424,6 +682,30 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         if p:
             self.lib_combo.addItem(f'[Manual] {p}', Path(p))
             self.lib_combo.setCurrentIndex(self.lib_combo.count() - 1)
+
+    def pick_ooz(self):
+        start = str(self.ctx.work_dir) if self.ctx else ''
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select ooz / unoodle binary', start, 'All Files (*)')
+        if p:
+            self.ooz_edit.setText(p)
+            if self.chk_ooz.isEnabled():
+                self.chk_ooz.setChecked(True)
+
+    def build_ooz_now(self):
+        exe = 'unoodle.exe' if WINDOWS else 'unoodle'
+        dst = (self.ctx.work_dir / 'tools' / exe) if self.ctx else (Path.cwd() / 'unoodle')
+        self.append_log(f'$ sh {sfr.OOZ_BUILD_SH} {dst}', False)
+        ok, out = sfr.build_ooz(dst)
+        if out:
+            for line in out.splitlines():
+                self.append_log(line, not ok)
+        if ok:
+            self.ooz_edit.setText(str(dst))
+            if self.chk_ooz.isEnabled():
+                self.chk_ooz.setChecked(True)
+            self.stage_lbl.setText(f'ooz ready: {dst}')
+        else:
+            QtWidgets.QMessageBox.warning(self, 'Build ooz failed', out)
 
     def load_target(self, path_str: str):
         if not path_str:
@@ -459,6 +741,15 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
             self._on_lib_selected()
         else:
             self.rb_full.setChecked(True)
+
+        has_map = sfr.has_shader_map(ctx.title_id)
+        found_ooz = sfr.find_ooz(ctx.work_dir)
+        if found_ooz and not self.ooz_edit.text().strip():
+            self.ooz_edit.setText(str(found_ooz))
+        self.chk_ooz.setEnabled(has_map)
+        self.chk_ooz.setChecked(has_map)
+        self.ooz_edit.setEnabled(has_map)
+        self.btn_build_ooz.setEnabled(has_map and not WINDOWS)
         self._update_mode_ui()
 
     def _on_lib_selected(self):
@@ -560,12 +851,25 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
 
     def _update_mode_ui(self):
         fast = self.rb_fast.isChecked()
-        self.lib_combo.setEnabled(fast)
-        self.filter_box.setEnabled(fast)
-        self.full_opts.setEnabled(not fast)
+        self.old_row_widget.setVisible(fast)
+        self.filter_box.setVisible(fast)
+        self.full_opts.setVisible(not fast)
 
     def append_log(self, text: str, is_red: bool):
-        self.log_box.appendPlainText(text)
+        if is_red:
+            fmt = QtGui.QTextCharFormat()
+            fmt.setForeground(QtGui.QColor('#F87171'))
+            cur = self.log_box.textCursor()
+            cur.movePosition(QtGui.QTextCursor.MoveOperation.End)
+            cur.insertText(text + '\n', fmt)
+        elif text.startswith('$ '):
+            fmt = QtGui.QTextCharFormat()
+            fmt.setForeground(QtGui.QColor('#60A5FA'))
+            cur = self.log_box.textCursor()
+            cur.movePosition(QtGui.QTextCursor.MoveOperation.End)
+            cur.insertText(text + '\n', fmt)
+        else:
+            self.log_box.appendPlainText(text)
         sb = self.log_box.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -586,6 +890,8 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
             'require_all': self.chk_req_all.isChecked(),
             'use_pack_android': self.chk_pack_android.isChecked(),
             'keep_code': self.chk_keep_code.isChecked(),
+            'use_ooz': self.chk_ooz.isEnabled() and self.chk_ooz.isChecked(),
+            'ooz_path': self.ooz_edit.text().strip(),
         }
         if mode == 'fast':
             if not self.scan:
@@ -658,7 +964,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
 
         <h2>1. Game / Work Folder</h2>
         <ul>
-          <li><b>.nup File…</b>: Pick a game <code>.nup</code> package. Recommended for a first-time build or when updating <code>pack.tsv</code>.</li>
+          <li><b>.nup / .nsp…</b>: Pick a game <code>.nup</code> or plaintext <code>.nsp</code> package. Recommended for a first-time build or when updating <code>pack.tsv</code>.</li>
           <li><b>Folder…</b>: Pick either a console dump folder (<code>base/</code>, <code>updates/</code>, <code>dlc/</code>) or an existing <code>&lt;titleID&gt;-work</code> folder.</li>
           <li>Once loaded, the status bar shows the target Vulkan chain version (<code>v-&lt;DMSH_VK_CHAIN&gt;</code>), whether <code>pkg/</code> is already split, and whether the target shader library already exists.</li>
         </ul>

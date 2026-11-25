@@ -1209,13 +1209,27 @@ int vka_prog_shaders(const prog_t *p, vka_progsh *out) {
     // A kept library (g_kept): every program takes the layer's entry of a stage when the layer has one, and asks for the stages it lacks, so the launcher's verify step translates the
     // shaders played, in the background, and compares them with the kept entries; a differing one is then the layer's. Once for a program (cached below), not per draw
     vka_lyh *LH = vka_ly_get(&g_ly); const vka_shlib *LY = LH ? LH->obj : NULL; int ly = g_kept && (LY || layer_root()) ? 1 : 0, missing = 0;
-    for (unsigned i = 0; i < p->nstage && i < 6; i++) { uint8_t md[8]; if (prog_key(p, i, md) && !main_find(vka_shlib_key(md))) ly = 1; }
+    for (unsigned i = 0; i < p->nstage && i < 6; i++) {
+        uint8_t md[8], amd[8];
+        if (prog_key(p, i, md) && !main_find(vka_shlib_key(md)) && !(prog_key_alt(p, i, amd) && main_find(vka_shlib_key(amd)))) ly = 1;
+    }
     for (unsigned i = 0; i < p->nstage && i < 6; i++) {   // (a program has at most 6 shaders: hle_nvn.c nvnProgramSetShaders)
-        uint8_t md[8];
+        uint8_t md[8], amd[8];
         if (!prog_key(p, i, md)) continue;
         uint64_t key = vka_shlib_key(md);
         const dmsh_vk_entry *en = ly && LY ? vka_shlib_find(LY, key) : NULL; const vka_shlib *L = LY;
         if (!en) { en = main_find(key); L = &g_lib; }
+        if (!en && prog_key_alt(p, i, amd)) {
+            uint64_t akey = vka_shlib_key(amd);
+            if (ly && LY) { en = vka_shlib_find(LY, akey); L = LY; }
+            if (!en) { en = main_find(akey); L = &g_lib; }
+            if (en) {
+                static _Atomic int ez_once;
+                if (!atomic_exchange(&ez_once, 1))
+                    VLOG("shader %016llx: matched library entry %016llx (control +0x718 early_fragment_tests toggled at run time)", (unsigned long long)key, (unsigned long long)akey);
+                key = akey;
+            }
+        }
         if (!en) {
             out->bad |= VKA_BAD_MISSING; missing = 1;
             miss_note(p, i, key);

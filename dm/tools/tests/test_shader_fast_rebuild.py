@@ -172,6 +172,32 @@ class ShaderFastRebuildTest(unittest.TestCase):
                 hdr = json.loads(f.read(n))
             self.assertEqual(hdr['reused'], 'f2b04744b54a')
 
+    def test_build_pack_command_ooz_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td) / '0100A3D008C5C000-work'
+            dump = Path(td) / 'game.nup'
+            dump.write_bytes(b'nup')
+            ctx = sfr.GameContext(
+                input_path=dump,
+                work_dir=work,
+                game_source=dump,
+                title_id='0100A3D008C5C000',
+                game_name='Pokemon Scarlet',
+                pkg_dir=work / 'android-shaders/pkg',
+                lib_dir=work / 'android-shaders/lib',
+                pack_dir=work / 'android-pack',
+                target_vk='0f9e17c20bc3',
+                target_inputs='inputs',
+                val_id='v2026.2',
+                target_lib_exists=False,
+                target_lib_current=False,
+                pkg_exists=False,
+            )
+            _, env_with = sfr.build_pack_command(ctx, 4, ooz_path='/tmp/unoodle')
+            self.assertEqual(env_with.get('DM_OODLE_OOZ'), '/tmp/unoodle')
+            _, env_without = sfr.build_pack_command(ctx, 4, ooz_path=None)
+            self.assertNotIn('DM_OODLE_OOZ', env_without)
+
 
 if __name__ == '__main__':
     unittest.main()

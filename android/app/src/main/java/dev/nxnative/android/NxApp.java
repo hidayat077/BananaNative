@@ -27,11 +27,10 @@ public final class NxApp extends Application {
         applyTheme(this);
     }
 
-    /** The theme the user picked (Prefs.theme): the app's night mode, for every screen of the launcher (minSdk 33: UiModeManager.setApplicationNightMode) */
+    /** Dark theme only, for every screen of the launcher (minSdk 33: UiModeManager.setApplicationNightMode) */
     static void applyTheme(android.content.Context c) {
         android.app.UiModeManager m = c.getSystemService(android.app.UiModeManager.class);
         if (m == null) return;
-        int t = Prefs.theme(c);
-        m.setApplicationNightMode(t == 1 ? android.app.UiModeManager.MODE_NIGHT_NO : t == 2 ? android.app.UiModeManager.MODE_NIGHT_YES : android.app.UiModeManager.MODE_NIGHT_AUTO);
+        m.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_YES);
     }
 }

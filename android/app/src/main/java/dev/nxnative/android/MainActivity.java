@@ -51,7 +51,7 @@ public final class MainActivity extends Activity {
     private LinearLayout gameBox;   // the game cards (refresh)
     private View accessCard;
     private View background;   // the plain colour behind the screen
-    private Ui.Setting overlayRow, resRow, capRow, upsRow, sharpRow, drsRow, lsfgRow, gpuRow, updateRow, timeRow;
+    private Ui.Setting overlayRow, resRow, renderScaleRow, capRow, upsRow, sharpRow, drsRow, lsfgRow, gpuRow, updateRow, timeRow;
     private boolean resumed, settingsPage;
     private boolean usersPage;   // the Users page (UsersUi) in place of Home
     private String usersEdit;   // the player whose own page it shows, else the page of all players
@@ -286,9 +286,6 @@ public final class MainActivity extends Activity {
         if (v instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) noFocusTint(((ViewGroup) v).getChildAt(i));
     }
 
-    /** The player wiki (its pages are written and kept up to date on the project's site, so the app links to it and keeps no copy) */
-    static final String WIKI_URL = "https://git.eden-emu.dev/moceure/BananaNative/wiki";
-
     // ---- Home: the games as one row of artwork tiles, a dock of round buttons under it, and under the dock what is selected (as the console's home screen) ----
 
     /** What a tile says to the dock's label: the game's name, its state (a TextView kept out of sight, the check writes it) and what the state's chip does */
@@ -307,7 +304,8 @@ public final class MainActivity extends Activity {
     }
 
     private View selectedTile;
-    private View addFab;   // Add game, a round polar button at the bottom right of Home
+    private View addFab;     // Add game button in the top-right dock
+    private ImageView layoutBtn;   // Home layout switcher button in the top-right dock
     private LinearLayout dockRow;
     private TextView userButton;
 
@@ -329,15 +327,7 @@ public final class MainActivity extends Activity {
         fixGap(content, Ui.GAP);
         gameBox = new LinearLayout(this);
         gameBox.setOrientation(LinearLayout.VERTICAL);
-        FrameLayout holder = new FrameLayout(this);   // the games take all the height under the top row; Add game floats at its bottom right
-        holder.setClipChildren(false);
-        holder.addView(gameBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        addFab = addButton();
-        FrameLayout.LayoutParams fl = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.END | Gravity.BOTTOM);
-        fl.setMarginEnd(dp(12));
-        fl.bottomMargin = dp(16);
-        holder.addView(addFab, fl);
-        content.addView(holder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        content.addView(gameBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         refresh();
     }
 
@@ -355,9 +345,33 @@ public final class MainActivity extends Activity {
         gloss.setStroke(dp(1), 0x40FFFFFF);
         dockRow.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{fill, gloss}));
         dockRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-        dockRow.addView(dockButton(R.drawable.ic_wiki, Tx.s(R.string.settings_player_wiki), false, v -> openLink(WIKI_URL)));
+        addFab = dockButton(R.drawable.ic_add, Tx.s(R.string.home_add_game), false, v -> addGame());
+        dockRow.addView(addFab);
+        layoutBtn = (ImageView) dockButton(layoutIcon(HomeLayout.mode(this)), Tx.s(R.string.settings_home_layout), false, v -> cycleLayout());
+        updateLayoutButton();
+        dockRow.addView(layoutBtn);
         dockRow.addView(dockButton(R.drawable.ic_settings, Tx.s(R.string.home_settings), false, v -> page(true)));
         return dockRow;
+    }
+
+    private int layoutIcon(int mode) {
+        return mode == HomeLayout.ROW ? R.drawable.ic_layout_row : mode == HomeLayout.LIST ? R.drawable.ic_layout_list : R.drawable.ic_layout_grid;
+    }
+
+    private void updateLayoutButton() {
+        if (layoutBtn == null) return;
+        int m = HomeLayout.mode(this);
+        String label = Tx.s(R.string.settings_home_layout) + ": " + Tx.arr(R.array.arr_home_layout)[m];
+        layoutBtn.setImageDrawable(Ui.icon(this, layoutIcon(m), R.color.bn_text));
+        layoutBtn.setContentDescription(label);
+        layoutBtn.setTooltipText(label);
+    }
+
+    private void cycleLayout() {
+        int next = (HomeLayout.mode(this) + 1) % 3;
+        Prefs.homeLayout(this, next);
+        updateLayoutButton();
+        refresh();
     }
 
     /** The first letter of the user games start with */
@@ -574,24 +588,6 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    /** Settings › Appearance › Language: System default first, then each language by its own name (Languages); the system recreates the screens after a pick */
-    private Ui.Setting languageRow() {
-        Ui.Setting row = new Ui.Setting(this, "🌐", Tx.s(R.string.settings_language_title), null).chevron(this);
-        row.value(Languages.current(this));
-        row.view.setOnClickListener(v -> {
-            String[] names = new String[Languages.LIST.length + 1];
-            names[0] = Languages.systemLabel();
-            for (int i = 0; i < Languages.LIST.length; i++) names[i + 1] = Languages.LIST[i].label();
-            Languages.Lang cur = Languages.picked(this);
-            int sel = 0;
-            for (int i = 0; i < Languages.LIST.length; i++) if (Languages.LIST[i] == cur) sel = i + 1;
-            new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_language_title))
-                    .setSingleChoiceItems(names, sel, (d, w) -> { d.dismiss(); Languages.apply(this, w == 0 ? null : Languages.LIST[w - 1]); })
-                    .setNegativeButton(Tx.s(R.string.common_cancel), null).show();
-        });
-        return row;
-    }
-
     /** A big group caption over the small section labels (General / System), without the "section" tag the wide-screen split uses */
     private void groupLabel(LinearLayout content, int res) {
         TextView t = Ui.text(this, Tx.s(res), 12, R.color.bn_accent, 700);
@@ -615,34 +611,12 @@ public final class MainActivity extends Activity {
         upd.addView(new Ui.Setting(this, "🩹", Tx.s(R.string.settings_small_fix_updates), null)
                 .toggle(this, Prefs.hotfixUpdates(this), (b, on) -> Prefs.hotfixUpdates(this, on))
                 .value(Tx.s(R.string.settings_small_fix_updates_help)).view);
-        upd.addView(new Ui.Setting(this, "📖", Tx.s(R.string.settings_player_wiki), v -> openLink(WIKI_URL)).chevron(this)
-                .value(Tx.s(R.string.settings_guides_what_every_setting_does)).view);
-
-        Ui.add(content, Ui.section(this, Tx.s(R.string.common_appearance)), Ui.SECTION_GAP);
-        LinearLayout look = settingsCard(content);
-        look.addView(languageRow().view);
-        Ui.Setting theme = new Ui.Setting(this, "🌗", Tx.s(R.string.settings_theme), null).chevron(this);
-        theme.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_theme))
-                .setSingleChoiceItems(Tx.arr(R.array.arr_theme), Prefs.theme(this), (d, w) -> { Prefs.theme(this, w); d.dismiss(); NxApp.applyTheme(this); })
-                .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        theme.value(Tx.arr(R.array.arr_theme)[Prefs.theme(this)]);
-        look.addView(theme.view);
-        Ui.Setting lay = new Ui.Setting(this, "\uD83D\uDDC2\uFE0F", Tx.s(R.string.settings_home_layout), null).chevron(this);
-        lay.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_home_layout))
-                .setSingleChoiceItems(Tx.arr(R.array.arr_home_layout), HomeLayout.mode(this), (d, w) -> {
-                    d.dismiss();
-                    Prefs.homeLayout(this, w);
-                    lay.value(Tx.arr(R.array.arr_home_layout)[w]);   // Home is built again when Settings closes
-                }).setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        lay.value(Tx.arr(R.array.arr_home_layout)[HomeLayout.mode(this)]);
-        look.addView(lay.view);
 
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_display)), Ui.SECTION_GAP);
         LinearLayout play = settingsCard(content);
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_controls)), Ui.SECTION_GAP);
         LinearLayout ctl = settingsCard(content);
-        groupLabel(content, R.string.settings_group_system);
-        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), 12);
+        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), Ui.SECTION_GAP);
         LinearLayout sys = settingsCard(content);
         // Every default a game inherits and its own page can override: one collapsed group, after the settings that only exist here
         LinearLayout perf = defaultsGroup(content);
@@ -679,6 +653,8 @@ public final class MainActivity extends Activity {
         resRow = new Ui.Setting(this, "🖼️", Tx.s(R.string.common_resolution), v -> gameRes()).chevron(this);
         perf.addView(resRow.view);
         if (!Profile.anyResolution()) resRow.view.setVisibility(View.GONE);   // no game of this APK has a window_fn or graphics_scale lever: the default would do nothing
+        renderScaleRow = new Ui.Setting(this, "🔎", "Render scale (Handheld/Docked)", v -> pick("Render scale (Handheld/Docked)", Prefs.RENDER_SCALE_NAMES, Prefs.renderScale(this), w -> Prefs.renderScaleDefault(this, w))).chevron(this);
+        perf.addView(renderScaleRow.view);
         capRow = new Ui.Setting(this, "⏱️", Tx.s(R.string.common_frame_rate_cap), v -> fpsCap()).chevron(this);
         perf.addView(capRow.view);
         ctl.addView(new Ui.Setting(this, "📳", Tx.s(R.string.common_rumble), null).toggle(this, Prefs.rumble(this), (b, on) -> Prefs.rumbleDefault(this, on))
@@ -795,6 +771,7 @@ public final class MainActivity extends Activity {
         for (String[] it : Overlay.ITEMS) if (Prefs.overlayItem(this, it[0])) n++;
         overlayRow.value(ov ? Tx.s(R.string.home_on_n_of_m_items, n, Overlay.ITEMS.length) : Tx.s(R.string.game_off));
         resRow.value(resLabel());
+        renderScaleRow.value(Prefs.RENDER_SCALE_NAMES[Prefs.renderScale(this)]);
         capRow.value(capLabel(Prefs.fpsCap(this)));
         upsRow.value(Tx.arr(R.array.arr_upscaler_modes)[GameUpscaler.mode(this)]);
         sharpRow.value(GameUpscaler.sharpName(GameUpscaler.sharp(this)));
@@ -1223,22 +1200,6 @@ public final class MainActivity extends Activity {
             if (row.getPaddingLeft() != pad || row.getPaddingRight() != pad) row.setPadding(pad, 0, pad, 0);
         });
         return row;
-    }
-
-    /** Add game: a round polar-yellow button (the plus of the dock's yellow), floating at the bottom right of Home */
-    private View addButton() {
-        ImageView b = new ImageView(this);
-        b.setImageDrawable(Ui.icon(this, R.drawable.ic_add, R.color.bn_on_polar));
-        b.setPadding(dp(16), dp(16), dp(16), dp(16));
-        b.setBackground(Ui.round(Ui.col(this, R.color.bn_polar), dp(999), 0, 0));
-        b.setForeground(ring(999, false));
-        b.setElevation(dp(8));
-        b.setContentDescription(Tx.s(R.string.home_add_game));
-        b.setTooltipText(Tx.s(R.string.home_add_game));
-        b.setClickable(true);
-        b.setFocusable(true);
-        b.setOnClickListener(v -> addGame());
-        return b;
     }
 
     private int layoutNow = HomeLayout.ROW;   // the layout Home was built in (Prefs.homeLayout, read at each refresh)

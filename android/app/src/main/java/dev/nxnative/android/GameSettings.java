@@ -260,12 +260,14 @@ final class GameSettings {
     }
 
     /** A controller's L1 / R1: the next (+1) or previous (-1) tab of the game's page, round; false when there is nothing to switch to */
+    private static boolean tabAnim;
     static boolean stepTab(Game g, int delta) {
         String[] keys = new String[] {INFO, SETTINGS, MISC};
         int cur = Math.max(0, Arrays.asList(keys).indexOf(tab));
         int next = PadPanel.tab(cur, delta, keys.length);
         if (next == cur) return false;
         tab = keys[next];
+        tabAnim = true;
         return true;
     }
 
@@ -296,9 +298,17 @@ final class GameSettings {
         final LinearLayout content;
         if (wide) content = split(a, outer, g, missing == null, keys, labels, t, close);   // the game and its tabs at the left, the tab's page at the right
         else {
-            topBar(a, outer, g, missing == null, close);
-            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 10);
-            content = outer;
+            topBar(a, outer, g, missing == null, false, close);
+            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; tabAnim = true; a.gameSettingsTop(); }), 10);
+            content = new LinearLayout(a);
+            content.setOrientation(LinearLayout.VERTICAL);
+            outer.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        if (tabAnim) {
+            tabAnim = false;
+            content.setAlpha(0f);
+            content.setTranslationY(Ui.dp(a, 10));
+            content.animate().alpha(1f).translationY(0f).setDuration(170).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
         }
         if (missing != null) Ui.add(content, Ui.small(a, missing), 12);
         if (Edition.offered(g)) {   // a set with a Switch 2 Edition (program 1) whose profile this APK has: which one Play starts (Edition); one save for both
@@ -378,6 +388,8 @@ final class GameSettings {
                 picture.add(prepared(new Ui.Setting(a, "🎬", Tx.s(R.string.game_3d_scene), v -> scene(a, g, again)), sceneValue(a, g, SceneRes.presets(prof))).chevron(a));
         }
         if (prof != null && prof.renderCfg()) renderRows(a, g, prof, picture, again);   // Resolution, Upscaling quality, Graphics quality instead of Resolution (a render_cfg row)
+        picture.add(new Ui.Setting(a, "🔎", "Render scale (Handheld/Docked)", v -> renderScale(a, g, again))
+                .value(dflt(Prefs.ownRenderScale(a, id), Prefs.RENDER_SCALE_SHORT[Prefs.renderScale(a, id)])).chevron(a));
         if (simple) {   // the Upscaler stays as stored (GameActivity reads the preference); only testers change it for a game with Resolution presets
         } else if (Prefs.dlssGame(id)) {   // a game on the DLSS stand-in (game.tsv dlss_standin): its Upscaler is the stand-in (GSR2's sliders under GSR 2, the sharpness under FSR 1)
             int dm = GameUpscaler.dlssMode(a, id);
@@ -484,7 +496,7 @@ final class GameSettings {
         { Profile mp = Profile.of(id); if (mp != null && mp.mods) ModsUi.row(a, g, options::add, again); }   // game.tsv mods 1: folders of replacement files over the RomFS
         if (LinkPlay.has(id))
             options.add(new Ui.Setting(a, "🔗", Tx.s(R.string.game_link_play), v -> LinkPlay.dialog(a, g, again)).value(LinkPlay.label(a, id)).chevron(a));
-        options.add(new Ui.Setting(a, "🌐", Tx.s(R.string.game_game_language), v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), phoneTag())).chevron(a));   // not a tester's knob: with the game's options, never folded
+        options.add(new Ui.Setting(a, "🌐", Tx.s(R.string.game_game_language), v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), "en-US")).chevron(a));   // not a tester's knob: with the game's options, never folded
         if (prof != null && prof.timeOfDay)   // the one global setting (Prefs.timeOverride → DM_TIME), here for a game whose day/night cycle follows the user clock
             options.add(new Ui.Setting(a, "🕒", Tx.s(R.string.common_time_of_day), v -> TimeOfDay.dialog(a, again)).value(TimeOfDay.label(a)).chevron(a));
 
@@ -517,11 +529,10 @@ final class GameSettings {
         advanced.add(new Ui.Setting(a, "🧵", Tx.s(R.string.game_background_pipelines), null).toggle(a, Prefs.psoAsync(a, id), (b, on) -> Prefs.psoAsync(a, id, on))
                 .says(Tx.s(R.string.game_a_short_pop_in_not), Tx.s(R.string.game_made_when_first_drawn_may)));
         if (ShaderLibs.layerCovers(id, null)) advanced.add(layerSwitch(a, g, again));   // (a Switch 2 title: the layer serves NVN2 programs only)
-        advanced.add(new Ui.Setting(a, "💾", Tx.s(R.string.game_ram_saver), null).toggle(a, Prefs.ramSaver(a, id), (b, on) -> { Prefs.ramSaver(a, id, on); if (!on) Prefs.ramSaverStrong(a, id, false); })
+        advanced.add(new Ui.Setting(a, "💾", Tx.s(R.string.game_ram_saver), null).toggle(a, Prefs.ramSaver(a, id), (b, on) -> Prefs.ramSaver(a, id, on))
                 .says(Tx.s(R.string.game_texture_data_in_a_file), Tx.s(R.string.game_texture_data_in_compressed_ram)));
-        // The second level: the host reads DM_VK_RAM_SAVER=2 (GameActivity). It includes the first, so turning it on turns RAM saver on (the stored "ram_saver" stays a plain boolean)
-        advanced.add(new Ui.Setting(a, "🗜️", Tx.s(R.string.game_ram_saver_strong), null).toggle(a, Prefs.ramSaverStrong(a, id), (b, on) -> { Prefs.ramSaverStrong(a, id, on); if (on) Prefs.ramSaver(a, id, true); })
-                .says(Tx.s(R.string.game_ram_saver_strong_on), Tx.s(R.string.game_ram_saver_strong_off)));
+        advanced.add(new Ui.Setting(a, "🪶", "Soft textures", null).toggle(a, Prefs.texSoft(a, id), (b, on) -> Prefs.texSoft(a, id, on))
+                .says("Drops finest mip level on large block-compressed textures (saves VRAM/RAM)", "Full texture mip levels (sharpest)"));
         advanced.add(new Ui.Setting(a, "⚡", Tx.s(R.string.common_use_fast_cores), null).toggle(a, Prefs.pinThreads(a, id), (b, on) -> Prefs.pinThreads(a, id, on))
                 .says(Tx.s(R.string.game_busy_threads_off_the_small), Tx.s(R.string.game_android_places_the_threads)));
         advanced.add(new Ui.Setting(a, "⏸️", Tx.s(R.string.game_pause_on_return), null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on))
@@ -622,7 +633,7 @@ final class GameSettings {
      * The top bar of a game's page, wide or narrow: Back, the game's picture and its name (with its version and publisher once read) in 48 dp; on a narrow window
      * Play ends the bar (a wide window has it in the left column)
      */
-    private static void topBar(MainActivity a, LinearLayout outer, Game g, boolean play, Runnable close) {
+    private static void topBar(MainActivity a, LinearLayout outer, Game g, boolean play, boolean compact, Runnable close) {
         // A cover banner, with Back and Play over it and the name and version under it
         android.widget.FrameLayout hero = new android.widget.FrameLayout(a);
         hero.setOutlineProvider(new android.view.ViewOutlineProvider() {
@@ -636,6 +647,15 @@ final class GameSettings {
         ImageView shade = new ImageView(a);
         shade.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x55000000, 0xDD000000}));
         hero.addView(shade, new android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        int artSide = Ui.dp(a, compact ? 56 : 96);
+        ImageView art = new ImageView(a);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View v, android.graphics.Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(a, 14)); }
+        });
+        art.setClipToOutline(true);
+        art.setVisibility(View.GONE);
+        hero.addView(art, new android.widget.FrameLayout.LayoutParams(artSide, artSide, Gravity.CENTER));
         android.widget.FrameLayout.LayoutParams backLp = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.START);
         backLp.setMargins(Ui.dp(a, 10), Ui.dp(a, 10), 0, 0);
         hero.addView(Ui.back(a, v -> close.run()), backLp);
@@ -646,7 +666,7 @@ final class GameSettings {
             pl.setMargins(0, Ui.dp(a, 10), Ui.dp(a, 10), 0);
             hero.addView(b, pl);
         }
-        outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 132)));
+        outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, compact ? 76 : 132)));
         LinearLayout bar = Ui.row(a);
         bar.setMinimumHeight(Ui.dp(a, 52));
         bar.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
@@ -670,10 +690,28 @@ final class GameSettings {
         bar.addView(Ui.more(a, Tx.s(R.string.game_game_options), v -> a.optionsMenu(g)), new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44)));
         Ui.add(outer, bar, 10, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
+        boolean[] hasLandscape = {false};
         Covers.show(tile, g);
+        if (!ownCover) {
+            CoverFetch.hero(a, g.titleId, g.name, bmp -> {
+                if (bmp == null || a.isFinishing() || a.isDestroyed()) return;
+                hasLandscape[0] = true;
+                banner.setImageBitmap(bmp);
+                banner.setAlpha(1.0f);
+                art.setVisibility(View.GONE);
+            });
+        }
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
             if (m == null) return;
-            if (m.icon != null && !ownCover) { Ui.tileIcon(tile, m.icon); banner.setImageBitmap(m.icon); }
+            if (m.icon != null) {
+                Ui.tileIcon(tile, m.icon);
+                if (!ownCover && !hasLandscape[0]) {
+                    banner.setImageBitmap(m.icon);
+                    banner.setAlpha(0.28f);
+                    art.setImageBitmap(m.icon);
+                    art.setVisibility(View.VISIBLE);
+                }
+            }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }
         });
@@ -684,26 +722,26 @@ final class GameSettings {
      * scrolls on its own) is returned for the tab's page
      */
     private static LinearLayout split(MainActivity a, LinearLayout outer, Game g, boolean play, String[] keys, String[] labels, int sel, Runnable close) {
-        topBar(a, outer, g, false, close);   // Back, the game's picture and its name; under it the left column and the page
         LinearLayout body = new LinearLayout(a);
         body.setOrientation(LinearLayout.HORIZONTAL);
-        Ui.add(outer, body, 8, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        outer.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         LinearLayout left = new LinearLayout(a);
         left.setOrientation(LinearLayout.VERTICAL);
         android.widget.ScrollView ls = new android.widget.ScrollView(a);
         ls.setVerticalScrollBarEnabled(false);
         ls.addView(left);
-        body.addView(ls, new LinearLayout.LayoutParams(Ui.dp(a, 180), ViewGroup.LayoutParams.MATCH_PARENT));
+        body.addView(ls, new LinearLayout.LayoutParams(Ui.dp(a, 220), ViewGroup.LayoutParams.MATCH_PARENT));
+        topBar(a, left, g, false, true, close);
         if (play) {
             android.widget.Button b = Ui.button(a, Tx.s(R.string.common_play), Ui.Kind.PRIMARY, v -> a.launch(g));
             b.setCompoundDrawablesRelativeWithIntrinsicBounds(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_polar), null, null, null);
             b.setCompoundDrawablePadding(Ui.dp(a, 4));
-            left.addView(b, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 44)));
+            Ui.add(left, b, 6, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 42)));
         }
         for (int k = 0; k < keys.length; k++) {
             int i2 = k;
             String e = keys[k].equals(INFO) ? "\u2139\uFE0F" : keys[k].equals(MISC) ? "\uD83E\uDDF0" : "\u2699\uFE0F";
-            TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; a.gameSettingsTop(); });
+            TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; tabAnim = true; a.gameSettingsTop(); });
             n.setMinHeight(Ui.dp(a, 38));
             Ui.add(left, n, k == 0 ? 10 : 0);
         }
@@ -964,7 +1002,7 @@ final class GameSettings {
     /** Game language (DM_LANG, GameLanguage): the phone's language first (the default), then the console's languages; a game without the one picked uses one it has */
     static void language(android.app.Activity a, Game g, Runnable done) {   // the in-game panel's shortcut too
         String[] labels = new String[GameLanguage.CODES.length + 1];
-        labels[0] = GameLanguage.label(null, phoneTag());
+        labels[0] = GameLanguage.label(null, "en-US");
         System.arraycopy(GameLanguage.NAMES, 0, labels, 1, GameLanguage.NAMES.length);
         String m = Prefs.gameLang(a, g.titleId);
         int checked = m == null ? 0 : 1 + Math.max(0, Arrays.asList(GameLanguage.CODES).indexOf(m));
@@ -1106,6 +1144,11 @@ final class GameSettings {
     private static void upscaler(MainActivity a, Game g, Runnable done) {   // the Upscaler (GameUpscaler: DM_VK_NDSR and the present's scaling); the in-game panel changes it live
         choose(a, Tx.s(R.string.game_title_for, Tx.s(R.string.common_upscaler), g.name), Tx.arr(R.array.arr_upscaler_modes), firstLabel(recLabel(Tx.arr(R.array.arr_upscaler_modes), Recommend.UPSCALERS, Prefs.rec(a, g.titleId, Recommend.UPSCALER)), Tx.arr(R.array.arr_upscaler_modes)[GameUpscaler.mode(a)]), GameUpscaler.ownMode(a, g.titleId), GameUpscaler.mode(a, g.titleId),
                v -> GameUpscaler.mode(a, g.titleId, v), done);
+    }
+
+    private static void renderScale(MainActivity a, Game g, Runnable done) {
+        choose(a, Tx.s(R.string.game_title_for, "Render scale (Handheld/Docked)", g.name), Prefs.RENDER_SCALE_NAMES, firstLabel(null, Prefs.RENDER_SCALE_NAMES[Prefs.renderScale(a)]),
+               Prefs.ownRenderScale(a, g.titleId), Prefs.renderScale(a, g.titleId), v -> Prefs.renderScale(a, g.titleId, v), done);
     }
 
     private static void sharpness(MainActivity a, Game g, Runnable done) {   // FSR's RCAS sharpening (GameUpscaler, DM_VK_NDSR_SHARP)

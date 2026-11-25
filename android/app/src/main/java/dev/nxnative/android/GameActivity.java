@@ -539,6 +539,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (prof != null) env.addAll(prof.optionsEnv(optEnv -> Prefs.gameOption(this, id, optEnv)));
         Lsfg.env(this, env);   // frame generation: the user's Lossless.dll and the settings
         GameUpscaler.env(this, id, env);   // the Upscaler (Game settings, the in-game panel): the game's own upscaler and the present's scaling
+        int rsc = Prefs.renderScale(this, id);
+        if (rsc != Prefs.RENDER_SCALE_DEFAULT) env.add("DM_RENDER_SCALE=" + Prefs.RENDER_SCALES[rsc]);
         if (Prefs.drsGame(id)) { int[] drs = Prefs.DRS[Prefs.drs(this, id)]; env.add("DM_DRS=" + drs[0] + "," + drs[1]); }   // dynamic resolution range (Prefs.DRS)
         int cap = Prefs.fpsCap(this, id);   // the game's own frame rate cap (its in-game panel, its Game settings), else the main screen's (unset: the profile's fps_target)
         if (Prefs.paced(id)) {   // speed follows the measured rate: presents on the host's own tick at the display's refresh rate, no interval locking, and a frame limit (Prefs.PACE_CAPS)
@@ -562,8 +564,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (Prefs.skipLayersGame(id) && Prefs.skipLayers(this, id)) env.add("DM_VK_SKIP_FS=" + Prefs.skipLayersKeys(id));   // Game settings › Speedhack: Turn off hidden layers
         if (Prefs.fp16(this, id)) { env.add("TU_DEBUG=fp16"); env.add("FD_MESA_DEBUG=fp16"); }   // Game settings › Fast FP16 shader math
         env.add("DM_VK_PSO_ASYNC=" + (Prefs.psoAsync(this, id) ? 2 : 0));   // Game settings › Background pipelines (an env.txt line of the player's comes later and wins)
-        int ramLevel = Prefs.ramSaverLevel(this, id);   // 0 off, 1 RAM saver, 2 Strong (the host reads DM_VK_RAM_SAVER=2 for the finest two texture levels left out, a sixth of RAM for the texture cache, one background compile at a time)
-        if (ramLevel > 0) { env.add("DM_MEM_FILEBACK=1"); env.add("DM_MEM_FILEBACK_KINDS=shader,texture"); env.add("DM_VK_RAM_SAVER=" + ramLevel); }   // Game settings › RAM saver: texture pools in a file in TMPDIR, the cache folder (vka_mem.c "File-backed pools"); lines of env.txt or the game's own come later and win
+        if (Prefs.ramSaver(this, id)) { env.add("DM_MEM_FILEBACK=1"); env.add("DM_MEM_FILEBACK_KINDS=shader,texture"); env.add("DM_VK_RAM_SAVER=1"); }   // Game settings › RAM saver: texture pools in a file in TMPDIR, the cache folder (vka_mem.c "File-backed pools"); lines of env.txt or the game's own come later and win
+        if (Prefs.texSoft(this, id)) env.add("DM_VK_TEX_SOFT=1");   // Game settings › Soft textures: drop finest mip level of large block-compressed textures
         String padMap = Prefs.padMap(this, id);   // Button mapping (Game settings, Settings): wins over the label swap's A/B for the buttons it names
         if (!padMap.isEmpty()) env.add("DM_PAD_MAP=" + padMap);
         env.add("DM_MOTION_SENS=" + Prefs.motionFactor(this, id));   // Game settings › Controls › Motion sensitivity (the phone's gyro, 50 % unless the player chose; env.txt lines come later and win)
@@ -590,7 +592,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         }
         int picSize = Prefs.pictureSize(this, id);   // the in-game panel's Picture size; 100 (the default) is not passed
         if (picSize < PictureFit.SIZE_MAX) env.add("DM_VK_PICTURE_SIZE=" + picSize);
-        String lang = GameLanguage.env(Prefs.gameLang(this, id), GameSettings.phoneTag());   // Game settings › Game language: the phone's by default (a DM_LANG line of the user's wins)
+        String pickedLang = Prefs.gameLang(this, id);
+        String lang = GameLanguage.env(pickedLang != null ? pickedLang : "en-US", null);   // Game settings › Game language: English (US) by default (a DM_LANG line of the user's wins)
         if (lang != null) env.add(lang);
         env.addAll(Users.env(this));   // Settings › Users: the users the game's account calls list and its user selector offers (hle_account.c), and the one it starts with
         return gpuNote;
@@ -920,7 +923,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
             Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
-            if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
+            if (Prefs.ramSaver(this, id)) Native.note("RAM saver: on (DM_VK_RAM_SAVER=1); frame generation " + (Lsfg.on(this) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");
             Native.note(Recommend.logLine(Prefs.recStates(this, id)));   // each recommended setting with its value and source (yours / recommended / default); env.txt lines come later and win
             if (resNote != null) Native.note(resNote);

@@ -5,11 +5,14 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.LruCache;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -59,11 +62,7 @@ final class CoverFetch {
         POOL.execute(() -> {
             Info info = null;
             try {
-                JSONObject doc = null;
-                if (titleId != null && titleId.matches("(?i)[0-9a-f]{16}"))
-                    doc = search("https://searching.nintendo-europe.com/en/select?q=*:*&fq=type:GAME&fq=application_id_s:" + titleId.toLowerCase(Locale.US) + "&rows=1&wt=json");
-                if (doc == null && name != null && !name.trim().isEmpty())
-                    doc = search("https://searching.nintendo-europe.com/en/select?q=" + URLEncoder.encode(name.replace("™", "").replace("®", "").trim(), "UTF-8") + "&fq=type:GAME&rows=1&wt=json");
+                JSONObject doc = searchNintendo(titleId, name);
                 if (doc != null) {
                     JSONArray cats = doc.optJSONArray("pretty_game_categories_txt");
                     StringBuilder cs = new StringBuilder();
@@ -78,6 +77,35 @@ final class CoverFetch {
             Info ready = info;
             MAIN.post(() -> done.accept(ready));
         });
+    }
+
+    private static JSONObject searchNintendo(String titleId, String name) {
+        try {
+            JSONObject doc = null;
+            if (isTitleId(titleId))
+                doc = search("https://searching.nintendo-europe.com/en/select?q=*:*&fq=type:GAME&fq=application_id_s:" + titleId.toLowerCase(Locale.US) + "&rows=1&wt=json");
+            String clean = cleanName(name);
+            if (doc == null && !clean.isEmpty())
+                doc = search("https://searching.nintendo-europe.com/en/select?q=" + URLEncoder.encode(clean, "UTF-8") + "&fq=type:GAME&rows=1&wt=json");
+            return doc;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static boolean isTitleId(String titleId) {
+        if (titleId == null || titleId.length() != 16) return false;
+        for (int i = 0; i < 16; i++) {
+            char ch = titleId.charAt(i);
+            boolean hex = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+            if (!hex) return false;
+        }
+        return true;
+    }
+
+    private static String cleanName(String name) {
+        if (name == null) return "";
+        return name.replace("™", "").replace("®", "").replace("©", "").trim();
     }
 
     private static JSONObject search(String url) {
@@ -108,8 +136,157 @@ final class CoverFetch {
 
     private static final Map<String, List<Callback>> inFlight = new HashMap<>();
     private static final Set<String> missed = new HashSet<>();
+    private static final Map<String, List<Callback>> heroInFlight = new HashMap<>();
+    private static final Set<String> heroMissed = new HashSet<>();
+    private static final LruCache<String, Bitmap> heroMem = new LruCache<>(8);
     private static final Map<String, Info> infos = new HashMap<>();
     private static final Set<String> infoMissed = new HashSet<>();
+
+    /**
+     * Fetches a landscape hero banner (from disk cache first, then Nintendo Europe's 2:1/16:9
+     * wishlist/share banners, with a Steam storefront header fallback) and invokes {@code cb} on
+     * the main thread. Does nothing when offline or no landscape banner is found.
+     */
+    static void hero(Context c, String titleId, String name, Callback cb) {
+        if (c == null || cb == null) return;
+        String key = heroKey(titleId, name);
+        if (key.isEmpty()) return;
+        Bitmap cached = heroMem.get(key);
+        if (cached != null && !cached.isRecycled()) { cb.onCover(cached); return; }
+        Context app = c.getApplicationContext();
+        synchronized (heroInFlight) {
+            if (heroMissed.contains(key)) return;
+            List<Callback> waiters = heroInFlight.get(key);
+            if (waiters != null) { waiters.add(cb); return; }
+            waiters = new ArrayList<>(1);
+            waiters.add(cb);
+            heroInFlight.put(key, waiters);
+        }
+        POOL.execute(() -> {
+            Bitmap bmp = null;
+            try {
+                File file = new File(new File(app.getCacheDir(), "heroes"), key + ".jpg");
+                if (file.isFile() && file.length() > 128) {
+                    bmp = decodeLandscape(BitmapFactory.decodeFile(file.getAbsolutePath()));
+                }
+                if (bmp == null) {
+                    bmp = fetchLandscapeBanner(titleId, name, file);
+                }
+                if (bmp != null) heroMem.put(key, bmp);
+            } catch (Throwable ignored) {
+                bmp = null;
+            }
+            List<Callback> waiters;
+            synchronized (heroInFlight) {
+                waiters = heroInFlight.remove(key);
+                if (bmp == null) heroMissed.add(key);
+            }
+            if (bmp != null && waiters != null && !waiters.isEmpty()) {
+                Bitmap ready = bmp;
+                MAIN.post(() -> {
+                    for (Callback w : waiters) w.onCover(ready);
+                });
+            }
+        });
+    }
+
+    private static String heroKey(String titleId, String name) {
+        if (isTitleId(titleId)) return titleId.toLowerCase(Locale.US);
+        String clean = cleanName(name).toLowerCase(Locale.US);
+        return clean.isEmpty() ? "" : Integer.toHexString(clean.hashCode());
+    }
+
+    private static Bitmap fetchLandscapeBanner(String titleId, String name, File cacheFile) {
+        String[] urls = {
+                nintendoBannerUrl(titleId, name),
+                steamBannerUrl(name)
+        };
+        for (String url : urls) {
+            if (url == null || url.isEmpty()) continue;
+            if (url.startsWith("//")) url = "https:" + url;
+            byte[] data = httpGet(url, MAX_IMAGE_BYTES);
+            if (data == null || data.length < 128) continue;
+            Bitmap bmp = decodeLandscape(BitmapFactory.decodeByteArray(data, 0, data.length));
+            if (bmp != null) {
+                saveHeroCache(cacheFile, bmp);
+                return bmp;
+            }
+        }
+        return null;
+    }
+
+    private static String nintendoBannerUrl(String titleId, String name) {
+        JSONObject doc = searchNintendo(titleId, name);
+        if (doc == null) return null;
+        String[] fields = {
+                "wishlist_email_banner640w_image_url_s",
+                "image_url_h2x1_s",
+                "wishlist_email_banner460w_image_url_s"
+        };
+        for (String f : fields) {
+            String u = doc.optString(f, "");
+            if (!u.isEmpty()) return u;
+        }
+        return null;
+    }
+
+    private static String steamBannerUrl(String name) {
+        String clean = cleanName(name);
+        if (clean.isEmpty()) return null;
+        try {
+            String url = "https://store.steampowered.com/api/storesearch/?term="
+                    + URLEncoder.encode(clean, "UTF-8") + "&l=english&cc=US";
+            byte[] bytes = httpGet(url, MAX_JSON_BYTES);
+            if (bytes == null) return null;
+            JSONObject root = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            JSONArray items = root.optJSONArray("items");
+            if (items == null || items.length() == 0) return null;
+            String needle = normTitle(clean);
+            for (int i = 0; i < Math.min(items.length(), 3); i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                String itemNorm = normTitle(item.optString("name", ""));
+                if (itemNorm.isEmpty()) continue;
+                if (itemNorm.equals(needle) || itemNorm.contains(needle) || needle.contains(itemNorm)) {
+                    int appId = item.optInt("id", 0);
+                    if (appId > 0)
+                        return "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" + appId + "/header.jpg";
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static String normTitle(String s) {
+        return s.toLowerCase(Locale.US).replaceAll("[^a-z0-9]", "");
+    }
+
+    private static Bitmap decodeLandscape(Bitmap raw) {
+        if (raw == null) return null;
+        int w = raw.getWidth(), h = raw.getHeight();
+        if (w < 200 || h < 100 || w <= h) {
+            raw.recycle();
+            return null;
+        }
+        return raw;
+    }
+
+    private static void saveHeroCache(File dst, Bitmap bmp) {
+        File dir = dst.getParentFile();
+        if (dir != null && !dir.isDirectory() && !dir.mkdirs()) return;
+        File tmp = new File(dst.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp)) {
+            if (bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)) {
+                out.flush();
+                if (!tmp.renameTo(dst)) tmp.delete();
+            } else {
+                tmp.delete();
+            }
+        } catch (IOException ignored) {
+            tmp.delete();
+        }
+    }
 
     /** Fetches a cover in the background if the game has none yet; invokes cb on the main thread when saved. */
     static void fetchIfMissing(Context c, Game g, AtomicBoolean hasLocalIcon, Callback cb) {

@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Polar
-Comment=Runs prepared Switch game packs natively on aarch64 Linux
-Exec=AppRun %f
-Icon=polar
-Categories=Game;
-Terminal=false
