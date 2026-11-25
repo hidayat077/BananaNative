@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100853015E86000
+  nxGames: "0100853015E86000"
 
 jobs:
   apk:
