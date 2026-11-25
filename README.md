@@ -11,7 +11,7 @@ It runs Switch and Switch 2 games on Android phones from your own console dumps.
 
 ## Requirements
 
-- Android 13+ phone with a Snapdragon (Adreno) GPU
+- Android 13+ phone with a Snapdragon (Adreno) GPU; Android 12/12L works with the experimental Android 12 build
 - Your own game dump (`base/`, `updates/<version>/`, `dlc/`, or a `.nup` package)
 
 ## Setup

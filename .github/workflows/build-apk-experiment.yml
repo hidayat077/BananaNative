@@ -1,4 +1,4 @@
-# Experimental APK build for add_whatremains testing (uploads artifact only, never publishes a release).
+# Experimental Android 12 APK build for add_whatremains testing (uploads artifact only, never publishes a release).
 name: build-apk-experiment
 
 on:
@@ -91,9 +91,9 @@ jobs:
           CCACHE_COMPRESS: '1'
         run: |
           ccache -z
-          ./gradlew -PnxGames=$nxGames -PnxApp=exp -PnxVersionCode=${{ github.run_number }} --build-cache apk
+          ./gradlew -PnxGames=$nxGames -PnxApp=exp -PnxMinSdk=31 -PnxVersionCode=${{ github.run_number }} --build-cache apk
           ccache -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: polar-android-exp
-          path: android/app/out/nxnative-android-exp.apk
+          path: android/app/out/nxnative-android-exp-android12.apk
