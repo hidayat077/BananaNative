@@ -3,7 +3,7 @@ name: build-apk
 
 on:
   push:
-    branches: [android, add_game_profile]
+    branches: [android]
     tags: ['v*']
   workflow_dispatch:
 
