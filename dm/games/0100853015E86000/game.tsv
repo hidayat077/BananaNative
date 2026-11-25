@@ -37,6 +37,11 @@ sys_resource	0x0
 # (main+0x2614c58). As in Catherine: Full Body, report 96 MB used; the heap request then fits beside the modules.
 mem_used	0x6000000
 
+# ---- Graphics ----
+# The game calls SetRenderEnableConditional ([RED] SetRenderEnableConditional: the host draws anyway for now). Evaluate its conditions at replay instead of drawing
+# unconditionally: one of the remaining leads for the FSR2 ghosting is a clear or history update that should be skipped (2026-11-26, experimental).
+render_cond	on
+
 # ---- Shader split (shader_split.py) ----
 # The whole RomFS is NMSARC*.pak; the compiled shaders are expected in NMSARC.Shaders.pak.
 shader_groups	/NMSARC.Shaders.pak=shaders .pak=pak

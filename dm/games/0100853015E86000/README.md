@@ -45,7 +45,7 @@ Status: reaches in-game (~12–24 fps on Turnip on Snapdragon 870 / Adreno 650, 
 ## Open
 
 - Verify the uncompressed BC storage alias above on the phone (system driver and Turnip), then check whether any `genmipmap_comp_compressbc*` passes target mip-level offsets (`dst->mem + nvn_tex_level_offset(...)`) and re-check third-person Exosuit textures.
-- Evaluate `render_cond` (`SetRenderEnableConditional` currently logs `[RED]` and draws unconditionally) and optimize GPU frame time (~12–24 fps in-game on Adreno 650 / Turnip; RSS ~2.1 GiB).
+- `render_cond` is now enabled in the profile (it used to log `[RED] SetRenderEnableConditional: the host draws anyway`), an experiment for the FSR2 ghosting: a clear or history update the game guards with a condition may be running when it should not. Needs a phone run to accept or revert. Also optimize GPU frame time (~12–24 fps in-game on Adreno 650 / Turnip; RSS ~2.1 GiB).
 - Retest on the Qualcomm system driver as well as Turnip without `TU_DEBUG=nolrz` workaround if needed.
 - Measure the memory layout on a phone, and check that the 4 GB block is large enough for the game's heaps across longer sessions.
 - Check the 6 geometry shaders and the 129 compute shaders in a run: their thread groups and shared memory come from the control sections and have no PC version to compare with.
