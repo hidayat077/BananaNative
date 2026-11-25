@@ -215,7 +215,7 @@ static int init_once(void) {
     // VK_EXT_attachment_feedback_loop_layout + _dynamic_state: a draw that samples a level its own pass draws into announces it (vka_draw.c) so a tiling driver (Turnip) renders that pass in system memory
     const char *fbl_env = getenv("DM_VK_FB_LOOP");
     int x_fbl = has_ext(de, nde, VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME) && has_ext(de, nde, VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME) &&
-                !(fbl_env && !strcmp(fbl_env, "0"));
+                fbl_env && atoi(fbl_env) > 0;
     if (x_fbl) { dext[ndext++] = VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME; dext[ndext++] = VK_EXT_ATTACHMENT_FEEDBACK_LOOP_DYNAMIC_STATE_EXTENSION_NAME; }
     // GPU timestamps on the host clock, for DM_VK_TSCAL (vka_exec.c): where the device has calibrated timestamps
     const char *x_cal = has_ext(de, nde, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) ? VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME
@@ -272,7 +272,7 @@ static int init_once(void) {
     VKA_DEVICE_FNS(D)
 #undef D
     if (V.fb_loop && !vk.vkCmdSetAttachmentFeedbackLoopEnableEXT) V.fb_loop = 0;
-    VLOG("attachment feedback loops: %s", V.fb_loop ? "on (VK_EXT_attachment_feedback_loop_dynamic_state; DM_VK_FB_LOOP=0 off)" : "off");
+    VLOG("attachment feedback loops: %s", V.fb_loop ? "on (VK_EXT_attachment_feedback_loop_dynamic_state)" : "off (DM_VK_FB_LOOP=1 on)");
     fp_wrap_compiles();
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
