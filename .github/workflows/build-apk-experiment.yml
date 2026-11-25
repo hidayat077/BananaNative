@@ -1,9 +1,9 @@
-# Experimental APK build for performance_optimization testing (uploads artifact only, never publishes a release).
+# Experimental APK build for nomansky_fix testing (uploads artifact only, never publishes a release).
 name: build-apk-experiment
 
 on:
   push:
-    branches: [performance_optimization]
+    branches: [nomansky_fix]
   workflow_dispatch:
 
 permissions:

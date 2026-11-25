@@ -4,6 +4,8 @@
 // (even when empty at first use, tracked for later CPU writes).
 // Switch 1 (NVN1): memory is not coherent, so only storage that holds non-zero bytes at first use is uploaded;
 // an all-zero storage keeps GPU-content behaviour so reused pool slots' leftovers are not uploaded.
+// Render targets (COMPRESSIBLE) and shader images are GPU content on both: their storage may hold an earlier
+// frame's picture, which must not be uploaded into a texture object the game has not drawn into yet.
 #ifndef VKA_TEXCONTENT_H
 #define VKA_TEXCONTENT_H
 #include "../nvn/include/nvn.h"
@@ -11,8 +13,9 @@
 static inline int vka_tc_sampled_content(int nvn2, unsigned texflags, unsigned poolflags, int has_layout, int compressed_fmt, int fmt_kind, int sampled, int has_data) {
     if (!sampled || has_layout || compressed_fmt || fmt_kind >= 3) return 0;
     if (poolflags & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL)) return 0;
-    if (texflags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE)) return 0;
-    if (nvn2) return !(texflags & NVN_TEXTURE_FLAGS_COMPRESSIBLE);
+    if (texflags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_LINEAR |
+                    NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE)) return 0;
+    if (nvn2) return 1;
     return has_data;
 }
 #endif
