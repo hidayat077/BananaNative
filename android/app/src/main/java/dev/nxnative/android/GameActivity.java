@@ -564,8 +564,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         if (Prefs.skipLayersGame(id) && Prefs.skipLayers(this, id)) env.add("DM_VK_SKIP_FS=" + Prefs.skipLayersKeys(id));   // Game settings › Speedhack: Turn off hidden layers
         if (Prefs.fp16(this, id)) { env.add("TU_DEBUG=fp16"); env.add("FD_MESA_DEBUG=fp16"); }   // Game settings › Fast FP16 shader math
         env.add("DM_VK_PSO_ASYNC=" + (Prefs.psoAsync(this, id) ? 2 : 0));   // Game settings › Background pipelines (an env.txt line of the player's comes later and wins)
-        int ramLevel = Prefs.ramSaverLevel(this, id);   // 0 off, 1 RAM saver, 2 Strong (the host reads DM_VK_RAM_SAVER=2 for the finest two texture levels left out, a sixth of RAM for the texture cache, one background compile at a time)
-        if (ramLevel > 0) { env.add("DM_MEM_FILEBACK=1"); env.add("DM_MEM_FILEBACK_KINDS=shader,texture"); env.add("DM_VK_RAM_SAVER=" + ramLevel); }   // Game settings › RAM saver: texture pools in a file in TMPDIR, the cache folder (vka_mem.c "File-backed pools"); lines of env.txt or the game's own come later and win
+        if (Prefs.ramSaver(this, id)) { env.add("DM_MEM_FILEBACK=1"); env.add("DM_MEM_FILEBACK_KINDS=shader,texture"); env.add("DM_VK_RAM_SAVER=1"); }   // Game settings › RAM saver: texture pools in a file in TMPDIR, the cache folder (vka_mem.c "File-backed pools"); lines of env.txt or the game's own come later and win
+        if (Prefs.texSoft(this, id)) env.add("DM_VK_TEX_SOFT=1");   // Game settings › Soft textures: drop finest mip level of large block-compressed textures
         String padMap = Prefs.padMap(this, id);   // Button mapping (Game settings, Settings): wins over the label swap's A/B for the buttons it names
         if (!padMap.isEmpty()) env.add("DM_PAD_MAP=" + padMap);
         env.add("DM_MOTION_SENS=" + Prefs.motionFactor(this, id));   // Game settings › Controls › Motion sensitivity (the phone's gyro, 50 % unless the player chose; env.txt lines come later and win)
@@ -923,7 +923,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             }
             if (testSave != null) Native.note("[nxlaunch] test app: DM_SAVE from env-" + id + ".txt: " + testSave);
             Native.note("frame generation: " + (Lsfg.on(this) ? "on" : "off") + "; " + Lsfg.note);
-            if (Prefs.ramSaverLevel(this, id) == 2) Native.note("RAM saver: Strong (DM_VK_RAM_SAVER=2); frame generation " + (Lsfg.on(this) ? "on" : "off"));
+            if (Prefs.ramSaver(this, id)) Native.note("RAM saver: on (DM_VK_RAM_SAVER=1); frame generation " + (Lsfg.on(this) ? "on" : "off"));
             Native.note(gpuNote + " (picked in the launcher; a DM_VK_DRIVER line in env.txt wins, the host's [vk] driver line says which ran)");
             Native.note(Recommend.logLine(Prefs.recStates(this, id)));   // each recommended setting with its value and source (yours / recommended / default); env.txt lines come later and win
             if (resNote != null) Native.note(resNote);

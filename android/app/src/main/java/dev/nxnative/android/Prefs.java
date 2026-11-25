@@ -218,7 +218,7 @@ final class Prefs {
     /** The recommended frame rate cap as the launcher stores it (Recommend.cap), null for none */
     static Integer recCap(Context c, String titleId) { return Recommend.cap(rec(c, titleId, Recommend.FPS_CAP), limited(titleId)); }
     /** Game settings › Reset to defaults: every choice of the game's own back to the main screen's default (Extra environment's lines stay) */
-    static final String[] GAME_SETTINGS = {"window", "render_pct", "gfx_quality", "fps_cap", "gpu_driver", "gpu_ts", "pause_return", "ndsr_choice2", "ndsr_sharp", "drs2", "ram_saver", "ram_saver_strong", "decouple", "hold60", "full_vegetation", "gsr2_clarity", "dlss_sharp", "dlss_mode", "scene_res", "res_preset", "aspect", "cheats", "screen_scale"};
+    static final String[] GAME_SETTINGS = {"window", "render_pct", "gfx_quality", "fps_cap", "gpu_driver", "gpu_ts", "pause_return", "ndsr_choice2", "ndsr_sharp", "drs2", "ram_saver", "tex_soft", "decouple", "hold60", "full_vegetation", "gsr2_clarity", "dlss_sharp", "dlss_mode", "scene_res", "res_preset", "aspect", "cheats", "screen_scale"};
     static void resetGame(Context c, String titleId) {
         SharedPreferences.Editor e = of(c).edit();
         for (String k : GAME_SETTINGS) e.remove(gameKey(k, titleId));
@@ -546,10 +546,9 @@ final class Prefs {
      */
     static boolean ramSaver(Context c, String titleId) { return of(c).getBoolean(gameKey("ram_saver", titleId), false); }
     static void ramSaver(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("ram_saver", titleId), on).commit(); }
-    /** RAM saver Strong (a second switch beside RAM saver; the stored "ram_saver" stays a boolean, so old true = level 1): off 0, saver 1, strong 2. Strong includes the saver */
-    static boolean ramSaverStrong(Context c, String titleId) { return of(c).getBoolean(gameKey("ram_saver_strong", titleId), false); }
-    static void ramSaverStrong(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("ram_saver_strong", titleId), on).commit(); }
-    static int ramSaverLevel(Context c, String titleId) { return ramSaverStrong(c, titleId) ? 2 : ramSaver(c, titleId) ? 1 : 0; }
+    /** Soft textures (DM_VK_TEX_SOFT=1): drops the finest mip level of large block-compressed textures to save memory */
+    static boolean texSoft(Context c, String titleId) { return of(c).getBoolean(gameKey("tex_soft", titleId), false); }
+    static void texSoft(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("tex_soft", titleId), on).commit(); }
     /** Game settings › Classic render passes (DM_VK_CLASSIC_RP): VkRenderPasses with imageless framebuffers instead of dynamic rendering. Off by default (a GPU loss on Adreno 830 with Turnip, open) */
     static boolean classicPasses(Context c, String titleId) { return of(c).getBoolean(gameKey("vk_classic_rp", titleId), false); }
     static void classicPasses(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("vk_classic_rp", titleId), on).commit(); }

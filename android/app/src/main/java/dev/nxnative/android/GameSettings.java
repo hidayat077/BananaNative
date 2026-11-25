@@ -260,12 +260,14 @@ final class GameSettings {
     }
 
     /** A controller's L1 / R1: the next (+1) or previous (-1) tab of the game's page, round; false when there is nothing to switch to */
+    private static boolean tabAnim;
     static boolean stepTab(Game g, int delta) {
         String[] keys = new String[] {INFO, SETTINGS, MISC};
         int cur = Math.max(0, Arrays.asList(keys).indexOf(tab));
         int next = PadPanel.tab(cur, delta, keys.length);
         if (next == cur) return false;
         tab = keys[next];
+        tabAnim = true;
         return true;
     }
 
@@ -297,8 +299,16 @@ final class GameSettings {
         if (wide) content = split(a, outer, g, missing == null, keys, labels, t, close);   // the game and its tabs at the left, the tab's page at the right
         else {
             topBar(a, outer, g, missing == null, false, close);
-            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 10);
-            content = outer;
+            Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; tabAnim = true; a.gameSettingsTop(); }), 10);
+            content = new LinearLayout(a);
+            content.setOrientation(LinearLayout.VERTICAL);
+            outer.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        if (tabAnim) {
+            tabAnim = false;
+            content.setAlpha(0f);
+            content.setTranslationY(Ui.dp(a, 10));
+            content.animate().alpha(1f).translationY(0f).setDuration(170).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
         }
         if (missing != null) Ui.add(content, Ui.small(a, missing), 12);
         if (Edition.offered(g)) {   // a set with a Switch 2 Edition (program 1) whose profile this APK has: which one Play starts (Edition); one save for both
@@ -519,11 +529,10 @@ final class GameSettings {
         advanced.add(new Ui.Setting(a, "🧵", Tx.s(R.string.game_background_pipelines), null).toggle(a, Prefs.psoAsync(a, id), (b, on) -> Prefs.psoAsync(a, id, on))
                 .says(Tx.s(R.string.game_a_short_pop_in_not), Tx.s(R.string.game_made_when_first_drawn_may)));
         if (ShaderLibs.layerCovers(id, null)) advanced.add(layerSwitch(a, g, again));   // (a Switch 2 title: the layer serves NVN2 programs only)
-        advanced.add(new Ui.Setting(a, "💾", Tx.s(R.string.game_ram_saver), null).toggle(a, Prefs.ramSaver(a, id), (b, on) -> { Prefs.ramSaver(a, id, on); if (!on) Prefs.ramSaverStrong(a, id, false); })
+        advanced.add(new Ui.Setting(a, "💾", Tx.s(R.string.game_ram_saver), null).toggle(a, Prefs.ramSaver(a, id), (b, on) -> Prefs.ramSaver(a, id, on))
                 .says(Tx.s(R.string.game_texture_data_in_a_file), Tx.s(R.string.game_texture_data_in_compressed_ram)));
-        // The second level: the host reads DM_VK_RAM_SAVER=2 (GameActivity). It includes the first, so turning it on turns RAM saver on (the stored "ram_saver" stays a plain boolean)
-        advanced.add(new Ui.Setting(a, "🗜️", Tx.s(R.string.game_ram_saver_strong), null).toggle(a, Prefs.ramSaverStrong(a, id), (b, on) -> { Prefs.ramSaverStrong(a, id, on); if (on) Prefs.ramSaver(a, id, true); })
-                .says(Tx.s(R.string.game_ram_saver_strong_on), Tx.s(R.string.game_ram_saver_strong_off)));
+        advanced.add(new Ui.Setting(a, "🪶", "Soft textures", null).toggle(a, Prefs.texSoft(a, id), (b, on) -> Prefs.texSoft(a, id, on))
+                .says("Drops finest mip level on large block-compressed textures (saves VRAM/RAM)", "Full texture mip levels (sharpest)"));
         advanced.add(new Ui.Setting(a, "⚡", Tx.s(R.string.common_use_fast_cores), null).toggle(a, Prefs.pinThreads(a, id), (b, on) -> Prefs.pinThreads(a, id, on))
                 .says(Tx.s(R.string.game_busy_threads_off_the_small), Tx.s(R.string.game_android_places_the_threads)));
         advanced.add(new Ui.Setting(a, "⏸️", Tx.s(R.string.game_pause_on_return), null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on))
@@ -681,15 +690,27 @@ final class GameSettings {
         bar.addView(Ui.more(a, Tx.s(R.string.game_game_options), v -> a.optionsMenu(g)), new LinearLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44)));
         Ui.add(outer, bar, 10, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         boolean ownCover = Covers.hero(banner, g);   // the player's own cover wins over the game's icon
+        boolean[] hasLandscape = {false};
         Covers.show(tile, g);
+        if (!ownCover) {
+            CoverFetch.hero(a, g.titleId, g.name, bmp -> {
+                if (bmp == null || a.isFinishing() || a.isDestroyed()) return;
+                hasLandscape[0] = true;
+                banner.setImageBitmap(bmp);
+                banner.setAlpha(1.0f);
+                art.setVisibility(View.GONE);
+            });
+        }
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
             if (m == null) return;
-            if (m.icon != null && !ownCover) {
+            if (m.icon != null) {
                 Ui.tileIcon(tile, m.icon);
-                banner.setImageBitmap(m.icon);
-                banner.setAlpha(0.28f);
-                art.setImageBitmap(m.icon);
-                art.setVisibility(View.VISIBLE);
+                if (!ownCover && !hasLandscape[0]) {
+                    banner.setImageBitmap(m.icon);
+                    banner.setAlpha(0.28f);
+                    art.setImageBitmap(m.icon);
+                    art.setVisibility(View.VISIBLE);
+                }
             }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }
@@ -720,7 +741,7 @@ final class GameSettings {
         for (int k = 0; k < keys.length; k++) {
             int i2 = k;
             String e = keys[k].equals(INFO) ? "\u2139\uFE0F" : keys[k].equals(MISC) ? "\uD83E\uDDF0" : "\u2699\uFE0F";
-            TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; a.gameSettingsTop(); });
+            TextView n = Ui.navItem(a, e, labels[k], k == sel, v -> { tab = keys[i2]; tabAnim = true; a.gameSettingsTop(); });
             n.setMinHeight(Ui.dp(a, 38));
             Ui.add(left, n, k == 0 ? 10 : 0);
         }
