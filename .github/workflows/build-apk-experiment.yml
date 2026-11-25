@@ -1,9 +1,9 @@
-# Experimental APK build for nomansky_fix testing (uploads artifact only, never publishes a release).
+# Experimental APK build for add_whatremains testing (uploads artifact only, never publishes a release).
 name: build-apk-experiment
 
 on:
   push:
-    branches: [nomansky_fix]
+    branches: [add_whatremains]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: "0100853015E86000"
+  nxGames: "0100853015E86000,010038900DFE0000"
 
 jobs:
   apk:

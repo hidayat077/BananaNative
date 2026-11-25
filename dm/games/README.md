@@ -271,6 +271,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [UnMetal](01008F4014A74000/README.md) | `01008F4014A74000` | 1.2.0 | 14.3.0 | Unepic Fran's own engine (`arcadix`) | OpenGL |
 | [Warhammer Survivors](0100CAA026246000/README.md) | `0100CAA026246000` | 1.0.0 (base) | 21.4.7 | Unity 6000.0.74f1 IL2CPP, FMOD | NVN |
 | [Well Dweller](0100217023F6C000/README.md) | `0100217023F6C000` | 1.0.0 | 22.2.0 | GameMaker Studio 2 (its runner) | OpenGL |
+| [What Remains of Edith Finch](010038900DFE0000/README.md) | `010038900DFE0000` | 1.0.0 (base) | 7.3.0 | Unreal Engine 4 (version 5 pak, shaders inline), Wwise | NVN |
 | [Xenoblade Chronicles 2](0100E95004038000/README.md) | `0100E95004038000` | 2.1.0 | 3.5.0 | Monolith's engine | NVN |
 | [Xenoblade Chronicles 3](010074F013262000/README.md) | `010074F013262000` | 2.2.1 | 12.3.9 | Monolith's engine | NVN |
 | [Xenoblade Chronicles X: Definitive Edition](0100453019AA8000/README.md) | `0100453019AA8000` | 1.0.1 | 19.3.2 | Monolith's engine | NVN |

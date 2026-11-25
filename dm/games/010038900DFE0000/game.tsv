@@ -1,0 +1,40 @@
+# What Remains of Edith Finch (Annapurna Games / Giant Sparrow), base game 1.0.0, Unreal Engine 4 (a version 5 pak with its shaders inline in the cooked packages), SDK 7.3.0, NVN, Wwise.
+# Started from the NSP script's survey (dm/games/profile_guess.py) and the pak listing; bring-up and on-device validation are still open. See README.md.
+# Format: see dm/games/README.md.
+
+# ---- Identity ----
+title_id	010038900DFE0000
+program_id	010038900DFE0000
+
+# ---- App ----
+name	What Remains of Edith Finch
+ipa	WhatRemainsOfEdithFinch.ipa
+app_category	public.app-category.adventure-games
+
+# ---- Versions ----
+build	v0	1.0.0	main=e9578a470b1758517b18672d3b5ce1c1	subsdk0=1bfa289d84f5608331f88deedf2005c1	sdk=6bfe1085ed54bdf0dcc5d0ea0262b7c3
+package	v0
+shader_versions	v0
+
+# ---- Files ----
+# subsdk0 is NintendoSDK_movie (main imports from it); load order main, subsdk*, sdk.
+modules	main subsdk0 sdk
+romfs_marker	FinchGame/Content/Paks/FinchGame-Switch.pak
+zip_store	.pak
+
+# ---- Memory ----
+# Provisional values from the survey: Unreal reserves a 62 GB address region for the engine and its allocator takes part of it.
+# The rewriter's engine-wide gate (dm/tools/ue_region.py) gives the region what the alias area has room for; refine these on a real boot.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 80 MB of system resource
+sys_resource	0x5000000
+
+# ---- Shaders ----
+# One version 5 pak (FinchGame-Switch.pak, 46,574 files) with two shader code archives (version 1, Zlib blocks): the
+# engine's global shaders and the game's material shaders (uepak.py job, shader_split.py ue_shaders). Unreal combines
+# vertex and pixel shaders per draw from its pipeline state.
+shader_groups	shaderarchive-global=global shaderarchive-finchgame=game
+shader_note	What Remains of Edith Finch shaders

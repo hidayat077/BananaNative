@@ -419,6 +419,14 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Found on:** [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md) (Unreal Engine 4.27): 62,901 unique shaders (10,114 vertex, 50,756 pixel, 1,968 compute, 63 geometry).
 - **Note:** its fragment shaders carry no output types either: one global shader writes integers bit-cast into a float output to an `R8Uint` target, listed in the profile's `shader_facts_manual.tsv` ([Integer fragment outputs declared by hand](#integer-fragment-outputs-declared-by-hand)).
 
+### Early Unreal Engine 4 pak version 5 and shader archives version 1 (Zlib)
+
+- **Symptom:** the split writes empty shader tables (`shaders: 0`) for a game whose pak plainly holds `.ushaderbytecode`; `uepak.py list` or `job` says `pak version 5, only 4, 8 and 11 are read` or `not a version 2 shader code archive`.
+- **Cause:** early Unreal Engine 4 (What Remains of Edith Finch, SDK 7.3.0) writes a version 5 pak: the legacy per-file footer and index as version 4, but compression block offsets start at the entry. Its two archives are format version 1: `u32` version, `u32` shader count, then that many 37-byte entries (20-byte hash, eight zero bytes, `u32` compressed size, `u32` raw size, `u8` frequency), then the code area with each shader's Zlib stream stored back to back. They are not version 2 archives, and a legacy pak is not necessarily an inline-shader pak: this one names archives in its index.
+- **Fix:** `uepak.py` reads version 5 paks with the legacy reader, decides inline shaders from whether a legacy index names `.ushaderbytecode`, parses version 1 archives and decodes their Zlib chunks locally (`zlib_records` writes a decoded version 1 archive, so no Mac Oodle job is needed). The decoded archives keep the `LSLG` records the split reads. This is general to the format, not to a title ID.
+- **Check:** `dm/tools/tests/test_uepak*.py`; on this game `uepak.py job` writes 19,097 + 1,399 decoded shaders and the split's tables are non-empty.
+- **Found on:** [What Remains of Edith Finch](../../dm/games/010038900DFE0000/README.md): base 1.0.0, 20,496 archive shaders.
+
 ### Unreal Engine 5.6 IoStore shader libraries
 
 - **How it is stored:** the desktop renderer (`SF_GLSL_SWITCH`) with the same `LSLG` records, but no archive in the pak: the two libraries are IoStore shader libraries in `FFRS-Switch.ucas`, whose shader groups are Oodle-compressed as a whole ([01](../agents/01-extract.md)). Each shader entry packs its frequency (bits 0–3), group (4–33) and offset in the group's decoded bytes (from bit 34), and a shader runs to the next one's offset.

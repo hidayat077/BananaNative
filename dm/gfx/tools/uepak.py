@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Unreal Engine game files for the shader tools: pak files (version 11, UE 4.26 and later; Octopath Traveler 0 is UE5), shader code archives (.ushaderbytecode version 2) and the job files the Mac host decodes Oodle with
+# Unreal Engine game files for the shader tools: pak files (version 11, UE 4.26 and later; Octopath Traveler 0 is UE5), shader code archives (.ushaderbytecode versions 1 and 2) and the job files the Mac host decodes Oodle with
 # (DM_OODLE_JOB, dm/host/hle_oodle.c). Octopath Traveler 0 keeps everything in one pak, Octopath_Traveler0/Content/Paks/pakchunk0-Switch.pak (1.5 GB, 159,757 files): its index is AES-256 encrypted,
 # its files are stored or Oodle-compressed in blocks. Its two shader code archives are stored, but every shader inside is Oodle-compressed (Mermaid, block header 8C 0A), which no decoder in this
 # repository can undo, so the game's own OodleLZ_Decompress decodes them in the Mac host (the NSP script's decode_ue_shaders, for any game with Unreal paks).
@@ -22,8 +22,8 @@
 #   the FPakEntry the pak repeats in front of it (53 bytes, + 4 + 16 per block when compressed); blocks follow each other, 16-aligned when encrypted.
 # Version 8 paks (UE 4.22 to 4.25: DRAGON BALL Z: KAKAROT, pakchunk0-Switch.pak 4.5 GB / 126,978 files and pakchunk1-Switch.pak 1.9 GB / 41,080 files, index not encrypted,
 #   Zlib blocks) read like version 4 below, except that the footer is version 11's and an FPakEntry's compression method is an index (from 1) into its names.
-# Older paks (version 4, UE 4.18: DRAGON QUEST XI S, pakchunk0-Switch.pak 6.6 GB / 264,844 files and pakchunk1-Switch.pak 7.2 GB / 147,824 files, the update's *_0_P.pak beside them) keep the
-#   legacy layout. Footer (the last 0x2d bytes): encrypted index flag (u8), magic, version, index offset, index size, SHA-1. Index: mount point, entry count, then per file its name (relative to the
+# Older paks (version 4, UE 4.18: DRAGON QUEST XI S, pakchunk0-Switch.pak 6.6 GB / 264,844 files and pakchunk1-Switch.pak 7.2 GB / 147,824 files, the update's *_0_P.pak beside them;
+#   version 5, UE 4.2x: What Remains of Edith Finch's FinchGame-Switch.pak) keep the legacy layout. Footer (the last 0x2d bytes): encrypted index flag (u8), magic, version, index offset, index size, SHA-1. Index: mount point, entry count, then per file its name (relative to the
 #   mount point) and its FPakEntry: offset, stored size, raw size (i64 each), compression flags (i32), SHA-1 (20), for a compressed file the block count (i32) and each block's start and end
 #   (i64, from the file start before version 5, from the entry after), the encrypted flag (u8) and the compression block size (u32). The FPakEntry is repeated in front of the data.
 #   The compression flags are no names: 1 zlib, 2 gzip, 4 custom; DRAGON QUEST XI S's engine uses 3, which is LZ5 2.0 (main exports LZ5_*; every block starts with its level, 0x2d = 45), and only the
@@ -45,7 +45,7 @@ import ctypes, json, os, re, struct, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 from romfs import os, open
 
-PAK_MAGIC, ARCHIVE_VERSION = 0x5A6F12E1, 2
+PAK_MAGIC, ARCHIVE_VERSION, ARCHIVE_V1 = 0x5A6F12E1, 2, 1
 JOB_MAGIC, OUT_MAGIC = 0x4a4f4d44, 0x524f4d44   # "DMOJ", "DMOR" (hle_oodle.c)
 FREQ = {0: 'vs', 1: 'hs', 2: 'ds', 3: 'ps', 4: 'gs', 5: 'cs'}   # EShaderFrequency (the archive's frequency census: 0 vertex, 3 pixel, 5 compute)
 
@@ -230,7 +230,8 @@ class R:
         if n < 0: return self.raw(-2 * n).decode('utf-16-le')[:-1]
         return self.raw(n)[:-1].decode('utf-8', 'replace') if n else ''
 
-LEGACY = (4, 8)   # legacy pak versions read (the per-file index); 11 has the encoded one. Version 8 (DRAGON BALL Z: KAKAROT, UE 4.2x) keeps version 4's index with the FPakEntry
+LEGACY = (4, 5, 8)   # legacy pak versions read (the per-file index); 11 has the encoded one. Version 5 (What Remains of Edith Finch) keeps version 4's layout but its block offsets start at the
+#   entry; version 8 (DRAGON BALL Z: KAKAROT, UE 4.2x) keeps version 4's index with the FPakEntry
 #   compression method as an index (from 1) into the footer's method names, and version 11's footer: key GUID, encrypted flag, magic 0xcc from the end, five 32-byte names after the SHA-1
 LEGACY_METHODS = {1: 'Zlib', 2: 'Gzip', 3: 'LZ5', 4: 'Custom'}   # compression flags of a legacy pak (3: DRAGON QUEST XI S's engine, see the header)
 
@@ -250,8 +251,8 @@ def pak_version(f):
 def footer(f):
     """(encrypted index, index offset, index size, compression method names by number from 1, version); ValueError when the index does not lie inside the file"""
     back, ver = magic_back(f)
-    if ver in (4, 11) and (ver == 4) != (back == 0x2c) or ver == 8 and back == 0x2c: raise ValueError(f'a version {ver} pak footer with its magic {back:#x} bytes from the end, where that version has none')
-    if ver == 4:
+    if ver in (4, 5, 11) and (ver in (4, 5)) != (back == 0x2c) or ver == 8 and back == 0x2c: raise ValueError(f'a version {ver} pak footer with its magic {back:#x} bytes from the end, where that version has none')
+    if ver in (4, 5):
         f.seek(-0x2d, 2); ft = f.read(0x2d); ioff, isz = struct.unpack_from('<QQ', ft, 9)
         enc, methods = ft[0], [LEGACY_METHODS.get(i, f'flags {i}') for i in range(1, 8)]
     elif ver not in (8, 11): raise ValueError(f'pak version {ver}, only {", ".join(map(str, LEGACY))} and 11 are read')
@@ -399,19 +400,38 @@ def zlib_block(b, k):
     return out
 
 def archive(b, what='shader code archive') -> dict:
-    """A shader code archive's tables: {'maps': [(first index, count)], 'shaders': [(offset, size, raw size, frequency)], 'indices': [...], 'code': start of the code}; what names it in errors"""
+    """A shader code archive's tables: {'maps': [(first index, count)], 'shaders': [(offset, size, raw size, frequency)], 'indices': [...], 'code': start of the code,
+    'version': 1 or 2}; what names it in errors. Version 1 (early Unreal Engine 4, What Remains of Edith Finch): u32 version, u32 shader count, then that many 37-byte
+    entries (20-byte hash, 8 zero bytes, u32 compressed size, u32 raw size, u8 frequency) and the code area, shaders stored one after another."""
     r = R(b, what=what)
-    if r.take('<I') != ARCHIVE_VERSION: raise ValueError('not a version 2 shader code archive')
+    ver = r.take('<I')
+    if ver == ARCHIVE_V1:
+        n = r.take('<I')
+        shaders, ents, off = [], [], 0
+        for _ in range(n):
+            e = r.o
+            r.raw(28); size, raw = r.take('<II'); fr = r.take('<B')
+            shaders.append((off, size, raw, fr)); ents.append(e); off += size
+        return dict(maps=[], shaders=shaders, indices=[], code=r.o, version=ver, entries=ents)
+    if ver != ARCHIVE_VERSION: raise ValueError(f'not a version {ARCHIVE_V1} or {ARCHIVE_VERSION} shader code archive')
     nmap = r.take('<I'); r.raw(20 * nmap); nsh = r.take('<I'); r.raw(20 * nsh)
     maps = [r.take('<IIII')[:2] for _ in range(r.take('<I'))]
     shaders = [r.take('<QIIB') for _ in range(r.take('<I'))]
     r.raw(16 * r.take('<I'))
     indices = list(r.array('I', r.take('<I')))
-    return dict(maps=maps, shaders=shaders, indices=indices, code=r.o)
+    return dict(maps=maps, shaders=shaders, indices=indices, code=r.o, version=ver)
 
 def write_decoded_archive(out, b, a, raws):
     """Write the archive to a stream with every shader replaced by its decoded bytes (raws, in entry order): the same tables, each entry's size = its raw size, the code laid out again
     (the preload entries keep their old file ranges; only the shader tools read these copies). Streaming keeps a decoded archive larger than 1.5 GB off the heap"""
+    if a['version'] == ARCHIVE_V1:
+        out.write(b[:8])   # version and shader count
+        for (_, _, raw, fr), e in zip(a['shaders'], a['entries']):
+            out.write(b[e:e + 28]); out.write(struct.pack('<II', raw, raw)); out.write(bytes((fr,)))
+        for (_, _, raw, _), d in zip(a['shaders'], raws):
+            if len(d) != raw: raise ValueError(f'decoded shader of {len(d)} bytes, the archive says {raw}')
+            out.write(d)
+        return
     r = R(b, what='shader code archive'); r.take('<I')
     for elem in (20, 20, 16): r.raw(elem * r.take('<I'))
     ents_at = r.o + 4
@@ -458,6 +478,22 @@ def lz4_shaders(b, a):
     """Every shader of an archive decoded as an LZ4 block, or None when one of the compressed ones needs Oodle (Octopath Traveler 0: the game's own decoder)"""
     try: return list(lz4_records(b, a))
     except NotLz4: return None
+
+class NotZlib(ValueError): pass
+
+def zlib_records(b, a):
+    """Yield one decoded shader at a time from a version 1 archive (early Unreal Engine 4: each code chunk one zlib stream), capped at its raw size so a damaged size cannot inflate a stream without bound"""
+    import zlib
+    for off, size, raw, _ in a['shaders']:
+        c = b[a['code'] + off:a['code'] + off + size]
+        if size == raw:
+            yield c
+            continue
+        z = zlib.decompressobj()
+        try: d = z.decompress(c, max(raw, 1))
+        except zlib.error as e: raise NotZlib() from e
+        if not z.eof or len(d) != raw or d[:4] != b'LSLG': raise NotZlib()
+        yield d
 
 TOC_MAGIC, IO_SHADER_LIBRARY, IO_SHADER_CODE = b'-==--==--==--==-', 8, 9   # EIoChunkType in Unreal Engine 5 (TOC version 4 and later; 4.27 numbers its chunk types otherwise)
 IO_EXPORT_BUNDLE, IO_EXPORT_BUNDLE_427 = 1, 2   # a cooked package's exports: EIoChunkType in Unreal Engine 5 (TOC version 4 and later), in Unreal Engine 4.27 (TOC version 3)
@@ -626,7 +662,8 @@ def inline_in_containers(path):
     return any(t.export_bundles() for t in tocs) and not any(t.of_type(IO_SHADER_LIBRARY) for t in tocs)
 
 def inline_shaders(path, key=None):
-    """Whether a pak keeps its shaders inline in its cooked packages rather than in shader code archives: every legacy pak (DRAGON QUEST XI S), and a version 11 pak whose directory index
+    """Whether a pak keeps its shaders inline in its cooked packages rather than in shader code archives: a legacy pak whose per-file index names no .ushaderbytecode (DRAGON QUEST XI S;
+    version 5 with archives: What Remains of Edith Finch), and a version 11 pak whose directory index
     names no .ushaderbytecode and either cooked packages (.uexp; OCTOPATH TRAVELER II: bShareMaterialShaderCode off) or the global shader cache with the cooked packages in the containers beside the pak
     (inline_in_containers; Mario & Luigi: Brothership and Yoshi and the Mysterious Book: the same setting with IoStore on). FINAL FANTASY RESONANCE's pak names the global shader cache too, but its
     shaders are in its container's shader libraries (neither counts). An encrypted index is read with key, main's (Keys; Octopath Traveler 0's holds the archives, DRAGON BALL Sparking! ZERO's
@@ -634,7 +671,12 @@ def inline_shaders(path, key=None):
     None: the pak names no file, so it holds neither (the empty pakchunk1-17-Switch.pak beside Sparking! ZERO's containers, mount point "/")"""
     with open(path, 'rb') as f:
         enc, ioff, isz, _, ver = footer(f)
-        if ver in LEGACY: return True
+        if ver in LEGACY:
+            # A legacy pak need not keep its shaders inline: version 5 (What Remains of Edith Finch) lists shader code archives in its per-file index.
+            if enc and not key: return True
+            idx = read_range(f, ioff, (isz + 15) & ~15 if enc else isz, path)
+            if enc: idx = aes_decrypt(key, idx)[:isz]
+            return b'.ushaderbytecode\0' not in idx
         if enc and not key: return False
         def at(off, n):   # the index and the full directory index are encrypted alike (Pak.read_at)
             b = read_range(f, off, (n + 15) & ~15 if enc else n, path)
@@ -686,15 +728,16 @@ def job(romfs, main_nso, work, decode=None):
         for path in sorted(x for x in p.files if x.endswith('.ushaderbytecode')):
             b = p.read(path); a = archive(b, f'{pak}: {path}'); name = os.path.basename(path)
             comp = [i for i, (_, size, raw, _) in enumerate(a['shaders']) if size != raw]
-            # Write the private work file in the final layout as we decode: an LZ4 attempt that hits an Oodle block is replaced by the original archive below.
+            # Write the private work file in the final layout as we decode: an LZ4 / zlib attempt that hits an Oodle block is replaced by the original archive below.
             target = os.path.join(work, 'archives', name)
             how = 'Oodle' if comp else ''
             if comp:
+                local = zlib_records if a['version'] == ARCHIVE_V1 else lz4_records
                 try:
-                    with open(target, 'wb') as f: write_decoded_archive(f, b, a, lz4_records(b, a))
-                    comp, how = [], 'LZ4'   # decoded here: the Oodle job gets none of them
-                except NotLz4: pass
-            if how != 'LZ4':
+                    with open(target, 'wb') as f: write_decoded_archive(f, b, a, local(b, a))
+                    comp, how = [], 'Zlib' if a['version'] == ARCHIVE_V1 else 'LZ4'   # decoded here: the Oodle job gets none of them
+                except (NotLz4, NotZlib): pass
+            if how not in ('LZ4', 'Zlib'):
                 with open(target, 'wb') as f: f.write(b)
             for i in comp:
                 off, size, raw, _ = a['shaders'][i]; recs.append((name, i, b[a['code'] + off:a['code'] + off + size], raw))
@@ -720,7 +763,7 @@ def finish(work, out):
     for x in meta['archives']:
         source = os.path.join(work, 'archives', x['name'])
         tmp = os.path.join(out, x['name'] + '.partial')
-        if x.get('compression') in ('LZ4', 'IoStore, decoded'):
+        if x.get('compression') in ('LZ4', 'Zlib', 'IoStore, decoded'):
             import shutil
             shutil.copyfile(source, tmp)   # job already wrote the final layout
         else:
