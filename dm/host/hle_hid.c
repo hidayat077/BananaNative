@@ -256,6 +256,7 @@ static void *ctl_main(void *arg) {
                                                      while (*e3 == ' ') e3++; dm_ctl_memdump(a, n, e3); continue; }
                 if (!strncmp(line, "cvari ", 6)) { void dm_ctl_cvar_i32(uint64_t off, int32_t v); char *e2; uint64_t off = strtoull(line + 6, &e2, 16); dm_ctl_cvar_i32(off, (int32_t)strtol(e2, NULL, 0)); continue; }
                 if (!strncmp(line, "fps ", 4)) { void dm_fps_target_set(int t, const char *src); dm_fps_target_set(atoi(line + 4), "DM_CTL fps"); LOG("DM_CTL: fps %d", atoi(line + 4)); continue; }
+                if (!strncmp(line, "opmode ", 7)) { void dm_set_opmode(int m); int m = atoi(line + 7) != 0; dm_set_opmode(m); LOG("DM_CTL: opmode %d", m); continue; }
                 if (!strncmp(line, "cvarf ", 6)) { void dm_ctl_cvar_f32(uint64_t off, float v); char *e2; uint64_t off = strtoull(line + 6, &e2, 16); dm_ctl_cvar_f32(off, strtof(e2, NULL)); continue; }
 #if defined(__ANDROID__)
                 if (!strncmp(line, "env ", 4)) { char *eq = strchr(line + 4, '='); if (eq) { *eq = 0; dm_gfx_ctl_env(line + 4, eq + 1); } continue; }

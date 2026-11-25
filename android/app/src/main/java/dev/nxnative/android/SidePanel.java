@@ -47,7 +47,7 @@ final class SidePanel extends FrameLayout {
     static final String[] TAB_NAMES = {"Performance", "Display", "Controls", "General"};
     private static final int TAB_PERF = 0, TAB_DISPLAY = 1, TAB_CONTROLS = 2, TAB_GENERAL = 3;
     private int tab = TAB_PERF;
-    private static final int FOCUS = 0xFFFFD54F;   // the tab bar's selected tab and the focus frame: a yellow, dark text on it
+    private static final int FOCUS = 0xFF3B82F6;   // the tab bar's selected tab and the focus frame: Polar blue, white text on it
 
     // A controller: its confirm and back keys (padButtons), the held direction and its repeat
     private int confirm = KeyEvent.KEYCODE_BUTTON_B, back = KeyEvent.KEYCODE_BUTTON_A;
@@ -246,7 +246,7 @@ final class SidePanel extends FrameLayout {
         if (now == null || !inside(now) || isInTouchMode()) return;
         float dp = getResources().getDisplayMetrics().density;
         android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
-        d.setColor(0x26FFD54F);
+        d.setColor(0x263B82F6);
         d.setStroke(Math.round(2.5f * dp), FOCUS);
         d.setCornerRadius(14 * dp);
         now.setForeground(d);
@@ -287,7 +287,7 @@ final class SidePanel extends FrameLayout {
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);   // one size for every tab, set once the bar is laid out (tabTextSize)
             t.setPadding(pad, 0, pad, 0);
             t.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-            t.setTextColor(on ? 0xFF000000 : 0xFFE8EAED);
+            t.setTextColor(on ? 0xFFFFFFFF : 0xFFE8EAED);
             android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();   // the selected tab is a polar pill
             pill.setColor(on ? FOCUS : 0);
             pill.setCornerRadius(999 * dp);
@@ -469,6 +469,11 @@ final class SidePanel extends FrameLayout {
             hold.setOnCheckedChangeListener((b, on) -> { Prefs.hold60(act, game(), on); Native.hold60Set(on); });
             box.addView(hold);
         }
+        android.widget.CheckBox docked = new android.widget.CheckBox(act);
+        docked.setText(Tx.s(R.string.settings_docked_mode));
+        docked.setChecked(Prefs.dockedMode(act));
+        docked.setOnCheckedChangeListener((b, on) -> { Prefs.dockedMode(act, on); pushLiveCtl("opmode " + (on ? 1 : 0)); });
+        box.addView(docked);
         fpsNow = note("");
         boolean simple = Prefs.simpleRes(act, game());   // a game with Resolution presets, tester rows off: no Upscaler or Dynamic resolution here (Settings › Help › Tester settings)
         if (!simple && (Prefs.dlssGame(game()) || GameUpscaler.shown(act, game()))) {   // right under the frame rate cap: the Upscaler (the game's own upscaler and the window's scaling to the screen), for games whose network it replaces; for a game on the DLSS stand-in (no network to replace), the stand-in's modes with Motion clarity / sharpness
@@ -531,17 +536,23 @@ final class SidePanel extends FrameLayout {
     private void pushLiveOption(String env, boolean on) { pushLiveEnv(env, on ? "1" : "0"); }
 
     /** `env NAME=value` to the running game through ctl.txt (an empty value clears the switch) */
-    private void pushLiveEnv(String env, String value) {
+    private void pushLiveEnv(String env, String value) { pushLiveCtl("env " + env + "=" + value); }
+
+    /** A control line to the running game through ctl.txt */
+    private void pushLiveCtl(String line) {
         java.io.File ext = act.getExternalFilesDir(null);
         if (ext == null) return;
         try (java.io.FileWriter w = new java.io.FileWriter(new java.io.File(ext, "ctl.txt"), true)) {
-            w.write("env " + env + "=" + value + "\n");
-        } catch (java.io.IOException e) { Native.note("[RED] game option " + env + ": the setting could not be sent to the game (" + e.getMessage() + "); it applies at the next start"); }
+            w.write(line + "\n");
+        } catch (java.io.IOException e) { Native.note("[RED] ctl " + line + ": the setting could not be sent to the game (" + e.getMessage() + "); it applies at the next start"); }
     }
 
-    /** Display: Resolution (a render_cfg game: Resolution alone), Screen scaling for a game on the DLSS stand-in, the picture (Fit / Stretch, size, position) and the overlay's items */
+    /** Display: Resolution (a render_cfg game: Resolution alone), Upscaler for every game, Screen scaling for a game on the DLSS stand-in, the picture (Fit / Stretch, size, position) and the overlay's items */
     private void display() {
         resolutionRow();
+        GameUpscaler.rows(act, game(), box);
+        note(act instanceof GameActivity && ((GameActivity) act).live() ? Tx.s(R.string.game_applies_from_the_next_frame)
+                : Tx.s(R.string.game_applies_at_the_next_start));
         if (!Prefs.simpleRes(act, game()) && Prefs.dlssGame(game())) {   // a game on the DLSS stand-in: Screen scaling (the window to the screen), under Resolution
             GameUpscaler.screenRows(act, game(), box);
             note(act instanceof GameActivity && ((GameActivity) act).live() ? Tx.s(R.string.game_applies_from_the_next_frame_2)
