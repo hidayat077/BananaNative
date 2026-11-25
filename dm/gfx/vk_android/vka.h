@@ -324,7 +324,7 @@ typedef struct vka_img {
     const void *pool; uint64_t pgen, pfin; int pdead; uint8_t cpu_vis;
     uint8_t dcap;            // a sparse texture's dense image whose finer levels DM_VK_SPARSE_DENSE_MB left out (vka_tex.c dense_floor)
     struct vka_img *zold;    // the zero-shared image it left while a holder had it (vka_tex.c img_own): destroyed once holds drop to 0
-    struct vka_img *bc_alias; // a BC texture's uncompressed block image: Vulkan has no storage view of a compressed format, so a storage binding of the BC texture writes here and the blocks are copied back (vka_tex.c bc_storage_alias)
+    struct vka_img *bc_alias; // a BC texture's uncompressed block image: Vulkan has no storage or integer view of a compressed format, so image-slot bindings of the BC texture use it (vka_tex.c bc_storage_alias)
     // Large images (DM_VK_BIGIMG_MB, vka_tex.c "Large images"): draws that bound it for sampling, other textures found over its storage (the first serials)
     uint32_t nsamp, novl; uint64_t ovl[4];
     // A soft texture's image (vka_soft.h, profile tex_soft): base 1, its finest level left out; soft_saved: the storage bytes that level takes (the stats' soft line)

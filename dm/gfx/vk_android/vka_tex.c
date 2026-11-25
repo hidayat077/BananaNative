@@ -3377,9 +3377,10 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
     int want = dim & DMSH_VK_DIM_SINT ? 2 : dim & DMSH_VK_DIM_UINT ? 1 : 0, have = tex_fmt_class(vf, e.t.stencil || (e.has_v && e.v.set_dsmode && e.v.dsmode));
     VkFormat ovr = VK_FORMAT_UNDEFINED;
     int aliased = 0;
-    // A game may bind a BC texture straight to a shader image slot (Hello Games' genmipmap_comp_compressbc* do): Vulkan has no storage view of a compressed format.
-    // Write its block words through an uncompressed alias, in the class the shader declares, and copy them back after the dispatch (vka_tex_id_bc_sync).
-    if (storage && !force && vf.bw == 4 && vf.bh == 4 && (vf.bpb == 8 || vf.bpb == 16)) {
+    // A game may bind a BC texture to an image slot as a storage image, or, in a block compressor, as an integer sampled image of its block words. Vulkan has no
+    // such view of a compressed format. Use an uncompressed alias in the shader's class; storage writes are copied back to the BC image after the dispatch
+    // (vka_tex_id_bc_sync). A float sampled image keeps the BC view: it wants decoded texels, not block words.
+    if (!force && (storage || want != 0) && vf.bw == 4 && vf.bh == 4 && (vf.bpb == 8 || vf.bpb == 16)) {
         vka_img *bc = im;
         vka_img *a = bc_storage_alias(bc, want, cb);
         if (a) {
