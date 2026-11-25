@@ -34,6 +34,8 @@ import game as game_mod  # noqa: E402
 import pack_dump  # noqa: E402
 import vk_android_delta as delta  # noqa: E402
 
+OOZ_BUILD_SH = REPO / 'dm/third_party/ooz/build.sh'
+
 VK = delta.VK
 STAGE_NAME = {
     VK['STAGE_VS']: 'vs',
@@ -664,12 +666,59 @@ def build_vk_command(ctx: GameContext, threads: int, require_all: bool = True) -
     return cmd, env
 
 
-def build_pack_command(ctx: GameContext, threads: int, version: int | None = None, keep_code: bool = False) -> tuple[list[str], dict[str, str]]:
+def has_shader_map(title_id: str) -> bool:
+    """Return True when the game profile has shader_map.tsv (required by pack_android.py for DM_OODLE_OOZ)."""
+    return bool(title_id) and (REPO / 'dm/games' / title_id / 'shader_map.tsv').is_file()
+
+
+def find_ooz(work_dir: Path | None = None) -> Path | None:
+    """Locate an existing ooz/unoodle decoder binary from env, work_dir/tools/, or PATH."""
+    env_p = os.environ.get('DM_OODLE_OOZ', '').strip()
+    if env_p and Path(env_p).is_file():
+        return Path(env_p)
+    exe = 'unoodle.exe' if os.name == 'nt' else 'unoodle'
+    if work_dir:
+        cand = work_dir / 'tools' / exe
+        if cand.is_file():
+            return cand
+    which_p = shutil.which(exe) or shutil.which('unoodle')
+    return Path(which_p) if which_p else None
+
+
+def build_ooz(out_path: Path) -> tuple[bool, str]:
+    """Build the ooz/unoodle Oodle decoding worker via dm/third_party/ooz/build.sh."""
+    if os.name == 'nt':
+        return False, 'Building ooz/unoodle via build.sh is not supported natively on Windows; browse an existing unoodle.exe or set DM_OODLE_OOZ.'
+    if not OOZ_BUILD_SH.is_file():
+        return False, f'Missing {OOZ_BUILD_SH}'
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(
+        ['sh', str(OOZ_BUILD_SH), str(out_path)],
+        capture_output=True,
+        text=True,
+        errors='replace',
+    )
+    msg = (r.stdout or '') + (r.stderr or '')
+    ok = r.returncode == 0 and out_path.is_file()
+    return ok, msg.strip() or f'build.sh exited with {r.returncode}'
+
+
+def build_pack_command(
+    ctx: GameContext,
+    threads: int,
+    version: int | None = None,
+    keep_code: bool = False,
+    ooz_path: str | Path | None = None,
+) -> tuple[list[str], dict[str, str]]:
     """Build command for scripts/pack_android.py (handles first-time split, code rewrite, shader build, pack.tsv)."""
     if not ctx.game_source:
         raise RuntimeError('Select a dump folder or .nup file; pack_android.py requires it')
     polar_env.apply()
     env = os.environ.copy()
+    if ooz_path:
+        env['DM_OODLE_OOZ'] = str(ooz_path)
+    else:
+        env.pop('DM_OODLE_OOZ', None)
     cmd = [sys.executable, str(PACK_ANDROID), str(ctx.game_source), '--out', str(ctx.pack_dir), '-J', str(max(1, threads))]
     if version is not None:
         cmd += ['--version', str(version)]
