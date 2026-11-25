@@ -348,7 +348,7 @@ public final class MainActivity extends Activity {
         gloss.setStroke(dp(1), 0x40FFFFFF);
         dockRow.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{fill, gloss}));
         dockRow.setPadding(dp(6), dp(4), dp(6), dp(4));
-        addFab = dockButton(R.drawable.ic_add, Tx.s(R.string.home_add_game), true, v -> addGame());
+        addFab = dockButton(R.drawable.ic_add, Tx.s(R.string.home_add_game), false, v -> addGame());
         dockRow.addView(addFab);
         layoutBtn = (ImageView) dockButton(layoutIcon(HomeLayout.mode(this)), Tx.s(R.string.settings_home_layout), false, v -> cycleLayout());
         updateLayoutButton();
@@ -591,24 +591,6 @@ public final class MainActivity extends Activity {
         return null;
     }
 
-    /** Settings › Appearance › Language: System default first, then each language by its own name (Languages); the system recreates the screens after a pick */
-    private Ui.Setting languageRow() {
-        Ui.Setting row = new Ui.Setting(this, "🌐", Tx.s(R.string.settings_language_title), null).chevron(this);
-        row.value(Languages.current(this));
-        row.view.setOnClickListener(v -> {
-            String[] names = new String[Languages.LIST.length + 1];
-            names[0] = Languages.systemLabel();
-            for (int i = 0; i < Languages.LIST.length; i++) names[i + 1] = Languages.LIST[i].label();
-            Languages.Lang cur = Languages.picked(this);
-            int sel = 0;
-            for (int i = 0; i < Languages.LIST.length; i++) if (Languages.LIST[i] == cur) sel = i + 1;
-            new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_language_title))
-                    .setSingleChoiceItems(names, sel, (d, w) -> { d.dismiss(); Languages.apply(this, w == 0 ? null : Languages.LIST[w - 1]); })
-                    .setNegativeButton(Tx.s(R.string.common_cancel), null).show();
-        });
-        return row;
-    }
-
     /** A big group caption over the small section labels (General / System), without the "section" tag the wide-screen split uses */
     private void groupLabel(LinearLayout content, int res) {
         TextView t = Ui.text(this, Tx.s(res), 12, R.color.bn_accent, 700);
@@ -635,22 +617,11 @@ public final class MainActivity extends Activity {
         upd.addView(new Ui.Setting(this, "📖", Tx.s(R.string.settings_player_wiki), v -> openLink(WIKI_URL)).chevron(this)
                 .value(Tx.s(R.string.settings_guides_what_every_setting_does)).view);
 
-        Ui.add(content, Ui.section(this, Tx.s(R.string.common_appearance)), Ui.SECTION_GAP);
-        LinearLayout look = settingsCard(content);
-        look.addView(languageRow().view);
-        Ui.Setting theme = new Ui.Setting(this, "🌗", Tx.s(R.string.settings_theme), null).chevron(this);
-        theme.view.setOnClickListener(v -> new PadFocus.Builder(this).setTitle(Tx.s(R.string.settings_theme))
-                .setSingleChoiceItems(Tx.arr(R.array.arr_theme), Prefs.theme(this), (d, w) -> { Prefs.theme(this, w); d.dismiss(); NxApp.applyTheme(this); })
-                .setNegativeButton(Tx.s(R.string.common_cancel), null).show());
-        theme.value(Tx.arr(R.array.arr_theme)[Prefs.theme(this)]);
-        look.addView(theme.view);
-
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_display)), Ui.SECTION_GAP);
         LinearLayout play = settingsCard(content);
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_controls)), Ui.SECTION_GAP);
         LinearLayout ctl = settingsCard(content);
-        groupLabel(content, R.string.settings_group_system);
-        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), 12);
+        Ui.add(content, Ui.section(this, Tx.s(R.string.common_system)), Ui.SECTION_GAP);
         LinearLayout sys = settingsCard(content);
         // Every default a game inherits and its own page can override: one collapsed group, after the settings that only exist here
         LinearLayout perf = defaultsGroup(content);

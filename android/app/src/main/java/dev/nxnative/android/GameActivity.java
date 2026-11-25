@@ -592,7 +592,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         }
         int picSize = Prefs.pictureSize(this, id);   // the in-game panel's Picture size; 100 (the default) is not passed
         if (picSize < PictureFit.SIZE_MAX) env.add("DM_VK_PICTURE_SIZE=" + picSize);
-        String lang = GameLanguage.env(Prefs.gameLang(this, id), GameSettings.phoneTag());   // Game settings › Game language: the phone's by default (a DM_LANG line of the user's wins)
+        String pickedLang = Prefs.gameLang(this, id);
+        String lang = GameLanguage.env(pickedLang != null ? pickedLang : "en-US", null);   // Game settings › Game language: English (US) by default (a DM_LANG line of the user's wins)
         if (lang != null) env.add(lang);
         env.addAll(Users.env(this));   // Settings › Users: the users the game's account calls list and its user selector offers (hle_account.c), and the one it starts with
         return gpuNote;

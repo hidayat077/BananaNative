@@ -296,7 +296,7 @@ final class GameSettings {
         final LinearLayout content;
         if (wide) content = split(a, outer, g, missing == null, keys, labels, t, close);   // the game and its tabs at the left, the tab's page at the right
         else {
-            topBar(a, outer, g, missing == null, close);
+            topBar(a, outer, g, missing == null, false, close);
             Ui.add(outer, Ui.tabs(a, labels, t, k -> { tab = keys[k]; a.gameSettingsTop(); }), 10);
             content = outer;
         }
@@ -486,7 +486,7 @@ final class GameSettings {
         { Profile mp = Profile.of(id); if (mp != null && mp.mods) ModsUi.row(a, g, options::add, again); }   // game.tsv mods 1: folders of replacement files over the RomFS
         if (LinkPlay.has(id))
             options.add(new Ui.Setting(a, "🔗", Tx.s(R.string.game_link_play), v -> LinkPlay.dialog(a, g, again)).value(LinkPlay.label(a, id)).chevron(a));
-        options.add(new Ui.Setting(a, "🌐", Tx.s(R.string.game_game_language), v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), phoneTag())).chevron(a));   // not a tester's knob: with the game's options, never folded
+        options.add(new Ui.Setting(a, "🌐", Tx.s(R.string.game_game_language), v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), "en-US")).chevron(a));   // not a tester's knob: with the game's options, never folded
         if (prof != null && prof.timeOfDay)   // the one global setting (Prefs.timeOverride → DM_TIME), here for a game whose day/night cycle follows the user clock
             options.add(new Ui.Setting(a, "🕒", Tx.s(R.string.common_time_of_day), v -> TimeOfDay.dialog(a, again)).value(TimeOfDay.label(a)).chevron(a));
 
@@ -624,7 +624,7 @@ final class GameSettings {
      * The top bar of a game's page, wide or narrow: Back, the game's picture and its name (with its version and publisher once read) in 48 dp; on a narrow window
      * Play ends the bar (a wide window has it in the left column)
      */
-    private static void topBar(MainActivity a, LinearLayout outer, Game g, boolean play, Runnable close) {
+    private static void topBar(MainActivity a, LinearLayout outer, Game g, boolean play, boolean compact, Runnable close) {
         // A cover banner, with Back and Play over it and the name and version under it
         android.widget.FrameLayout hero = new android.widget.FrameLayout(a);
         hero.setOutlineProvider(new android.view.ViewOutlineProvider() {
@@ -638,6 +638,15 @@ final class GameSettings {
         ImageView shade = new ImageView(a);
         shade.setBackground(new android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x55000000, 0xDD000000}));
         hero.addView(shade, new android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        int artSide = Ui.dp(a, compact ? 56 : 96);
+        ImageView art = new ImageView(a);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View v, android.graphics.Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), Ui.dp(a, 14)); }
+        });
+        art.setClipToOutline(true);
+        art.setVisibility(View.GONE);
+        hero.addView(art, new android.widget.FrameLayout.LayoutParams(artSide, artSide, Gravity.CENTER));
         android.widget.FrameLayout.LayoutParams backLp = new android.widget.FrameLayout.LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44), Gravity.TOP | Gravity.START);
         backLp.setMargins(Ui.dp(a, 10), Ui.dp(a, 10), 0, 0);
         hero.addView(Ui.back(a, v -> close.run()), backLp);
@@ -648,7 +657,7 @@ final class GameSettings {
             pl.setMargins(0, Ui.dp(a, 10), Ui.dp(a, 10), 0);
             hero.addView(b, pl);
         }
-        outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 132)));
+        outer.addView(hero, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, compact ? 76 : 132)));
         LinearLayout bar = Ui.row(a);
         bar.setMinimumHeight(Ui.dp(a, 52));
         bar.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
@@ -675,7 +684,13 @@ final class GameSettings {
         Covers.show(tile, g);
         GameMeta.loadControl(new File(g.gameDir), Edition.control(a, g), m -> {
             if (m == null) return;
-            if (m.icon != null && !ownCover) { Ui.tileIcon(tile, m.icon); banner.setImageBitmap(m.icon); }
+            if (m.icon != null && !ownCover) {
+                Ui.tileIcon(tile, m.icon);
+                banner.setImageBitmap(m.icon);
+                banner.setAlpha(0.28f);
+                art.setImageBitmap(m.icon);
+                art.setVisibility(View.VISIBLE);
+            }
             String l = m.line();
             if (l != null) { meta.setText(l); meta.setVisibility(View.VISIBLE); }
         });
@@ -686,21 +701,21 @@ final class GameSettings {
      * scrolls on its own) is returned for the tab's page
      */
     private static LinearLayout split(MainActivity a, LinearLayout outer, Game g, boolean play, String[] keys, String[] labels, int sel, Runnable close) {
-        topBar(a, outer, g, false, close);   // Back, the game's picture and its name; under it the left column and the page
         LinearLayout body = new LinearLayout(a);
         body.setOrientation(LinearLayout.HORIZONTAL);
-        Ui.add(outer, body, 8, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        outer.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         LinearLayout left = new LinearLayout(a);
         left.setOrientation(LinearLayout.VERTICAL);
         android.widget.ScrollView ls = new android.widget.ScrollView(a);
         ls.setVerticalScrollBarEnabled(false);
         ls.addView(left);
-        body.addView(ls, new LinearLayout.LayoutParams(Ui.dp(a, 180), ViewGroup.LayoutParams.MATCH_PARENT));
+        body.addView(ls, new LinearLayout.LayoutParams(Ui.dp(a, 220), ViewGroup.LayoutParams.MATCH_PARENT));
+        topBar(a, left, g, false, true, close);
         if (play) {
             android.widget.Button b = Ui.button(a, Tx.s(R.string.common_play), Ui.Kind.PRIMARY, v -> a.launch(g));
             b.setCompoundDrawablesRelativeWithIntrinsicBounds(Ui.icon(a, R.drawable.ic_play, R.color.bn_on_polar), null, null, null);
             b.setCompoundDrawablePadding(Ui.dp(a, 4));
-            left.addView(b, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 44)));
+            Ui.add(left, b, 6, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 42)));
         }
         for (int k = 0; k < keys.length; k++) {
             int i2 = k;
@@ -966,7 +981,7 @@ final class GameSettings {
     /** Game language (DM_LANG, GameLanguage): the phone's language first (the default), then the console's languages; a game without the one picked uses one it has */
     static void language(android.app.Activity a, Game g, Runnable done) {   // the in-game panel's shortcut too
         String[] labels = new String[GameLanguage.CODES.length + 1];
-        labels[0] = GameLanguage.label(null, phoneTag());
+        labels[0] = GameLanguage.label(null, "en-US");
         System.arraycopy(GameLanguage.NAMES, 0, labels, 1, GameLanguage.NAMES.length);
         String m = Prefs.gameLang(a, g.titleId);
         int checked = m == null ? 0 : 1 + Math.max(0, Arrays.asList(GameLanguage.CODES).indexOf(m));

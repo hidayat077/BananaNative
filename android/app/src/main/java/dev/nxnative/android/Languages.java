@@ -21,19 +21,9 @@ final class Languages {
         String label() { return Tx.s(nameRes); }
     }
 
-    /** English first (the source and the fallback), then the others */
+    /** English only */
     static final Lang[] LIST = {
         new Lang("en", R.string.lang_en),
-        new Lang("es", R.string.lang_es),
-        new Lang("tr", R.string.lang_tr),
-        new Lang("zh-CN", R.string.lang_zh_cn),
-        new Lang("fr", R.string.lang_fr),
-        new Lang("ar", R.string.lang_ar),
-        new Lang("pl", R.string.lang_pl),
-        new Lang("ko", R.string.lang_ko),
-        new Lang("uk", R.string.lang_uk),
-        new Lang("de", R.string.lang_de),
-        new Lang("it", R.string.lang_it),
     };
 
     /** The language the player picked, or null for System default */
