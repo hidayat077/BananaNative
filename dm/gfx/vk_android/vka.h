@@ -441,6 +441,7 @@ void vka_tbuf_sub_begin(void);                      // submission start: resets 
 uint64_t vka_tbuf_wrote_gen(void);                  // monotonic generation bumped when a GPU write overlaps a cached buffer texture
 int vka_tex_id_pending(int id);                     // texture ID id is registered and its image is not made yet (its first use records commands)
 VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same on the recording thread, through a memo (DM_VK_TEX_MEMO)
+VkImageView vka_tex_id_view_samp_rec(int id, int sid, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout);   // the same paired with sampler ID sid (DM_VK_FB_PIN)
 VkFormat vka_tex_id_vkfmt(int id);   // the format texture ID id is viewed in, not its (possibly shared) image's (vka_tex.c)
 VkImageView vka_tex_id_view_bits(int id, VkCommandBuffer cb, VkImageLayout *layout);   // a storage view of its image as R32_UINT (4-byte texels), not written into the bindless table (vka_tex.c)
 int vka_tex_id_pending_rec(int id, uint8_t dim);

@@ -26,6 +26,7 @@
 #include "vka_spvpatch.h"
 #include "game_profile.h"
 #include "vka_texown.h"
+#include "vka_texcontent.h"
 #include "vka_wbfollow.h"
 #include "../nvn/nvn_tex.h"
 
@@ -718,15 +719,14 @@ static int gpu_image_over(const uint8_t *mem) {   // caller holds g_tmu; images 
     int k; for (vka_img *im = mem ? live_first(mem, &k) : NULL; im; im = live_next(im, mem, &k)) if (im->mem == mem && im->gpu_owned && !img_pool_dead(im)) return 1;
     return 0;
 }
-static int nvn2_sampled_content(const tex_t *t, const vka_fmt *f, unsigned pf, int sampled) {
-    static int on = -1; if (on < 0) on = VKA_ENV("DM_VK_STORAGE_FIRST_USE", 1) != 0 && vka_nvn2();   // (vka_nvn2: captures too)
-    const nvn_texdesc *d = &t->d;
-    if (!on || !sampled || !t->pool || t->has_layout || compressed(f) || f->kind >= 3) return 0;
-    if (pf & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL)) return 0;
-    if (d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_SPARSE)) return 0;
+static int storage_sampled_content(const tex_t *t, const vka_fmt *f, unsigned pf, int sampled, const uint8_t *c) {
+    static int on = -1; if (on < 0) on = VKA_ENV("DM_VK_STORAGE_FIRST_USE", 1) != 0;
+    if (!on || !t->pool) return 0;
+    int nvn2 = vka_nvn2();
+    if (!vka_tc_sampled_content(nvn2, t->d.flags, pf, t->has_layout, compressed(f), f->kind, sampled, nvn2 ? 1 : mem_any_mapped(c, t))) return 0;
     return !gpu_image_over(t->mem);
 }
-static uint64_t g_nvn2_first[2];   // textures taken from their storage at a first sample (nvn2_sampled_content): [0] with data, [1] storage all zero (tracked from zeros)
+static uint64_t g_nvn2_first[2];   // textures taken from their storage at a first sample (storage_sampled_content): [0] with data, [1] storage all zero (tracked from zeros)
 static int storage_mode(const tex_t *t, const uint8_t *c, const vka_fmt *f, int cpuw, int sampled) {   // c: the storage's content as the GPU will see it (t->mem or gw_content's copy)
     const nvn_texdesc *d = &t->d;
     if (!t->mem || d->samples > 1 || f->kind >= 3 || d->target == NVN_TEXTURE_TARGET_BUFFER) return ST_ZERO;
@@ -742,10 +742,10 @@ static int storage_mode(const tex_t *t, const uint8_t *c, const vka_fmt *f, int 
     else if (linear && t->pool) want = ST_TRACK;
     else if (is_vid) want = ST_TRACK;
     else if (comp && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_SPARSE)) && mem_any_mapped(c, t)) want = ST_TRACK;
-    else if (nvn2_sampled_content(t, f, pf, sampled)) {
+    else if (storage_sampled_content(t, f, pf, sampled, c)) {
         int any = mem_any_mapped(c, t); uint64_t k = g_nvn2_first[!any]++; want = ST_TRACK;
-        if (any && k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: written by the CPU before its first use, a sample (NVN2): uploaded from its storage, re-uploaded when it changes (%llu so far, %llu more with empty storage)",
-                               (unsigned long long)t->serial, d->width, d->height, d->depth, d->format, pf, (unsigned long long)k + 1, (unsigned long long)g_nvn2_first[1]);
+        if (any && k < 4) VLOG("texture serial %llu %ux%ux%u format %#x pool flags %#x: written by the CPU before its first use, a sample (%s): uploaded from its storage, re-uploaded when it changes (%llu so far, %llu more with empty storage)",
+                               (unsigned long long)t->serial, d->width, d->height, d->depth, d->format, pf, vka_nvn2() ? "NVN2" : "NVN1", (unsigned long long)k + 1, (unsigned long long)g_nvn2_first[1]);
     }
     else if (!(d->flags & NVN_TEXTURE_FLAGS_COMPRESSIBLE) && t->pool && ((pf & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED)) || nvn_flushed(t->mem, t->L.size))
              && mem_any_mapped(c, t)) want = ST_FILL;
@@ -1695,7 +1695,7 @@ static void img_evict_locked(vka_img *im) {
 // When a GPU-only resolution variant is written at (pool, pgen, mem, vk_fmt), other resolution variants at the same pool storage have their Switch
 // content superseded. Evicting idle siblings past their GPU fence frees dynamic-resolution allocations without VK_IMAGE_CREATE_ALIAS_BIT. Caller holds g_tmu.
 static void fam_evict_locked(vka_img *im, uint64_t cur_frame) {
-    if (!VKA_ENV("DM_VK_FAM_EVICT", 1) || !im || !im->fam_elig || im->par || im->m.z || im->pdead || !im->pool || !im->pgen || !im->mem || cur_frame < VKF_MIN_AGE) return;
+    if (!VKA_ENV("DM_VK_FAM_EVICT", 0) || !im || !im->fam_elig || im->par || im->m.z || im->pdead || !im->pool || !im->pgen || !im->mem || cur_frame < VKF_MIN_AGE) return;
     enum { FAM_SCAN_MAX = 128 };
     vka_img *cand[FAM_SCAN_MAX]; vkf_sib sb[FAM_SCAN_MAX]; int n = 0; int lk;
     for (vka_img *o = live_first(im->mem, &lk); o && n < FAM_SCAN_MAX; o = live_next(o, im->mem, &lk)) {
@@ -2936,6 +2936,25 @@ static _Thread_local uint32_t t_fb_loop;
 uint32_t vka_tex_fb_loop_take(void) { uint32_t m = t_fb_loop; t_fb_loop = 0; return m; }
 void vka_tex_fb_loop_or(uint32_t mask) { t_fb_loop |= mask; }
 void vka_tex_feedback(vka_img *const *ims, const uint32_t *levels, int n) { g_nfb = n > 9 ? 9 : n; for (int i = 0; i < g_nfb; i++) { g_fb_im[i] = ims[i]; g_fb_lv[i] = levels[i]; } }
+// Level a sampler pins (counted from the view's base), or -1 if it samples across levels.
+static int fb_samp_pin(const samp_par *p) {
+    if (p->minf < NVN_MIN_FILTER_NEAREST_MIPMAP_NEAREST || p->lod_min != p->lod_max || !(p->lod_min >= 0.0f && p->lod_min <= 15.0f) || p->lod_min != (float)(int)p->lod_min) return -1;
+    return (int)p->lod_min;
+}
+// Clip a sampled view's level range [l0, l0+nl) around attached level att. Pinned levels other than att select that single level;
+// otherwise, views starting below att are cut to the levels below att. Returns 1=pinned, 2=cut below, 0=unchanged.
+static int fb_view_levels(uint32_t *l0, uint32_t *nl, uint32_t att, int pin) {
+    if (att < *l0 || att - *l0 >= *nl || *nl < 2) return 0;
+    if (pin >= 0) { uint32_t lv = *l0 + ((uint32_t)pin < *nl ? (uint32_t)pin : *nl - 1); if (lv != att) { *l0 = lv; *nl = 1; return 1; } }
+    if (att > *l0) { *nl = att - *l0; return 2; }
+    return 0;
+}
+static _Thread_local int t_view_sid;
+static int fb_pin_of(int sid) {
+    if (sid <= 0 || !VKA_ENV("DM_VK_FB_PIN", 1)) return -1;
+    pthread_mutex_lock(&g_tmu); int pin = sid < g_nsreg ? fb_samp_pin(&g_sreg[sid]) : -1; pthread_mutex_unlock(&g_tmu);
+    return pin;
+}
 static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int storage, VkFormat ovr) {
     vka_fmt f; const view_t *v = e->has_v ? &e->v : NULL;
     if (!vka_fmt_of(v && v->set_format ? v->format : e->t.d.format, &f)) f = im->f;
@@ -2950,12 +2969,16 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
     if (a0 >= dmax) return VK_NULL_HANDLE;
     if (l0 + nl > im->levels) nl = im->levels - l0;
     if (a0 + na > dmax) na = dmax - a0;
-    if (vt_want >= 0 && !storage) for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im) {
-        if (g_fb_lv[i] > l0 && g_fb_lv[i] < l0 + nl) {
-            static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], l0, nl);
-            nl = g_fb_lv[i] - l0;
+    if (vt_want >= 0 && !storage) {
+        int pin = -2;
+        for (int i = 0; i < g_nfb; i++) if (g_fb_im[i] == im) {
+            uint32_t ol0 = l0, onl = nl;
+            if (pin == -2) pin = fb_pin_of(t_view_sid);
+            int how = fb_view_levels(&l0, &nl, g_fb_lv[i], pin);
+            if (how == 1) { static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u, its sampler pinned to level %u: sampled through that level alone", (unsigned long long)im->serial, g_fb_lv[i], ol0, onl, l0); }
+            if (how == 2) { static _Atomic int n; if (!atomic_exchange(&n, 1)) VLOG("a pass samples the texture it renders (serial %llu level %u) through levels %u+%u: sampled through the levels below it", (unsigned long long)im->serial, g_fb_lv[i], ol0, onl); }
+            if (g_fb_lv[i] >= l0 && g_fb_lv[i] - l0 < nl) t_fb_loop |= im->f.kind >= 3 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         }
-        if (g_fb_lv[i] >= l0 && g_fb_lv[i] - l0 < nl) t_fb_loop |= im->f.kind >= 3 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     }
     int tgt = v && v->set_target ? v->target : e->t.d.target;
     VkComponentMapping m = {0};
@@ -3189,6 +3212,13 @@ VkImageView vka_tex_id_view_rec(int id, VkCommandBuffer cb, uint8_t dim, int sto
     vka_img *im = NULL; VkImageView v = id_view(id, cb, dim, 0, &im, VK_FORMAT_UNDEFINED);
     tex_rec_stamp(im);
     if (v && im && g_tver && !in_fb(im)) *m = (vmemo){id, dim, ver, gen, im, v};
+    return v;
+}
+// Recording-thread view lookup paired with sampler ID sid so fb_view_levels can follow a pinned mip level (unmemoized when in_fb).
+VkImageView vka_tex_id_view_samp_rec(int id, int sid, VkCommandBuffer cb, uint8_t dim, int storage, VkImageLayout *layout) {
+    int prev = t_view_sid; t_view_sid = sid;
+    VkImageView v = vka_tex_id_view_rec(id, cb, dim, storage, layout);
+    t_view_sid = prev;
     return v;
 }
 int vka_tex_id_pending_rec(int id, uint8_t dim) {   // 0 at once when the memo holds the ID (its image was made)

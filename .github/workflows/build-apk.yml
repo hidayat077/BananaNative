@@ -68,6 +68,15 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           android/ondevice/build.sh "$RUNNER_TEMP/pack" all
       - run: echo "NX_PACK_STAGE=$RUNNER_TEMP/pack/stage" >> "$GITHUB_ENV"
+      - name: ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: |
+            ccache-
+      - name: Install ccache
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ccache
       - name: Gradle cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -79,7 +88,17 @@ jobs:
             gradle-
       - name: Build
         working-directory: android/app
-        run: ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} apk
+        env:
+          NX_CCACHE: '1'
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_NOHASHDIR: '1'
+          CCACHE_MAXSIZE: 500M
+          CCACHE_COMPRESS: '1'
+        run: |
+          ccache -z
+          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} --build-cache apk
+          ccache -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: polar-android
