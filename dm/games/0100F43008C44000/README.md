@@ -111,6 +111,7 @@ General host changes first needed here; each applies to every game:
 - **Bounds checks before image-atomic pointer construction and matched image/buffer admission:** [Bounds of image atomics](../../../docs/reference/shaders.md#bounds-of-image-atomics).
 - **The host's StandardAllocator cap** (`hle_svc.c` "StandardAllocator's address space", the `stdalloc_cap` key): [StandardAllocators over 12 to 62 GB of address space](../../../docs/reference/memory.md#standardallocators-over-12-to-62-gb-of-address-space).
 - **The address region table and the NSP script's region check** (`patch_nso.py` "Address regions", `hle_svc.c`, `DM_REGIONS`): its allocator region, 4 GB through `nn::mem::StandardAllocator::Initialize`, returning to `main+0x1b2e690` in `nninitStartup` (the function at `main+0x1b3e3b0` that sets the size tail-calls the SDK), opened to its end by the startup block, which is why the check judges a region by who lays it out: [Measuring address regions and commits](../../../docs/reference/memory.md#measuring-address-regions-and-commits).
+- **On-device shader Prepare with the game's Oodle decoder** (`OodleNeed.java`, `OodleService.java`): the split's Trinity packs need `OodleLZ_Decompress`; the phone's check had looked for a file the rewriter never writes, so it never started the decoder: [The phone's Prepare and the game's Oodle decoder](../../../docs/reference/shaders.md#the-phones-prepare-and-the-games-oodle-decoder).
 
 ## Open
 

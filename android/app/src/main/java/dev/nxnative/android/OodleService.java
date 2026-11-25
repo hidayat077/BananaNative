@@ -8,7 +8,11 @@ import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 
 /**
  * Runs the game's own Oodle/LZ5 decoder (dm/host/hle_oodle.c, DM_OODLE_SERVE=1) in a separate
@@ -43,6 +47,7 @@ public final class OodleService extends Service {
     }
 
     private void serve(String titleId, String packPath, String socketName, String logPath) {
+        note(logPath, "starting the game's Oodle decoder for " + titleId);
         try {
             server = new LocalServerSocket(socketName);
             Native.load(titleId);
@@ -57,10 +62,22 @@ public final class OodleService extends Service {
                     "DM_ROMFS=" + packPath
             };
             int rc = Native.start(args, env, logPath, packPath);
+            note(logPath, "the decoder ended with " + rc);
             if (rc != 0) Log.e(TAG, "Native.start failed: " + rc);
         } catch (Throwable t) {
+            note(logPath, "failed: " + t);   // split.log cannot say why the socket never answered; this file can
             Log.e(TAG, "OodleService failed", t);
+            try { if (server != null) server.close(); } catch (IOException ignored) {}
         }
+    }
+
+    /** What went wrong with the decoder goes beside the split's log, where the player can share it */
+    private static void note(String path, String line) {
+        if (path == null) return;
+        try {
+            Files.write(new File(path).toPath(), (line + "\n").getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException ignored) {}
     }
 
     @Override
