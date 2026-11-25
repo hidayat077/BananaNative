@@ -689,9 +689,9 @@ public final class PackService extends Service {
 
     private static boolean needsOodle(String titleId, File pack) {
         if (!new File(pack, "main.android.bin").isFile()) return false;
-        File gtsv = new File(PackNative.repo(), "dm/games/" + titleId + "/game.tsv");
-        if (!gtsv.isFile()) return false;
         try {
+            File gtsv = new File(PackNative.repo(), "dm/games/" + titleId + "/game.tsv");
+            if (!gtsv.isFile()) return false;
             String text = new String(Files.readAllBytes(gtsv.toPath()), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
             return text.contains("trpfs") || text.contains("pkz") || text.contains("gfpak") || text.contains(".pak");
         } catch (IOException ignored) {
