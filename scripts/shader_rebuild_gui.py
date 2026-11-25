@@ -254,8 +254,8 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         src_row = QtWidgets.QHBoxLayout()
         src_row.setSpacing(8)
         self.path_edit = QtWidgets.QLineEdit()
-        self.path_edit.setPlaceholderText('Select a .nup file, dump folder (base/, updates/), or <titleID>-work folder...')
-        btn_nup = QtWidgets.QPushButton('.nup File…')
+        self.path_edit.setPlaceholderText('Select a .nup / .nsp file, dump folder (base/, updates/), or <titleID>-work folder...')
+        btn_nup = QtWidgets.QPushButton('.nup / .nsp…')
         btn_dir = QtWidgets.QPushButton('Folder…')
         btn_load = QtWidgets.QPushButton('Load')
         btn_load.setObjectName('secondaryBtn')
@@ -665,7 +665,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
         """)
 
     def pick_nup(self):
-        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select .nup file', '', 'NUP (*.nup);;All Files (*)')
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select .nup or .nsp file', '', 'Game Package (*.nup *.nsp);;NUP (*.nup);;NSP (*.nsp);;All Files (*)')
         if p:
             self.path_edit.setText(p)
             self.load_target(p)
@@ -964,7 +964,7 @@ class ShaderRebuildWindow(QtWidgets.QMainWindow):
 
         <h2>1. Game / Work Folder</h2>
         <ul>
-          <li><b>.nup File…</b>: Pick a game <code>.nup</code> package. Recommended for a first-time build or when updating <code>pack.tsv</code>.</li>
+          <li><b>.nup / .nsp…</b>: Pick a game <code>.nup</code> or plaintext <code>.nsp</code> package. Recommended for a first-time build or when updating <code>pack.tsv</code>.</li>
           <li><b>Folder…</b>: Pick either a console dump folder (<code>base/</code>, <code>updates/</code>, <code>dlc/</code>) or an existing <code>&lt;titleID&gt;-work</code> folder.</li>
           <li>Once loaded, the status bar shows the target Vulkan chain version (<code>v-&lt;DMSH_VK_CHAIN&gt;</code>), whether <code>pkg/</code> is already split, and whether the target shader library already exists.</li>
         </ul>
