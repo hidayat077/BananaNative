@@ -1,20 +1,21 @@
-# Builds the test-app APK with Pokemon Z-A, Zelda TotK, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, No Man's Sky and Zelda Breath of the Wild (title IDs below); add a game by adding its ID to nxGames.
+# Builds the APK with Zelda TotK, Zelda BotW, Pokemon Legends: Z-A, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, and Pokemon Scarlet; add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
   push:
-    branches: [add_game_profile]
+    branches: [android, add_game_profile]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-apk-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F2C0115B6000,01007EF00011E000
+  nxGames: 0100F2C0115B6000,01007EF00011E000,0100F43008C44000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000,0100A3D008C5C000
 
 jobs:
   apk:
@@ -97,12 +98,36 @@ jobs:
           CCACHE_COMPRESS: '1'
         run: |
           ccache -z
-          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} --build-cache apk
+          VER_ARG=""
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER_ARG="-PnxVersion=${GITHUB_REF_NAME#v}"
+          fi
+          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} $VER_ARG --build-cache apk
           ccache -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: polar-android
           path: android/app/out/polar-android.apk
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat <<'EOF' | sed 's/^          //' > /tmp/release-notes.md
+          Currently supported games:
+          - The Legend of Zelda: Tears of the Kingdom (`0100F2C0115B6000`)
+          - The Legend of Zelda: Breath of the Wild (`01007EF00011E000`)
+          - Pokémon Legends: Z-A (`0100F43008C44000`)
+          - FINAL FANTASY RESONANCE (`0100606026F12000`)
+          - South Park: The Fractured but Whole (`01008F2005154000`)
+          - Hogwarts Legacy (`0100F7E00C70E000`)
+          - DRAGON BALL: Sparking! ZERO (`010035F022078000`)
+          - Luigi's Mansion 3 (`0100DCA0064A6000`)
+          - Pokémon Scarlet (`0100A3D008C5C000`)
+          EOF
+          gh release create "$GITHUB_REF_NAME" android/app/out/polar-android.apk \
+            --title "Polar $GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md
 
 # The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
 # generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \
