@@ -250,6 +250,7 @@ static void img_destroy(void *arg) {
         for (view_ent *v = im->views, *n; v; v = n) { n = v->next; vk.vkDestroyImageView(V.dev, v->v, NULL); free(v); }
         free(im->snap); free(im); return; }
     if (im->zold) { img_destroy(im->zold); im->zold = NULL; }   // (the zero-shared image it left: no holder is left either)
+    if (im->bc_alias) { img_destroy(im->bc_alias); im->bc_alias = NULL; }   // (the uncompressed block image it wrote through: no binding is left)
     for (view_ent *v = im->views, *n; v; v = n) { n = v->next; vk.vkDestroyImageView(V.dev, v->v, NULL); free(v); }
     if (im->rs) { vks_free(im->rs); vks_va_give(im->va); }   // (its binds dropped or run first)
     if (im->img) vk.vkDestroyImage(V.dev, im->img, NULL);
@@ -2005,6 +2006,65 @@ static int bc_alias_match_img(const vka_img *s, const vka_img *d) {
     return d && d != s && !d->par && !d->is_video && !img_pool_dead((vka_img *)d) && (d->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
         && bc_alias_match(s, d->mem, &d->d, &d->f);
 }
+// A BC texture bound straight to a storage image slot has no Vulkan storage view: compressed formats have no STORAGE_IMAGE feature and no numeric class twin in the
+// translator. Make an uncompressed image of one texel per 4x4 block over the same guest storage, in the shader's numeric class. The compute shader writes the block words
+// into that image and vka_tex_id_bc_sync copies them back into every BC image over the same memory (the path a game-made uncompressed alias already takes). The alias is
+// dense: a 16x16 BC texture needs 4x4 words, and no sparse address space is spent on it. One alias per BC image, shared by all texture IDs naming it.
+static void bc_alias_drop(vka_img *im) {
+    if (!im->bc_alias) return;
+    vka_after(vka_fence_last() + 1, img_destroy, im->bc_alias);
+    im->bc_alias = NULL;
+}
+static void bc_alias_fill(vka_img *bc, vka_img *al, VkCommandBuffer cb) {
+    if (!cb) return;
+    vka_barrier(cb);
+    uint32_t n = bc->levels < al->levels ? bc->levels : al->levels;
+    for (uint32_t lv = 0; lv < n; lv++) {
+        if (lv < bc->base || lv - bc->base >= bc->levels || lv < al->base || lv - al->base >= al->levels) continue;
+        uint32_t bw = (bc->d.width >> lv) ? (bc->d.width >> lv) : 1, bh = (bc->d.height >> lv) ? (bc->d.height >> lv) : 1;
+        uint32_t aw = (bw + 3) / 4, ah = (bh + 3) / 4;
+        if (aw != ((al->d.width >> lv) ? (al->d.width >> lv) : 1) || ah != ((al->d.height >> lv) ? (al->d.height >> lv) : 1)) continue;
+        uint32_t layers = bc->layers < al->layers ? bc->layers : al->layers;
+        VkImageSubresourceLayers sr = {VK_IMAGE_ASPECT_COLOR_BIT, lv - bc->base, 0, layers};
+        VkImageSubresourceLayers dr = {VK_IMAGE_ASPECT_COLOR_BIT, lv - al->base, 0, layers};
+        VkImageCopy c = {sr, {0, 0, 0}, dr, {0, 0, 0}, {aw, ah, 1}};
+        vk.vkCmdCopyImage(cb, bc->img, VK_IMAGE_LAYOUT_GENERAL, al->img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    }
+    vka_barrier(cb);
+}
+static vka_img *bc_storage_alias(vka_img *bc, int cls, VkCommandBuffer cb) {
+    if (!bc || !bc->mem || bc->par || bc->is_video || bc->samples != 1 || bc->f.bw != 4 || bc->f.bh != 4
+        || (bc->f.bpb != 8 && bc->f.bpb != 16) || bc->d.target == NVN_TEXTURE_TARGET_3D || bc->d.target == NVN_TEXTURE_TARGET_BUFFER) return NULL;
+    if (!VKA_ENV("DM_VK_BC_ALIAS", 1)) return NULL;
+    int fmt = bc->f.bpb == 8 ? (cls == 1 ? NVN_FORMAT_RG32UI : cls == 2 ? NVN_FORMAT_RG32I : NVN_FORMAT_RG32F)
+                             : (cls == 1 ? NVN_FORMAT_RGBA32UI : cls == 2 ? NVN_FORMAT_RGBA32I : NVN_FORMAT_RGBA32F);
+    vka_fmt f;
+    if (!vka_fmt_of(fmt, &f) || !(feats(f.vk) & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) return NULL;
+    uint32_t aw = (bc->w + 3) / 4, ah = (bc->h + 3) / 4;
+    if (bc->bc_alias) {
+        vka_img *a = bc->bc_alias;
+        if (a->mem == bc->mem && a->base == bc->base && a->d.format == fmt && a->w == aw && a->h == ah
+            && a->levels == bc->levels && a->layers == bc->layers) return a;
+        bc_alias_drop(bc);   // the image was remade (or the shader asks for another class): the old alias is stale
+    }
+    tex_t t = {0};
+    t.serial = bc->serial; t.mem = bc->mem; t.d = bc->d;
+    t.d.format = fmt; t.d.flags = NVN_TEXTURE_FLAGS_IMAGE; t.d.samples = 1;
+    t.d.width = aw; t.d.height = ah; t.d.stride = 0; t.d.pkg_layout = 0;
+    nvn_tex_layout(&t.d, &t.L);
+    vka_img *n = img_create(&t, &f, 0);
+    if (!n || !(n->usage & VK_IMAGE_USAGE_STORAGE_BIT)) {
+        if (n) { g_img_bytes -= n->bytes; img_destroy(n); }
+        return NULL;
+    }
+    bc_alias_fill(bc, n, cb);
+    bc->bc_alias = n;
+    static _Atomic int noted;
+    if (atomic_fetch_add(&noted, 1) < 8)
+        VLOG("BC storage: texture serial %llu (%ux%u fmt %#x) bound as a shader image: writing %ux%u format %#x alias, copied back into the BC image at the dispatch",
+             (unsigned long long)bc->serial, bc->w, bc->h, bc->d.format, n->w, n->h, fmt);
+    return n;
+}
 static int bc_copy_levels(vka_img *s, vka_img *d, VkCommandBuffer cb, uint32_t lv0, uint32_t nlv, uint32_t l0, uint32_t nl) {
     int copied = 0, is3d = d->depth > 1;
     for (uint32_t k = 0; k < nlv; k++) {
@@ -3315,6 +3375,17 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
     vka_fmt vf = view_fmt(&e, im);
     int want = dim & DMSH_VK_DIM_SINT ? 2 : dim & DMSH_VK_DIM_UINT ? 1 : 0, have = tex_fmt_class(vf, e.t.stencil || (e.has_v && e.v.set_dsmode && e.v.dsmode));
     VkFormat ovr = VK_FORMAT_UNDEFINED;
+    int aliased = 0;
+    // A game may bind a BC texture straight to a shader image slot (Hello Games' genmipmap_comp_compressbc* do): Vulkan has no storage view of a compressed format.
+    // Write its block words through an uncompressed alias, in the class the shader declares, and copy them back after the dispatch (vka_tex_id_bc_sync).
+    if (storage && !force && vf.bw == 4 && vf.bh == 4 && (vf.bpb == 8 || vf.bpb == 16)) {
+        vka_img *bc = im;
+        vka_img *a = bc_storage_alias(bc, want, cb);
+        if (a) {
+            pthread_mutex_lock(&g_tmu); im_unhold_locked(im); a->holds++; pthread_mutex_unlock(&g_tmu);
+            im = a; vf = im->f; ovr = vf.vk; have = want; aliased = 1;
+        }
+    }
     if (force) {   // (vka_tex_id_view_bits: a colour format of 4-byte texels)
         if (vf.bw != 1 || vf.bh != 1 || vf.bpb != 4 || im->aspect != VK_IMAGE_ASPECT_COLOR_BIT) { pthread_mutex_lock(&g_tmu); im_unhold_locked(im); pthread_mutex_unlock(&g_tmu); return VK_NULL_HANDLE; }
         ovr = force;
@@ -3342,7 +3413,7 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
     VkImageView vw; t_view_strict = ovr != VK_FORMAT_UNDEFINED || (storage && vf.vk != im->f.vk); vw = view_of(&e, im, vt, storage, ovr); t_view_strict = 0;
     // The pool table's slot: the texture's own view ("What each slot of the pool tables holds"), written only when it changes
     VkImageView sv = VK_NULL_HANDLE; int bind_view = VKA_ENV("DM_VK_POOL_SLOT_BIND", 0) != 0;
-    if (g_set && vw && !force && id > 0 && id < (int)(e0.img ? g_nimg_slots : g_ntex_slots)) sv = bind_view ? vw : treg_dead(id, &e0) ? VK_NULL_HANDLE : view_of(&e0, im, -1, 0, VK_FORMAT_UNDEFINED);
+    if (g_set && vw && !force && !aliased && id > 0 && id < (int)(e0.img ? g_nimg_slots : g_ntex_slots)) sv = bind_view ? vw : treg_dead(id, &e0) ? VK_NULL_HANDLE : view_of(&e0, im, -1, 0, VK_FORMAT_UNDEFINED);
     pthread_mutex_lock(&g_tmu);
     int put = sv && slot_put_locked(e0.img ? 2 : 0, id, sv, im->serial, 1);
     if (put && !e0.img && g_pfb_st && sv != g_null_view) g_pfb_st[id] &= (uint8_t)~PFB_NULL;
@@ -3364,8 +3435,10 @@ void vka_tex_id_bc_sync(int id, VkCommandBuffer cb) {
     treg_ent e = g_treg[id];
     smap_ent *se = map_get(e.t.serial);
     vka_img *s = se ? se->im : NULL;
-    if (!s || s->par || !s->mem || s->is_video || s->samples != 1 || s->f.kind > 2 || s->f.bw != 1 || s->f.bh != 1
-        || (s->f.bpb != 8 && s->f.bpb != 16) || !(s->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || img_pool_dead(s)) {
+    // A BC texture bound straight to a shader image slot writes its blocks through bc_storage_alias: copy that image back, not the unbindable BC image itself.
+    vka_img *blocks = s && s->bc_alias ? s->bc_alias : s;
+    if (!blocks || blocks->par || !blocks->mem || blocks->is_video || blocks->samples != 1 || blocks->f.kind > 2 || blocks->f.bw != 1 || blocks->f.bh != 1
+        || (blocks->f.bpb != 8 && blocks->f.bpb != 16) || !(blocks->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || img_pool_dead(blocks)) {
         pthread_mutex_unlock(&g_tmu);
         return;
     }
@@ -3377,12 +3450,12 @@ void vka_tex_id_bc_sync(int id, VkCommandBuffer cb) {
     uint32_t nl = v && v->set_layers && v->nlayers ? v->nlayers : (l0 < dmax ? dmax - l0 : 1);
     vka_img *dsts[16]; int ndst = 0, lk;
     for (vka_img *o = live_first(s->mem, &lk); o && ndst < 16; o = live_next(o, s->mem, &lk)) {
-        if (!bc_alias_match_img(s, o)) continue;
+        if (!bc_alias_match_img(blocks, o)) continue;
         o->refs++; o->holds++;
         dsts[ndst++] = o;
     }
     if (!ndst) { pthread_mutex_unlock(&g_tmu); return; }
-    s->refs++; s->holds++;
+    blocks->refs++; blocks->holds++;
     pthread_mutex_unlock(&g_tmu);
 
     vka_barrier(cb);
@@ -3390,7 +3463,7 @@ void vka_tex_id_bc_sync(int id, VkCommandBuffer cb) {
     for (int k = 0; k < ndst; k++) {
         vka_img *d = dsts[k];
         vka_tex_own(d, cb);
-        int copied = bc_copy_levels(s, d, cb, lv0, 1, l0, nl);
+        int copied = bc_copy_levels(blocks, d, cb, lv0, 1, l0, nl);
         if (copied > 0) {
             any_copied = 1;
             vka_img_written(d);
@@ -3401,18 +3474,18 @@ void vka_tex_id_bc_sync(int id, VkCommandBuffer cb) {
                 atomic_fetch_add_explicit(&g_tgen, 1, memory_order_release);
             }
             uint64_t fnow = vka_fence_last();
-            if (s->last_fence < fnow) s->last_fence = fnow;
+            if (blocks->last_fence < fnow) blocks->last_fence = fnow;
             pthread_mutex_unlock(&g_tmu);
             static _Atomic int nbc;
             if (atomic_fetch_add(&nbc, 1) < 16)
                 VLOG("BC alias sync: storage serial %llu (%ux%u fmt %#x lv %u) -> BC serial %llu (%ux%u fmt %#x)",
-                     (unsigned long long)s->serial, s->w, s->h, s->d.format, lv0,
+                     (unsigned long long)blocks->serial, blocks->w, blocks->h, blocks->d.format, lv0,
                      (unsigned long long)d->serial, d->w, d->h, d->d.format);
         }
     }
     if (any_copied) vka_barrier(cb);
     for (int k = 0; k < ndst; k++) vka_tex_drop(dsts[k]);
-    vka_tex_drop(s);
+    vka_tex_drop(blocks);
 }
 vka_img *vka_tex_id_img(int id, VkCommandBuffer cb) {   // the image of texture ID id (DM_VK_NANSCAN), NULL = none
     pthread_mutex_lock(&g_tmu);
@@ -3504,7 +3577,11 @@ int vka_tex_id_buffer(int id, uint64_t *addr, uint32_t *elems, int *format) {
 int vka_tex_id_storage_pending(int id) {
     pthread_mutex_lock(&g_tmu);
     smap_ent *e = id > 0 && id < g_ntreg && g_treg[id].t.serial ? map_get(g_treg[id].t.serial) : NULL;
-    int r = e && e->im && ((!(e->im->usage & VK_IMAGE_USAGE_STORAGE_BIT) && storage_able(e->im, VK_FORMAT_UNDEFINED) && !e->im->holds) || e->im->m.z);   // (a zero-shared image gets memory of its own: outside the pass too)
+    vka_img *im = e ? e->im : NULL;
+    // A BC texture bound as a shader image is remade into an uncompressed block image here too (bc_alias_fill copies it: vkCmdCopyImage, no pass open).
+    int bc = im && VKA_ENV("DM_VK_BC_ALIAS", 1) && im->mem && !im->par && im->samples == 1
+             && im->f.bw == 4 && im->f.bh == 4 && (im->f.bpb == 8 || im->f.bpb == 16) && im->d.target != NVN_TEXTURE_TARGET_3D;
+    int r = im && ((!(im->usage & VK_IMAGE_USAGE_STORAGE_BIT) && storage_able(im, VK_FORMAT_UNDEFINED) && !im->holds) || im->m.z || bc);   // (a zero-shared image gets memory of its own: outside the pass too)
     pthread_mutex_unlock(&g_tmu);
     return r;
 }
