@@ -42,7 +42,7 @@ final class HomeLayout {
         sv.setVerticalFadingEdgeEnabled(true);
         sv.setFadingEdgeLength(Ui.dp(a, 32));
         gameBox.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        final int gap = Ui.dp(a, 12), bottom = Ui.dp(a, 90);   // room under the last game for the floating Add game button
+        final int gap = Ui.dp(a, 12), bottom = Ui.dp(a, 24);
         if (mode == GRID) {
             GridLayout g = new GridLayout(a);
             g.setColumnCount(2);

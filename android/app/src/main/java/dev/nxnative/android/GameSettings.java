@@ -378,6 +378,8 @@ final class GameSettings {
                 picture.add(prepared(new Ui.Setting(a, "🎬", Tx.s(R.string.game_3d_scene), v -> scene(a, g, again)), sceneValue(a, g, SceneRes.presets(prof))).chevron(a));
         }
         if (prof != null && prof.renderCfg()) renderRows(a, g, prof, picture, again);   // Resolution, Upscaling quality, Graphics quality instead of Resolution (a render_cfg row)
+        picture.add(new Ui.Setting(a, "🔎", "Render scale (Handheld/Docked)", v -> renderScale(a, g, again))
+                .value(dflt(Prefs.ownRenderScale(a, id), Prefs.RENDER_SCALE_SHORT[Prefs.renderScale(a, id)])).chevron(a));
         if (simple) {   // the Upscaler stays as stored (GameActivity reads the preference); only testers change it for a game with Resolution presets
         } else if (Prefs.dlssGame(id)) {   // a game on the DLSS stand-in (game.tsv dlss_standin): its Upscaler is the stand-in (GSR2's sliders under GSR 2, the sharpness under FSR 1)
             int dm = GameUpscaler.dlssMode(a, id);
@@ -1106,6 +1108,11 @@ final class GameSettings {
     private static void upscaler(MainActivity a, Game g, Runnable done) {   // the Upscaler (GameUpscaler: DM_VK_NDSR and the present's scaling); the in-game panel changes it live
         choose(a, Tx.s(R.string.game_title_for, Tx.s(R.string.common_upscaler), g.name), Tx.arr(R.array.arr_upscaler_modes), firstLabel(recLabel(Tx.arr(R.array.arr_upscaler_modes), Recommend.UPSCALERS, Prefs.rec(a, g.titleId, Recommend.UPSCALER)), Tx.arr(R.array.arr_upscaler_modes)[GameUpscaler.mode(a)]), GameUpscaler.ownMode(a, g.titleId), GameUpscaler.mode(a, g.titleId),
                v -> GameUpscaler.mode(a, g.titleId, v), done);
+    }
+
+    private static void renderScale(MainActivity a, Game g, Runnable done) {
+        choose(a, Tx.s(R.string.game_title_for, "Render scale (Handheld/Docked)", g.name), Prefs.RENDER_SCALE_NAMES, firstLabel(null, Prefs.RENDER_SCALE_NAMES[Prefs.renderScale(a)]),
+               Prefs.ownRenderScale(a, g.titleId), Prefs.renderScale(a, g.titleId), v -> Prefs.renderScale(a, g.titleId, v), done);
     }
 
     private static void sharpness(MainActivity a, Game g, Runnable done) {   // FSR's RCAS sharpening (GameUpscaler, DM_VK_NDSR_SHARP)

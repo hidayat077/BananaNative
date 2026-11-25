@@ -71,6 +71,25 @@ final class Prefs {
     static String window(Context c) { return of(c).getString("window", WINDOW_DEFAULT); }
     static void window(Context c, String v) { of(c).edit().putString("window", v).commit(); }
 
+    /** Render scale (DM_RENDER_SCALE in loader.c, 0.5 to 1.0): scales 3D views on builds with a render scale stub while keeping HUD sharp; global default 1.0, overridable per game */
+    static final String[] RENDER_SCALES = {"0.5", "0.6", "0.75", "0.85", "1.0"};
+    static final String[] RENDER_SCALE_NAMES = {
+            "0.5x (360p/540p)",
+            "0.6x (432p/648p)",
+            "0.75x (540p/810p)",
+            "0.85x (612p/918p)",
+            "1.0x (720p/1080p)"
+    };
+    static final String[] RENDER_SCALE_SHORT = {"0.5x", "0.6x", "0.75x", "0.85x", "1.0x"};
+    static final int RENDER_SCALE_DEFAULT = 4;
+    static int renderScale(Context c) { int v = of(c).getInt("render_scale", RENDER_SCALE_DEFAULT); return v >= 0 && v < RENDER_SCALES.length ? v : RENDER_SCALE_DEFAULT; }
+    static void renderScaleDefault(Context c, int v) { of(c).edit().putInt("render_scale", v).commit(); }
+    static boolean ownRenderScale(Context c, String titleId) { return of(c).contains(gameKey("render_scale", titleId)); }
+    static int renderScale(Context c, String titleId) { int v = of(c).getInt(gameKey("render_scale", titleId), renderScale(c)); return v >= 0 && v < RENDER_SCALES.length ? v : renderScale(c); }
+    static void renderScale(Context c, String titleId, Integer v) {
+        if (v == null) of(c).edit().remove(gameKey("render_scale", titleId)).commit(); else of(c).edit().putInt(gameKey("render_scale", titleId), v).commit();
+    }
+
     // ---- A game's own settings (its Manage sheet › Game settings, the in-game panel), stored per title ID as "<key>@<title ID>"; a game without its own value
     // takes the default (the main screen's Settings, global). DKB with nothing of its own set runs exactly as before ----
     static String gameKey(String key, String titleId) { return key + "@" + titleId; }
