@@ -2436,13 +2436,34 @@ def oodle_ask(comp, n):
     global _OODLE
     if _OODLE is None:
         import tempfile
+        sock_name = os.environ.get('DM_OODLE_ANDROID_SOCKET')
         host, mods = os.environ.get('DM_OODLE_HOST'), os.environ.get('DM_OODLE_MODULES')
         ooz = os.environ.get('DM_OODLE_OOZ')   # a PC builder with no Mac host: the open-source ooz worker (dm/third_party/ooz), not the game's own decoder
-        if ooz: argv = [ooz]
-        elif not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder, or DM_OODLE_OOZ (the ooz worker)')
-        else: argv = [host, mods]
         err = tempfile.TemporaryFile()
-        _OODLE = (subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
+        if sock_name:
+            import socket, time
+            s = None
+            for _ in range(200):
+                try:
+                    c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    c.connect('\0' + sock_name)
+                    s = c
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            if s is None:
+                red(f'cannot connect to Android Oodle service socket {sock_name}')
+            class _SockPipe:
+                def __init__(self, sock):
+                    self._s = sock
+                    self.stdin = sock.makefile('wb', buffering=0)
+                    self.stdout = sock.makefile('rb', buffering=0)
+            _OODLE = (_SockPipe(s), err)
+        else:
+            if ooz: argv = [ooz]
+            elif not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder, or DM_OODLE_OOZ (the ooz worker)')
+            else: argv = [host, mods]
+            _OODLE = (subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=dict(os.environ, DM_OODLE_SERVE='1')), err)
     p, err = _OODLE
     try:
         p.stdin.write(struct.pack('<QQ', len(comp), n)); p.stdin.write(comp); p.stdin.flush()

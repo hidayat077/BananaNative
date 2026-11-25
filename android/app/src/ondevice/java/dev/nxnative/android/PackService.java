@@ -643,6 +643,19 @@ public final class PackService extends Service {
             if (eq > 0 && !l.startsWith("#")) { PackEngine.setenv(l.substring(0, eq).trim(), l.substring(eq + 1).trim()); Files.write(log.toPath(), ("[env.txt] " + l.trim() + "\n").getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.APPEND); }
         }
         if (s.equals("shaders")) j.shadersMissing(0, 0);   // the step's own count (Tail), not an earlier run's
+        Intent oodleIntent = null;
+        if (s.equals("split") && !engine.simulated() && needsOodle(j.titleId(), pack)) {
+            String sock = "nxoodle-" + android.os.Process.myPid() + "-" + System.nanoTime();
+            PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", sock);
+            oodleIntent = new Intent(this, OodleService.class)
+                    .putExtra(OodleService.EXTRA_TITLE_ID, j.titleId())
+                    .putExtra(OodleService.EXTRA_PACK_PATH, pack.getPath())
+                    .putExtra(OodleService.EXTRA_SOCKET_NAME, sock)
+                    .putExtra(OodleService.EXTRA_LOG_PATH, new File(logs, "oodle.log").getPath());
+            startService(oodleIntent);
+        } else {
+            PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", "");
+        }
         Tail tail = new Tail(j, s, log);
         tail.start();
         int code;
@@ -653,6 +666,10 @@ public final class PackService extends Service {
         } finally {
             inTool = false;
             tail.finish();
+            if (oodleIntent != null) {
+                stopService(oodleIntent);
+                PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", "");
+            }
         }
         Log.i(TAG, s + ": exit " + code);
         if (code == PackEngine.INTERRUPTED) return "interrupted";
@@ -668,6 +685,18 @@ public final class PackService extends Service {
         long t = j.stepTotal(i);
         j.stepProgress(s, t > 0 ? t : 1, t > 0 ? t : 1, "");
         return null;
+    }
+
+    private static boolean needsOodle(String titleId, File pack) {
+        if (!new File(pack, "main.android.bin").isFile()) return false;
+        File gtsv = new File(PackNative.repo(), "dm/games/" + titleId + "/game.tsv");
+        if (!gtsv.isFile()) return false;
+        try {
+            String text = new String(Files.readAllBytes(gtsv.toPath()), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            return text.contains("trpfs") || text.contains("pkz") || text.contains("gfpak") || text.contains(".pak");
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     /** The steps that finished in this run of the job (work()): a step whose outputs are already gone again is not run a third time */

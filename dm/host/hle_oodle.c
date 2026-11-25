@@ -187,22 +187,24 @@ void dm_oodle_serve_maybe(int late) {
     if (!getenv("DM_OODLE_SERVE")) return;
     dec_find("DM_OODLE_SERVE");
     if (late != (g_dec.lz5 != NULL)) return;
+    const char *sfd = getenv("DM_OODLE_SERVE_FD");
+    int in_fd = sfd ? atoi(sfd) : 0, out_fd = sfd ? atoi(sfd) : 1;
     enum { SLACK = 0x10000 };
     size_t scratch_n = 16u << 20; uint8_t *scratch = malloc(scratch_n), *comp = NULL, *raw = NULL; size_t comp_cap = 0, raw_cap = 0; uint64_t n = 0, bad = 0;   // the decoder's work memory, as for a job
     if (!scratch) die("DM_OODLE_SERVE: decoder memory");
-    LOG("DM_OODLE_SERVE: %s at main+%#llx, requests on stdin", g_dec.name, (unsigned long long)g_dec.off);
+    LOG("DM_OODLE_SERVE: %s at main+%#llx, requests on fd %d", g_dec.name, (unsigned long long)g_dec.off, in_fd);
     for (;;) {
         uint64_t hdr[2];
-        if (!read_all(0, hdr, sizeof hdr)) break;
+        if (!read_all(in_fd, hdr, sizeof hdr)) break;
         if (hdr[0] > (1ull << 32) || hdr[1] > (1ull << 32)) die("DM_OODLE_SERVE: request too large (%#llx → %#llx)", (unsigned long long)hdr[0], (unsigned long long)hdr[1]);
         if (hdr[0] > comp_cap) { free(comp); comp_cap = hdr[0]; if (!(comp = malloc(comp_cap))) die("DM_OODLE_SERVE: input buffer"); }
         if (hdr[1] + SLACK > raw_cap) { free(raw); raw_cap = hdr[1] + SLACK; if (!(raw = malloc(raw_cap))) die("DM_OODLE_SERVE: output buffer"); }
-        if (!read_all(0, comp, hdr[0])) die("DM_OODLE_SERVE: request cut short");
+        if (!read_all(in_fd, comp, hdr[0])) die("DM_OODLE_SERVE: request cut short");
         int64_t got = dec_run(comp, (int64_t)hdr[0], raw, (int64_t)hdr[1], scratch, (int64_t)scratch_n);
         uint64_t out = got == (int64_t)hdr[1] ? (uint64_t)got : 0;
         if (!out && hdr[1] && bad++ < 8) LOG("[RED] DM_OODLE_SERVE: request %llu (%llu → %llu bytes) failed (decoder returned %lld)", (unsigned long long)n, (unsigned long long)hdr[0], (unsigned long long)hdr[1], (long long)got);
-        write_all(1, &out, sizeof out);
-        if (out) write_all(1, raw, out);
+        write_all(out_fd, &out, sizeof out);
+        if (out) write_all(out_fd, raw, out);
         n++;
     }
     LOG("DM_OODLE_SERVE: %llu requests, %llu failed", (unsigned long long)n, (unsigned long long)bad);

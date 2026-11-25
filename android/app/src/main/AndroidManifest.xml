@@ -95,6 +95,11 @@
             android:process=":readiness"
             android:theme="@style/Theme.Polar"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" />
+        <!-- The game's own Oodle decoder (OodleService, DM_OODLE_SERVE=1) for on-device shader splitting -->
+        <service
+            android:name=".OodleService"
+            android:exported="false"
+            android:process=":oodle" />
         <provider
             android:name=".LogProvider"
             android:authorities="${applicationId}.logs"
