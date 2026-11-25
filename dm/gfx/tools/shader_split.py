@@ -2438,6 +2438,16 @@ class _HostLog:
             with open(self.path, 'rb') as f: return f.read()
         except OSError: return b''
 
+class _SockPipe:
+    """The game's decoder over the phone's Unix socket. Both directions must be buffered:
+    an unbuffered socket write can send only part of a multi-megabyte stream, leaving the
+    host waiting for the rest while the split waits for an answer, and read(n) can return
+    fewer than n bytes."""
+    def __init__(self, sock):
+        self._s = sock
+        self.stdin = sock.makefile('wb')
+        self.stdout = sock.makefile('rb')
+
 def oodle_ask(comp, n):
     """The game's own decoder: OodleLZ_Decompress (Trinity's packs are Oodle Mermaid, Pokémon Legends: Arceus's GFPAK entries Oodle Kraken, and Oodle is linked into main), or LZ5_decompress_safe (DRAGON QUEST XI S's legacy Unreal paks):
     one Mac host per worker process in its tool mode (dm/host/hle_oodle.c, DM_OODLE_SERVE), fed over a pipe. DM_OODLE_HOST = the host, DM_OODLE_MODULES = the rewritten modules it loads
@@ -2462,11 +2472,6 @@ def oodle_ask(comp, n):
             if s is None:
                 red(f'cannot connect to Android Oodle service socket {sock_name} (see the work folder\'s logs/oodle.log)')
             err = _HostLog(os.environ.get('DM_OODLE_ANDROID_LOG', ''))
-            class _SockPipe:
-                def __init__(self, sock):
-                    self._s = sock
-                    self.stdin = sock.makefile('wb', buffering=0)
-                    self.stdout = sock.makefile('rb', buffering=0)
             _OODLE = (_SockPipe(s), err)
         else:
             err = tempfile.TemporaryFile()
