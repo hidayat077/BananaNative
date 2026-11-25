@@ -2429,6 +2429,15 @@ def smash_arc_shaders(path, rel, ents, out):
             if len(out) == n and b'\x91\x68\x86\x19' in b: out.extend(glslc_shaders(b, label, need=False))
 
 _OODLE = None
+class _HostLog:
+    """The phone's :oodle service writes the host's stdout/stderr to DM_OODLE_ANDROID_LOG; the socket has no stderr pipe."""
+    def __init__(self, path): self.path = path
+    def seek(self, _): pass
+    def read(self):
+        try:
+            with open(self.path, 'rb') as f: return f.read()
+        except OSError: return b''
+
 def oodle_ask(comp, n):
     """The game's own decoder: OodleLZ_Decompress (Trinity's packs are Oodle Mermaid, Pokémon Legends: Arceus's GFPAK entries Oodle Kraken, and Oodle is linked into main), or LZ5_decompress_safe (DRAGON QUEST XI S's legacy Unreal paks):
     one Mac host per worker process in its tool mode (dm/host/hle_oodle.c, DM_OODLE_SERVE), fed over a pipe. DM_OODLE_HOST = the host, DM_OODLE_MODULES = the rewritten modules it loads
@@ -2439,7 +2448,6 @@ def oodle_ask(comp, n):
         sock_name = os.environ.get('DM_OODLE_ANDROID_SOCKET')
         host, mods = os.environ.get('DM_OODLE_HOST'), os.environ.get('DM_OODLE_MODULES')
         ooz = os.environ.get('DM_OODLE_OOZ')   # a PC builder with no Mac host: the open-source ooz worker (dm/third_party/ooz), not the game's own decoder
-        err = tempfile.TemporaryFile()
         if sock_name:
             import socket, time
             s = None
@@ -2452,7 +2460,8 @@ def oodle_ask(comp, n):
                 except OSError:
                     time.sleep(0.05)
             if s is None:
-                red(f'cannot connect to Android Oodle service socket {sock_name}')
+                red(f'cannot connect to Android Oodle service socket {sock_name} (see the work folder\'s logs/oodle.log)')
+            err = _HostLog(os.environ.get('DM_OODLE_ANDROID_LOG', ''))
             class _SockPipe:
                 def __init__(self, sock):
                     self._s = sock
@@ -2460,6 +2469,7 @@ def oodle_ask(comp, n):
                     self.stdout = sock.makefile('rb', buffering=0)
             _OODLE = (_SockPipe(s), err)
         else:
+            err = tempfile.TemporaryFile()
             if ooz: argv = [ooz]
             elif not host or not mods: red('Oodle- or LZ5-compressed game files: set DM_OODLE_HOST (the Mac host, make -C dm/host GAME=<id> dmhost) and DM_OODLE_MODULES (the rewritten modules) to decode them with the game\'s own decoder, or DM_OODLE_OOZ (the ooz worker)')
             else: argv = [host, mods]

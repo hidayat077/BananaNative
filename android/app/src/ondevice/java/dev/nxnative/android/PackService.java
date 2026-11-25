@@ -646,15 +646,18 @@ public final class PackService extends Service {
         Intent oodleIntent = null;
         if (s.equals("split") && !engine.simulated() && needsOodle(j.titleId(), pack)) {
             String sock = "nxoodle-" + android.os.Process.myPid() + "-" + System.nanoTime();
+            String oodleLog = new File(logs, "oodle.log").getPath();
             PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", sock);
+            PackEngine.setenv("DM_OODLE_ANDROID_LOG", oodleLog);   // shader_split.py shows the host's side of a failed stream from here
             oodleIntent = new Intent(this, OodleService.class)
                     .putExtra(OodleService.EXTRA_TITLE_ID, j.titleId())
                     .putExtra(OodleService.EXTRA_PACK_PATH, pack.getPath())
                     .putExtra(OodleService.EXTRA_SOCKET_NAME, sock)
-                    .putExtra(OodleService.EXTRA_LOG_PATH, new File(logs, "oodle.log").getPath());
+                    .putExtra(OodleService.EXTRA_LOG_PATH, oodleLog);
             startService(oodleIntent);
         } else {
             PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", "");
+            PackEngine.setenv("DM_OODLE_ANDROID_LOG", "");
         }
         Tail tail = new Tail(j, s, log);
         tail.start();
@@ -669,6 +672,7 @@ public final class PackService extends Service {
             if (oodleIntent != null) {
                 stopService(oodleIntent);
                 PackEngine.setenv("DM_OODLE_ANDROID_SOCKET", "");
+                PackEngine.setenv("DM_OODLE_ANDROID_LOG", "");
             }
         }
         Log.i(TAG, s + ": exit " + code);

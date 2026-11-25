@@ -55,7 +55,9 @@ public final class OodleService extends Service {
             ParcelFileDescriptor dup = ParcelFileDescriptor.dup(client.getFileDescriptor());
             int fd = dup.detachFd();
             try { client.close(); } catch (IOException ignored) {}
-            String[] args = {packPath};
+            // dm/host/main.c host_preload: argv[0] is the program name, argv[1] the pack with the modules
+            // (GameActivity passes the same two). With only packPath, argv[1] is null and no main is loaded.
+            String[] args = {"nxhost", packPath};
             String[] env = {
                     "DM_OODLE_SERVE=1",
                     "DM_OODLE_SERVE_FD=" + fd,
