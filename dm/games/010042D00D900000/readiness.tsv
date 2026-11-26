@@ -1,0 +1,4 @@
+# LEGO Star Wars: The Skywalker Saga (010042D00D900000): Mac gameplay tested on 1.10.0 (v589824), no Android run yet.
+# The profile reserves a 4 GiB guest region and opens a 3.13 GiB heap (game.tsv); no phone run has measured what a device can give it.
+# In bring-up: the launcher warns on every phone until a run confirms it.
+status	bring-up

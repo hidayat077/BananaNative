@@ -22,6 +22,11 @@ Update 1.10.0 (v589824), Nintendo SDK 12.3.6, Traveller's Tales' engine, NVN. On
 
 Build with `scripts/build_ipa_from_nsp.py <NSP folder> -k <prod.keys> --platform mac-app --gpu none --no-prebake` and open the app. Start a new game, select Episode IV, and continue to the “Boarding Party” corridor. From a save made there, use Continue Game and confirm the first slot.
 
+## Android
+
+The profile is in `android/app/gradle.properties`' `nxGames` and in the APK build workflows, with `status bring-up` in [`readiness.tsv`](readiness.tsv): the launcher warns on every phone. This packages the game but is **not** a claim that it boots on Android — there has been no phone run. The user's `.nup` holds base v589824 (1.10.0) only: its `main` (`ec593a5f9552100a9fe95c4ca9e34873`), `sdk` (`26dfae95ca29ae3c49dfd84d69f8b7fd`) and `subsdk1` (`c21e6cdb086c7734345cb677057749f0`) build IDs match the registered build row, so Prepare can use it directly. The 17 add-ons the Mac notes used are not in that snapshot. The profile reserves a 4 GiB guest region and opens a 3.13 GiB heap, which a phone has to supply.
+
 ## Open
 
 - Later chapters, local co-op and iOS gameplay await testing.
+- Android bring-up: the game is packaged in the APK but has no phone run; check its 3.13 GiB heap request first before calling it playable.
