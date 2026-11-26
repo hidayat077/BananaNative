@@ -46,6 +46,7 @@
 #   · Frostbite (EA SPORTS FC 27): the CompiledBytecode resources of the bundles its superbundle tables (.toc) list, in its cas files (Oodle Leviathan, decoded by the game's own decoder in the
 #       Mac host), each a VNVN record with one code area and control section (frostbite.py), see frostbite_jobs and frostbite_shaders
 #   · PDAT (the engine with the namespace phx, Kirby Air Riders): flatbuffer records tagged PMAP, zstd frames in the .dat archives, each holding a program's control sections and code areas, see pdat_jobs and pdat_shaders
+#   · TT Games CC4 v2 DAT archives (Skywalker Saga): indexed .nnx_shaders members, OODL chunks decoded by the game's own Oodle (or the PC's ooz worker), with adjacent control/code pairs (ttdat.py)
 #   · Unreal Engine 3 (Batman: Arkham Knight): shader records in its global shader cache (BMSG) and in the packages (the combined shader cache), whose compressed chunks are Oodle blocks decoded by the game's own decoder in the Mac host, see ue3_body and ue3_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
@@ -87,6 +88,7 @@ KEY_SKIP = tuple(int(x, 0) for x in GAME.get('shader_key_skip', '0+0').split('+'
 # host saved when the map did not have them (DM_NVN_SHDUMP, read from <version dir>/nvn_shdump or DM_NVN_SHDUMP_DIR: nvn_dumps)
 
 CTL_MAGIC, GFX_MAGIC, CS_MAGIC = bytes.fromhex('34127698'), bytes.fromhex('78563412'), bytes.fromhex('79563412')
+GLSLC_MAGIC = b'\x91\x68\x86\x19'
 STAGES = ['vs', 'hs', 'ds', 'gs', 'ps', 'cs']
 # An NVN2 BNSH program has stage slots past those six: 7 holds the task shader and 8 the mesh shader (The Legend of Zelda: Ocarina of Time's Model and Foliage .bfsha,
 # 1,699 task and 1,739 mesh shaders; read from the six slots alone, every mesh-shaded draw was missing from the map and dropped). Slot 6 has not been seen used
@@ -533,7 +535,7 @@ def glslc_program(d, h, size, label):
     if len(secs) < 2 or len(set(sts)) < len(sts) or any(not st or check(label, st, ctl, code) for st, (ctl, code) in zip(sts, secs)): return []
     return [(f'{label}#GLSLC@{h:#x}#var', st, ctl, code) for st, (ctl, code) in zip(sts, secs)]
 
-def glslc_shaders(d, label, need=True, skip=(), sink=None):
+def glslc_shaders(d, label, need=True, skip=(), sink=None, ranges=None):
     """GLSLC compiler outputs (838 in 13 Sentinels' main read-only segment, one stage each): from the magic 0x19866891, +0x44 = the whole output's length; an output of one stage holds exactly one control section with the code area right after it (control +0x20 = control length),
     one of several stages is read by its section headers (glslc_program).
     The magic is only 4 bytes, so only outputs that pass the triple check are kept. Every game's main is searched: Unity's player has 11 of its own (Fire Emblem Engage, Ace Attorney Investigations
@@ -542,22 +544,25 @@ def glslc_shaders(d, label, need=True, skip=(), sink=None):
     SDK 6's GLSLC (output version 0x1d.2, Fire Emblem: Three Houses) writes 0x848- and 0x850-byte control sections (ctl_len's lower range) and compute code with no 0x12345679 header: the instructions
     start at code +0 (the first word is a scheduling word), and the stage then comes from the control's thread group (+0x748), which only compute sections fill. Its few version-0x1d.0 outputs keep
     something else at control +0x20 (odd values such as 0x136b), so a length that is not a multiple of 4 is not a control length.
-    sink: append to it (a Shaders) instead of a new list, which is returned"""
+    sink: append to it (a Shaders) instead of a new list, which is returned. ranges, when supplied, receives the byte ranges of accepted outputs (TT Games' .nnx_shaders members hold both GLSLC outputs and loose programs)"""
     out = [] if sink is None else sink
-    for m in re.finditer(b'\x91\x68\x86\x19', d):
+    def accept(h, size, programs):
+        out.extend(programs)
+        if programs and ranges is not None: ranges.append((h, h + size))
+    for m in re.finditer(GLSLC_MAGIC, d):
         if any(a <= m.start() < b for a, b in skip): continue
         if m.start() + 0x48 > len(d): continue
         h = m.start(); size, _, first, _ = glslc_layout(d, h)
         if first == 0xa8:   # NVN2: its section headers say everything; its control sections are too short for the rule below
             if not 0 < size <= len(d) - h: continue
             secs = glslc_section(d, h, size) or []
-            if len(secs) > 1: out += glslc_program(d, h, size, label)
-            elif secs and (st := glslc_stage(*secs[0])) and not check(label, st, *secs[0]): out.append((f'{label}#GLSLC@{h:#x}', st, *secs[0]))
+            if len(secs) > 1: accept(h, size, glslc_program(d, h, size, label))
+            elif secs and (st := glslc_stage(*secs[0])) and not check(label, st, *secs[0]): accept(h, size, [(f'{label}#GLSLC@{h:#x}', st, *secs[0])])
             continue
         c = d.find(CTL_MAGIC, h, h + size) if 0x760 < size <= len(d) - h else -1
         if c < 0: continue
         if d.find(CTL_MAGIC, c + 4, h + size) >= 0:
-            out += glslc_program(d, h, size, label); continue
+            accept(h, size, glslc_program(d, h, size, label)); continue
         nctl, ncode = (struct.unpack_from('<I', d, c + 0x20)[0], struct.unpack_from('<I', d, c + 0x704)[0]) if c + 0x708 <= h + size else (0, 0)   # 0: a control section the output does not hold
         ctl, code = d[c:c + nctl], d[c + nctl:c + nctl + ncode]
         st = glslc_stage(ctl, code) if nctl >= 0x760 and not nctl & 3 and c + nctl + ncode <= h + size else None
@@ -569,7 +574,7 @@ def glslc_shaders(d, label, need=True, skip=(), sink=None):
             if not sec or len(sec) != 1: continue
             (ctl, code), = sec; st = glslc_stage(ctl, code)
             if not st or check(label, st, ctl, code): continue
-        out.append((f'{label}#GLSLC@{h:#x}', st, ctl, code))
+        accept(h, size, [(f'{label}#GLSLC@{h:#x}', st, ctl, code)])
     if not out and need: red(f'{label}: no GLSLC output')
     return out
 
@@ -2276,6 +2281,101 @@ def phyre_shaders(d, label):
     return out
 
 
+def shad_record(d, at, end):
+    """Diablo II: Resurrected's shader record at d[at:end]: {u32 5, control length, code length + 0xc, code length, u32 4}, the code area, the control section → (control, code), or None
+    when its words or lengths are not that (a BTCD's data, and the 10 records in main)"""
+    if at + 0x14 > end: return None
+    w = struct.unpack_from('<5I', d, at)
+    if w[0] != 5 or w[4] != 4 or w[2] != w[3] + 0xc or at + 0x14 + w[3] + w[1] != end: return None
+    return d[at + 0x14 + w[3]:end], d[at + 0x14:at + 0x14 + w[3]]
+
+def adjacent_shader(d, c, start=0, end=None):
+    """An unreferenced control section's unique adjacent code area (TT Games, The Ezio Collection).
+    Headerless compute neighbours can both pass the size checks. Only an EXIT
+    in an instruction slot, not a scheduling word, distinguishes them. Leave
+    ambiguous pairs out instead of hashing unrelated bytes as a shader.
+    """
+    end = len(d) if end is None else end
+    if c < start or c + 0x760 > end: return None
+    cn, kn = struct.unpack_from('<I', d, c + 0x20)[0], struct.unpack_from('<I', d, c + 0x704)[0]
+    if cn < 0x760 or c + cn > end or kn < 8: return None
+    ctl, candidates = d[c:c + cn], []
+    def has_exit(st, code):
+        s = 0x100 if code[:4] == CS_MAGIC else 0   # as dmsh_build.py's compute header
+        c1 = struct.unpack_from('<I', ctl, 0x700)[0]
+        e = c1 if s < c1 <= len(code) else len(code)
+        # Maxwell's control word has three 21-bit schedules and a zero
+        # high bit (maxas, Control Codes). Misaligned metadata can contain
+        # EXIT bytes too, but is not a stream of valid scheduling groups.
+        return st == 'cs' and all(struct.unpack_from('<Q', code, i)[0] >> 63 == 0 for i in range(s, e - 7, 32)) and any(
+            struct.unpack_from('<Q', code, i)[0] >> 52 == 0xe30 for i in range(s, e - 7, 8) if (i - s) % 32)
+    aligned = (c + cn + 15) & ~15
+    offs = [c + cn]
+    if aligned != c + cn and not c & 3 and (not any(d[c + cn:aligned]) or d[aligned:aligned + 4] in (GFX_MAGIC, CS_MAGIC)):
+        offs.append(aligned)
+    offs.append(c - kn)
+    for k in dict.fromkeys(offs):
+        if k < start or k + kn > end: continue
+        code = d[k:k + kn]
+        if CTL_MAGIC in code: continue
+        st = glslc_stage(ctl, code)
+        if st == 'cs' and code[:4] != CS_MAGIC and (not any(code) or (c & 3 and not has_exit(st, code))): continue
+        if st and not check('adjacent shader', st, ctl, code): candidates.append((k, st, ctl, code))
+    if len(candidates) > 1:
+        headed = [v for v in candidates if v[3][:4] in (GFX_MAGIC, CS_MAGIC)]
+        if len(headed) == 1: return headed[0]
+        candidates = [v for v in candidates if has_exit(v[1], v[3])]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def referenced_shader_copy(d, ctl, uses):
+    """Source-bearing NVN control sections can be stored separately from the code copied into the program pool.
+    Look near a reference to the control for ADRP/ADD of a headed shader of the assembly's stage.
+    The build must pass that address as x1 and the exact code length as w2 to a direct call in the same straight-line sequence.
+    Leave multiple possible sources unresolved.
+    """
+    if len(ctl) < 0x760: return None
+    source = struct.unpack_from('<I', ctl, 0x14)[0]
+    stage = {b'!!NVvp5.0': 'vs', b'!!NVfp5.0': 'ps'}.get(ctl[source:source + 9])
+    if not stage: return None
+    size = struct.unpack_from('<I', ctl, 0x704)[0]
+    if not 0 < size <= 0xffff: return None
+
+    def branches(ins):
+        return (ins & 0x7c000000 == 0x14000000                       # B / BL
+                or ins & 0xfe000000 == 0xd6000000                   # BR / BLR / RET and authenticated forms
+                or ins & 0xff000010 == 0x54000000                   # B.cond
+                or ins & 0x7e000000 in (0x34000000, 0x36000000))    # CBZ / CBNZ / TBZ / TBNZ
+
+    candidates = set()
+    for use in uses:
+        for pc in range(max(0, use - 0x34), min(len(d) - 8, use + 0x34), 4):
+            page, add = struct.unpack_from('<II', d, pc)
+            # ADRP x1 followed by ADD x1, x1, #offset (the copy source).
+            if page & 0x9f00001f != 0x90000001 or add & 0xffc003ff != 0x91000021: continue
+            delta = (page >> 5 & 0x7ffff) << 2 | page >> 29 & 3
+            if delta & 0x100000: delta -= 0x200000
+            addr = (pc & ~0xfff) + (delta << 12) + (add >> 10 & 0xfff)
+            if addr < 0 or d[addr:addr + 4] != GFX_MAGIC: continue
+            code = d[addr:addr + size]
+            if sph_stage(code) != stage or check('referenced shader', stage, ctl, code): continue
+            length = False
+            for at in range(pc + 8, min(len(d) - 3, pc + 0x20), 4):
+                ins = struct.unpack_from('<I', d, at)[0]
+                if ins >> 26 == 0x25:  # BL with source and length still in the argument registers
+                    lo, hi = sorted((use, at))
+                    if length and not any(branches(word) for word, in struct.iter_unpack('<I', d[lo + 4:hi])): candidates.add(addr)
+                    break
+                if ins == (0x52800002 | size << 5): length = True   # MOV w2, #size
+                elif ins & 0xffe0ffff == 0xaa0003e0: continue   # MOV x0, Xn
+                elif ins & 0xffc003e0 == 0xf90003e0: continue   # STR Xt, [sp, #offset]
+                elif ins & 31 > 2 and ins & 0xff000000 in (0x91000000, 0x8b000000): continue   # unrelated ADD
+                else: break
+    if len(candidates) != 1: return None
+    k, = candidates
+    return stage, ctl, d[k:k + size]
+
+
 def raw_shaders(d, label, known=()):
     """Control sections in main that are in no GLSLC output and no BNSH file: a shader compiled offline whose control section and code area the code hands to nvnShaderData itself (Advance Wars 1+2:
     Re-Boot Camp, Unity 2020.2 with Bink 2: the movie player's 32: 2 vertex, 22 pixel and 8 compute shaders; without them its movies drew white). Most are 0x20-byte records in data {code area
@@ -2286,28 +2386,117 @@ def raw_shaders(d, label, known=()):
     main+0x1548014 / +0x1548034); after it lies another vertex shader's code area, whose first 0x100 bytes pass the header and length checks, and that area is the vertex shader main+0x4a2d290 takes from
     before itself (main+0x1548358 / +0x1548374, 0x324 bytes from the first). Compute code areas have no header (SDK 10), so the stage is glslc_stage's, and a headerless one is checked by its length only, never
     across a control section. known: the control sections the other readers took from this main (Celeste's MonoGame effect in main holds some outside any GLSLC output or BNSH file), left out.
-    Of 25 mains on hand only that one has such control sections, so the tables of every other game stay as they were"""
+    TT Games and Assassin's Creed: The Ezio Collection also leave such pairs unreferenced: after the reference-based rules, adjacent_shader takes a unique neighbour, using an instruction-slot EXIT to distinguish headerless compute candidates (and requiring one for unaligned headerless compute).
+    A control section nothing references takes the code area that ends right at it, when that area has a header and exactly the length the control section gives (+0x704): the form Phyre's effects use (phyre_shaders). References still decide first, so a neighbour that only looks right is not taken"""
+    def adjacent(c, start=0):   # the start of the headed code area of the control section's length that ends right at it, else None
+        nctl, n = struct.unpack_from('<I', d, c + 0x20)[0], struct.unpack_from('<I', d, c + 0x704)[0]
+        k = c - n
+        return k if n >= 0x80 and nctl >= 0x760 and c + nctl <= len(d) and k >= start and d[k:k + 4] in (GFX_MAGIC, CS_MAGIC) and CTL_MAGIC not in d[k:c] else None
     skip = []
-    for m in re.finditer(b'\x91\x68\x86\x19', d):
+    for m in re.finditer(GLSLC_MAGIC, d):
         size, _, first, _ = glslc_layout(d, m.start())
         if (0 if first == 0xa8 else 0x760) < size <= len(d) - m.start(): skip.append((m.start(), m.start() + size))
     for m in re.finditer(b'BNSH\0\0\0\0', d): skip.append((m.start(), m.start() + struct.unpack_from('<I', d, m.start() + 0x1c)[0]))
-    ctls = [c for m in re.finditer(re.escape(CTL_MAGIC), d) if not (c := m.start()) & 3 and not any(a <= c < b for a, b in skip) and d[c:c + struct.unpack_from('<I', d, c + 0x20)[0]] not in known]
+    ctls = [c for m in re.finditer(re.escape(CTL_MAGIC), d) if (c := m.start()) + 0x708 <= len(d) and not any(a <= c < b for a, b in skip)
+            and (not c & 3 or adjacent(c) is not None or adjacent_shader(d, c, start=c) is not None)
+            and d[c:c + struct.unpack_from('<I', d, c + 0x20)[0]] not in known]
     if not ctls: return []
     rel, code_of, cset = rel_targets(d), {}, set(ctls)
     for s, c in rel.items():
         if c in cset and s - 8 in rel and c not in code_of and struct.unpack_from('<I', d, s + 8)[0] == struct.unpack_from('<I', d, c + 0x704)[0]: code_of[c] = rel[s - 8]
     built = adrp_targets(d, min(ctls) - 0x100000, max(ctls) + 0x100000) if any(c not in code_of for c in ctls) else {}
-    out = []
+    targets = set(rel.values())
+    out, prev_end = [], 0
     for c in ctls:
         nctl, n = struct.unpack_from('<I', d, c + 0x20)[0], struct.unpack_from('<I', d, c + 0x704)[0]
-        ctl, why = d[c:c + nctl], 'no code area: no data record points at one, and the code builds the address of none right after or right before it'
+        r = c - n - 0x14   # a SHAD record's start (shad_record), when this control section ends one
+        if c not in code_of and r >= 0 and (r in targets or r in built) and shad_record(d, r, r + 0x14 + n + struct.unpack_from('<I', d, r + 4)[0]): code_of[c] = c - n
+        ctl, why = d[c:c + nctl], 'no code area: no data record points at one, the code builds the address of none right after or right before it, and none of its length ends at it'
         near = lambda k: min(abs(a - b) for a in built[k] for b in built[c])   # how close the code builds this code area's address to the control section's
         for k in ([code_of[c]] if c in code_of else sorted((k for k in ((c + nctl + 15) & ~15, c - n) if k in built and c in built and near(k) < 0x400), key=near)):
             code = d[k:k + n]; st = glslc_stage(ctl, code) if k >= 0 and CTL_MAGIC not in code else None
-            if st and not check(label, st, ctl, code): out.append((f'{label}#RAW@{c:#x}', st, ctl, code)); why = None; break
+            if st and not check(label, st, ctl, code):
+                out.append((f'{label}#RAW@{c:#x}', st, ctl, code)); why = None
+                prev_end = max(prev_end, k + len(code) if c <= k <= c + nctl + 16 else c + nctl)
+                break
+        if why and c not in code_of and (copied := referenced_shader_copy(d, ctl, built.get(c, ()))):
+            out.append((f'{label}#RAW@{c:#x}', *copied)); why = None
+            prev_end = max(prev_end, c + nctl)
+        if why and c not in code_of and (k := adjacent(c, prev_end)) is not None:   # nothing references it: the code area that ends right at it (Phyre's form)
+            code = d[k:c]; st = glslc_stage(ctl, code)
+            if st and not check(label, st, ctl, code):
+                out.append((f'{label}#PHYRE@{k:#x}', st, ctl, code)); why = None
+                prev_end = max(prev_end, c + nctl)
+        if why and c not in code_of and (v := adjacent_shader(d, c, prev_end)) is not None:
+            k, st, ctl, code = v
+            out.append((f'{label}#RAW@{c:#x}', st, ctl, code)); why = None
+            prev_end = max(prev_end, k + len(code), c + nctl)
         if why: print(f'[RED] {label} control section @{c:#x}: {why}; left out', flush=True)
     return out
+
+TTDAT = b'TTDAT'   # job tag: TT Games' indexed .nnx_shaders members (ttdat.py)
+def ttdat_jobs(files, parts=64):
+    import ttdat
+    found, consumed, jobs = [], set(), []
+    for path, rel in files:
+        if not path.lower().endswith('.dat'): continue
+        try: entries = ttdat.entries(path)
+        except (ValueError, OSError, struct.error) as e:
+            jobs.append((path, rel, (TTDAT, None, str(e)))); consumed.add(path); continue
+        if entries is None: continue
+        consumed.add(path); found.append((path, rel, entries))
+    step = max(sum(e[2] for _, _, entries in found for e in entries) // parts, 1)
+    for path, rel, entries in found:
+        batch, size = [], 0
+        for entry in entries:
+            batch.append(entry); size += entry[2]
+            if size >= step: jobs.append((path, rel, (TTDAT, tuple(batch)))); batch, size = [], 0
+        if batch: jobs.append((path, rel, (TTDAT, tuple(batch))))
+    return jobs, consumed
+
+
+def ttdat_shaders(path, rel, entries, out):
+    import ttdat
+    with open(path, 'rb') as f:
+        for entry in entries:
+            label = f'/{rel}/{entry[0]}'
+            data = ttdat.read(f, entry, oodle)
+            out.extend(ttdat_programs(data, label))
+
+
+def ttdat_programs(data, label):
+    """TT's serialized programs: newer code is adjacent; older programs put
+    reflection data between the control section and headed code. Bound that
+    search by the next program's control section and require one exact match.
+    """
+    glslc_ranges = []
+    found = glslc_shaders(data, label, need=False, ranges=glslc_ranges)
+    ranges = iter(glslc_ranges)
+    start, stop = next(ranges, (len(data), len(data)))
+    previous_stop = 0
+    controls = [m.start() for m in re.finditer(re.escape(CTL_MAGIC), data)]
+    for i, c in enumerate(controls):
+        while c >= stop:
+            previous_stop = max(previous_stop, stop)
+            start, stop = next(ranges, (len(data), len(data)))
+        if start <= c: continue   # already read as GLSLC, by location; another program can reuse its control bytes
+        if c + 0x760 > len(data): red(f'{label}: truncated control section @{c:#x}')
+        cn, kn = struct.unpack_from('<I', data, c + 0x20)[0], struct.unpack_from('<I', data, c + 0x704)[0]
+        ctl = data[c:c + cn]
+        end = min(start, controls[i + 1] if i + 1 < len(controls) else len(data))
+        candidate = adjacent_shader(data, c, previous_stop, end)
+        if candidate is None and cn >= 0x760 and c + cn <= len(data) and kn >= 0x80:
+            candidates = []
+            for m in re.finditer(b'[xy]\\x56\\x34\\x12', data[c + cn:end]):
+                k = c + cn + m.start()
+                if k + kn > end: continue
+                code = data[k:k + kn]; st = glslc_stage(ctl, code)
+                if st and not check(label, st, ctl, code): candidates.append((k, st, ctl, code))
+            if len(candidates) == 1: candidate = candidates[0]
+        if candidate is None: red(f'{label} control section @{c:#x}: no unique code area in its program')
+        _, st, ctl, code = candidate
+        found.append((f'{label}#RAW@{c:#x}', st, ctl, code))
+    return found
 
 ONEPACK = b'ONEPACK\0'
 def fb_field(d, t, i):
@@ -3616,6 +3805,10 @@ def scan_file_in(args):
     if len(args) > 2 and args[2][0] == b'ARH':   # ARH1 and ARH2 share archive jobs
         arh_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
+    if len(args) > 2 and args[2][0] == TTDAT:   # TT Games' indexed .nnx_shaders members (ttdat_jobs)
+        if args[2][1] is None: red(args[2][2])
+        ttdat_shaders(path, rel, args[2][1], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == NLG_DICT:
         nlg_shaders(path, '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -4217,8 +4410,9 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     ah_jobs, arhs = arh_jobs(files)   # Monolith's ARH1/ARD archives and embedded XBC1/HCPS programs
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
     pd_jobs, pdats = pdat_jobs(by_head)
-    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats]
+    tt_jobs, ttdats = ttdat_jobs(files)   # TT Games' DATs: only indexed .nnx_shaders, Oodle through the game's own decoder
+    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs + tt_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats and p not in ttdats]
     if want is not None: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]
     return big, files
 

@@ -121,6 +121,14 @@
 - **Fix:** `ARTIFACTS` in `dm/tools/romfs_image.py`, the dump-tool files that are not game files (`.listing`), is left out of the image, out of a NUP's RomFS (`scripts/pack_nup.py`) and out of the survey's file list (`dm/games/profile_guess.py`). Other dot files stay game files. Test: `test_romfs_image.py` (`test_dump_tool_listings_are_left_out`).
 - **Found on:** [Nintendo Switch Sports Resort](../../dm/games/04008E001F098000/README.md#found-on-this-game) (v65536, from a dump folder).
 
+### TT Games shaders are missing from the executable and DAT archives
+
+- **Symptom:** preparing [LEGO Star Wars: The Skywalker Saga](../../dm/games/010042D00D900000/README.md) stops after the code rewrite with `[RED] the dump's shaders lack 98307 of the 98315 in the profile's shader_map.tsv`. The split reads the seven `GAME*.DAT` archives but finds no shaders in them, and reports hundreds of `[RED] main control section @0x…: no code area` lines.
+- **Cause:** two readers were missing from this fork's `shader_split.py`. Most of the game's shaders live in TT Games' CC4 v2 DAT indices as OODL-compressed `.nnx_shaders` members, which the split did not open. Its executable reader also took only data- or instruction-referenced code areas, so control sections whose code is adjacent but unreferenced (the older programs put reflection data between the two) stayed unresolved.
+- **Fix:** general in the split. `ttdat.py` reads the bounded CC4 index, maps full paths to file records by FNV-1a and decodes only the shader members (OODL through the game's own Oodle via the phone's `OodleService`, or the `DM_OODLE_OOZ` worker on a PC; DFLT in DLC). `ttdat_jobs` batches those members; `ttdat_programs` bounds the search for a loose code area by the next program. `raw_shaders` takes reference-based matches first, then a unique adjacent code area, using Maxwell scheduling words and an `EXIT` in an instruction slot to tell headerless compute candidates apart, and recognizes a nearby copy of headed code. Ambiguous candidates stay out. `profile_guess.py` counts OODL DATs so a provisional profile asks for the decoder.
+- **Check:** `dm/tools/tests/test_split_ttdat.py` (15 tests: CC4 name/hash mapping, compact index pointers, OODL/DFLT chunks, malformed members, reflection between control and code, shared control bytes, decoder reporting). On the 1.10.0 `.nup` all seven DATs parse into 13,343 shader members, and a two-member probe decodes and scans 30 programs before the full split.
+- **Found on:** [LEGO Star Wars: The Skywalker Saga](../../dm/games/010042D00D900000/README.md) 1.10.0 (`main ec593a5f9552100a9fe95c4ca9e34873`). Upstream [issue #1597](https://github.com/seedds/nxnative/issues/1597) reports 667 executable and 97,648 RomFS shaders from a fresh split.
+
 ## Add-on content
 
 ### DLC in Documents is ignored or removed DLC remains installed
