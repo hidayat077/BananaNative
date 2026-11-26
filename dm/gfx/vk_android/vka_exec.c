@@ -201,7 +201,8 @@ static void post(pop o) {
 // The replay statistics (DM_VK_STATS) print "occlusion queries per frame: ..."
 enum { OQ_N = 16384, OQ_RB = 256 };   // queries in the ring; results read at a time
 static struct { VkQueryPool pool; int precise; PFN_vkCmdBeginQuery begin; PFN_vkCmdEndQuery end; PFN_vkResetQueryPool hreset; PFN_vkGetQueryPoolResults get; } OQ;
-static int g_oq = -1;                           // 1 counted; 0 the constant 1 (DM_VK_OCCLUSION=0, no device, no host query reset or no pool); -1 not decided yet
+static int g_oq = -1;                           // 1 counted; 0 not counted (DM_VK_OCCLUSION=0, no device, no host query reset or no pool); -1 not decided yet
+static uint64_t g_oq_fake;                      // monotonic counter returned when DM_VK_OCCLUSION=0 so report[i] - report[i-1] is non-zero
 static int g_oq_count, g_oq_fresh, g_oq_open, g_oq_reported;   // a samples-passed reset came (draws count); a reset since the last report (its count starts from 0); a query is active in the open pass; a report came since the last reset
 static uint32_t g_oq_lost;                      // draws of the segment that count 1 sample each (no query, or skipped by the replay)
 static uint64_t g_oq_head, g_oq_seg0;           // the next query's sequence number; the segment's first
@@ -211,7 +212,7 @@ static uint64_t g_oqs_reset, g_oqs_rep, g_oqs_const, g_oqs_q, g_oqs_full, g_oqs_
 static int oq_on(void) {
     if (g_oq >= 0) return g_oq;
     g_oq = 0;
-    if (!VKA_ENV("DM_VK_OCCLUSION", 1)) { VLOG("occlusion queries: off (DM_VK_OCCLUSION=0): every samples-passed report writes 1"); return 0; }
+    if (!VKA_ENV("DM_VK_OCCLUSION", 1)) { VLOG("occlusion queries: off (DM_VK_OCCLUSION=0): every samples-passed report writes monotonic 1, 2, ..."); return 0; }
     if (!vka_ok()) { VRED("occlusion queries: no device: every samples-passed report writes 1"); return 0; }
     VkPhysicalDeviceVulkan12Features f12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &f12};
@@ -242,6 +243,7 @@ void vka_oq_draw(void) {   // vka_draw.c: a draw about to be recorded in the ope
 }
 static void oq_reset(void) {   // OP_RESET_COUNTER(SAMPLES_PASSED)
     g_oqs_reset++;
+    g_oq_fake = 0;
     if (!oq_on()) return;
     oq_close(); vka_draw_run_break();
     if (g_oq_head > g_oq_seg0 && g_cb) post((pop){6, 0, 0, 0, 0, g_oq_seg0, g_oq_head});   // the queries since the last report: no report reads them (after a hang they are not given back)
@@ -307,7 +309,7 @@ static void oq_stats(char *b, size_t n, double frames) {   // every 300 frames w
     uint64_t un = atomic_load(&g_oqs_unav), ze = atomic_load(&g_oqs_zero);
     b[0] = 0;
     if (frames > 0 && (g_oqs_reset != r0 || g_oqs_rep != p0)) {
-        if (g_oq != 1) snprintf(b, n, "occlusion queries per frame (not counted: %s): %.1f samples-passed resets, %.1f reports, each written 1", g_oq < 0 ? "not decided yet" : "DM_VK_OCCLUSION=0 or no query pool",
+        if (g_oq != 1) snprintf(b, n, "occlusion queries per frame (not counted: %s): %.1f samples-passed resets, %.1f reports, each written monotonic 1, 2, ...", g_oq < 0 ? "not decided yet" : "DM_VK_OCCLUSION=0 or no query pool",
                                 (g_oqs_reset - r0) / frames, (g_oqs_rep - p0) / frames);
         else snprintf(b, n, "occlusion queries per frame (counted, %s): %.1f samples-passed resets, %.1f reports (%.1f written 1: before any reset or without the GPU; %.1f counted read 0 samples), "
                       "%.1f queries begun, %.1f draws counted 1 without a query (%.1f with the ring full, %.1f skipped by the replay), %.1f results not available after their fence (counted 1); "
@@ -392,8 +394,9 @@ static void post_run(void *ops_, int n) {   // the completion thread, in submiss
                                 vka_qtrace(QT_LAND, 0, vka_done(), 0, ops[i].mode, ops[i].v, *v, 0, v); }
         else {
             // A timestamp report's counter: the time, or 0 under render_cond (as on the GPU, nvn_mtl.m rc_value). Samples passed not counted (oq_report: DM_VK_OCCLUSION=0, no query
-            // pool, no reset before it, no GPU): 1, so occlusion culling keeps everything visible
-            uint64_t t = ops[i].type, rec[2] = {t == NVN_COUNTER_TYPE_TIMESTAMP || t == NVN_COUNTER_TYPE_TIMESTAMP_TOP ? (DM_GAME_RENDER_COND ? 0 : ticks) : t == NVN_COUNTER_TYPE_SAMPLES_PASSED ? 1 : 0, ticks};
+            // pool, no reset before it, no GPU): monotonic 1, 2, ... (or 1 when q0 is 0), so difference-based occlusion culling keeps everything visible
+            uint64_t t = ops[i].type, sp = ops[i].q0 ? ops[i].q0 : 1;
+            uint64_t rec[2] = {t == NVN_COUNTER_TYPE_TIMESTAMP || t == NVN_COUNTER_TYPE_TIMESTAMP_TOP ? (DM_GAME_RENDER_COND ? 0 : ticks) : t == NVN_COUNTER_TYPE_SAMPLES_PASSED ? sp : 0, ticks};
             memcpy((void *)(uintptr_t)ops[i].addr, rec, sizeof rec);
         }
     }
@@ -801,7 +804,7 @@ static inline void chunk_check(void) {
     int cp = g_chunk_pass;
     if (cp > 0 && in >= (uint64_t)cp && vka_rp_open_for(&S.rt, S.has_rt)) {
         uint32_t w = 0, h = 0; int dep = vka_rp_depth(&w, &h);
-        if ((uint64_t)w * h >= (16ull << 20)) return;   // a 6400x6400 ink map costs ~400 MB to store and load on a tiler: never split it mid-pass for chunking
+        if ((uint64_t)w * h >= (16ull << 20) || vka_rp_color_count() >= 3) return;   // a 6400x6400 ink map or a 3+ MRT G-buffer costs too much GMEM bandwidth to split mid-pass
         if (g_partlog) VLOG("part split inside a pass of %ux%u%s", w, h, dep ? " with depth" : "");
         vka_rp_end(); chunk();
     }
@@ -1767,8 +1770,9 @@ static int exec(const uint8_t *p, int depth) {   // 1: parked at a wait (g_pk ho
                 vka_rp_note_ts();
             }
             int counted = t == NVN_COUNTER_TYPE_SAMPLES_PASSED && oq_report(ad, (uint32_t)t);   // (Occlusion queries: its record is written by oq_done)
+            uint64_t fake_sp = !counted && t == NVN_COUNTER_TYPE_SAMPLES_PASSED ? ++g_oq_fake : 0;
             if (q) g_slot_nq[g_sq_base / SEGQ] = g_sq_n;
-            if (!counted) post((pop){2, 0, q, (uint32_t)t, ad, q ? atomic_load(&g_slot_use[g_sq_base / SEGQ]) : 0});
+            if (!counted) post((pop){2, 0, q, (uint32_t)t, ad, q ? atomic_load(&g_slot_use[g_sq_base / SEGQ]) : fake_sp});
             if (DM_GAME_RENDER_COND) rc_note(ad, t == NVN_COUNTER_TYPE_TIMESTAMP || t == NVN_COUNTER_TYPE_TIMESTAMP_TOP ? RCK_TS : counted ? RCK_OQ : RCK_CONST);
             if (atomic_load_explicit(&g_synclog, memory_order_relaxed) > 0) VLOG("sync report: frame %llu type %llu at draw %llu of the submission, part %d, recording at %.2f ms", (unsigned long long)g_frame,
                                                                            (unsigned long long)t, (unsigned long long)(g_stat_draws - g_sub_draws0), g_nx + 1, ms_now());

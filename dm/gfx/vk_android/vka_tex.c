@@ -3072,17 +3072,25 @@ void vka_tex_pfb_commit(VkCommandBuffer cb, uint64_t fence) {
     for (uint32_t i = 0; i < PFB_RING && k == PFB_RING; i++) if (!g_pfb_r[i].busy) k = i;
     if (!n || k == PFB_RING) { g_pfb_skip++; atomic_store(&g_pfb_any, 1); pthread_mutex_unlock(&g_tmu); return; }   // (every slot waiting: the bits stay for the next submission's copy)
     g_pfb_r[k].fence = fence; g_pfb_r[k].n = n; g_pfb_r[k].busy = 1;
+    static uint64_t pfb_commits;
+    int clr_every = VKA_ENV("DM_VK_POOL_FB_CLEAR", 60);
+    int do_clr = clr_every > 0 && (++pfb_commits % (uint64_t)clr_every) == 0;
     pthread_mutex_unlock(&g_tmu);
-    VkMemoryBarrier b0 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    VkMemoryBarrier b0 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | (do_clr ? VK_ACCESS_TRANSFER_WRITE_BIT : 0)};
     vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &b0, 0, NULL, 0, NULL);
     VkBufferCopy c = {g_pfb_map.off, g_pfb_ring.off + (VkDeviceSize)k * PFB_BYTES, n}; vk.vkCmdCopyBuffer(cb, g_pfb_map.buf, g_pfb_ring.buf, 1, &c);
-    // The fill writes what the copy reads (a write-after-read hazard): without this barrier Vulkan lets the two transfers run in any order (a spec fix; Qualcomm's driver
-    // reading no IDs has another cause, docs/reference/rendering.md "Texture pool reads report nothing on Qualcomm's driver")
-    VkMemoryBarrier bm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
-    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &bm, 0, NULL, 0, NULL);
-    vk.vkCmdFillBuffer(cb, g_pfb_map.buf, g_pfb_map.off, PFB_BYTES, 0);
-    VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
-    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    if (do_clr) {
+        // The fill writes what the copy reads (a write-after-read hazard): without this barrier Vulkan lets the two transfers run in any order (a spec fix; Qualcomm's driver
+        // reading no IDs has another cause, docs/reference/rendering.md "Texture pool reads report nothing on Qualcomm's driver")
+        VkMemoryBarrier bm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &bm, 0, NULL, 0, NULL);
+        vk.vkCmdFillBuffer(cb, g_pfb_map.buf, g_pfb_map.off, PFB_BYTES, 0);
+        VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    } else {
+        VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    }
 }
 static void dirty(int **list, int *n, int *cap, uint8_t **flag, int nslots, int id);
 // Texture ID id was read through the pool (caller holds g_tmu)
