@@ -713,9 +713,9 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **`game`**, runtime, at goal, checked: the original bytes were read from the registered build's main; the replacement cbz was disassembled to main+0x33bdc4 (the next phase, after the whole container-update block). A phone run with an earlier, shorter branch (+0x33bb3c) proved the guard fired but the game then crashed at +0x33bb80 on the same null buffer, hence the wider skip; this version is not yet checked on a phone. Open: this is a workaround; why the container grows to millions of 0x98-byte records at the menu, and why the game asks for a buffer no allocator can satisfy, is still unknown: menu sort with an unsatisfiable temp-buffer allocation on Civilization VII 1.5.1. The oversized request and the unchecked null write are in the game's own main of this build; no Horizon or NVN semantics the host could implement are on this path. The cut changes the game's behaviour on purpose: it leaves the sort un-applied instead of crashing. The underlying growth of the sorted container is not fixed
 
-- **1.5.1 `main`** `e656e23d…` ([patches.py:16](../../dm/games/0100C3601518C000/patches.py#L16))
+- **1.5.1 `main`** `e656e23d…` ([patches.py:18](../../dm/games/0100C3601518C000/patches.py#L18))
   - cut `+0x33b9f8`: menu sort: cbz x27 to main+0x33bdc4 when the temp buffer is null; skip the whole sort/container-update block and keep the original container
-  - cut `+0x344344`: menu sort (second site): cbz x20 to the epilogue main+0x3443c0 when its temp buffer is null; keep the original container
+  - cut `+0x34434c`: menu sort (second site): cbz x22 to the epilogue main+0x3443c0 when its temp buffer is null; the first mov x22,x20 stays so the empty-range path keeps a valid x22
 
 ### South Park: The Stick of Truth
 

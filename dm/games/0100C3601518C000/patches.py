@@ -13,11 +13,13 @@ CUTS = {
     # not a host fix: the oversized request cannot be satisfied by the heap (global region is 0x7f000000).
     # The same pattern exists at main+0x344334 (the same allocator wrapper, another 0x98-byte copy loop); with
     # the first guard in place the phone crashed there next (main+0x34417c, null write), so that site returns early too.
+    # The guard sits on the second of two mov x22,x20 instructions: replacing the first broke the empty-range path
+    # (a phone run then crashed at main+0x3426c0 with x22=0).
     'e656e23d5435311081509ba2a2ae81d3': [
         (0x33b9f8, '1f2003d51f2003d5', '7b1e00b41f2003d5',
          'menu sort: cbz x27 to main+0x33bdc4 when the temp buffer is null; skip the whole sort/container-update block and keep the original container'),
-        (0x344344, 'f60314aa', 'f40300b4',
-         'menu sort (second site): cbz x20 to the epilogue main+0x3443c0 when its temp buffer is null; keep the original container'),
+        (0x34434c, 'f60314aa', 'b60300b4',
+         'menu sort (second site): cbz x22 to the epilogue main+0x3443c0 when its temp buffer is null; the first mov x22,x20 stays so the empty-range path keeps a valid x22'),
     ],
 }
 
