@@ -1035,7 +1035,7 @@ static void join_placed(const pool_ent *p, uintptr_t a, uintptr_t e, const char 
     else if (!q && k < 8) VRED("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across parts placed earlier, which are not joined (%s): lookups over the whole range fail (draws that need it in one piece are skipped)",
                                (unsigned long)p->mem, (unsigned long long)p->size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "out of memory for the join queue" : "DM_VK_PLACE_JOIN_MB=0");
 }
-void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
+static void pool_need(const void *addr, uint64_t len, const char *why, int allow_join) {
     if (!atomic_load_explicit(&g_nlazy, memory_order_relaxed)) return;
     uintptr_t a = (uintptr_t)addr, e = a + (len ? len : 1);
     if (e < a) e = UINTPTR_MAX;
@@ -1054,7 +1054,12 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
             if (g_pool[i].lazy == 2) busy = 1; else { k = i; break; }
         }
         if (k < 0 && busy) { pthread_cond_wait(&g_lzcv, &g_pmu); pthread_mutex_unlock(&g_pmu); continue; }
-        if (k < 0) { *ng = (negent){gen, a, e}; pthread_mutex_unlock(&g_pmu); if (cp.id) join_placed(&cp, a, e, why); return; }   // (gen read before the scan: a pool added since bumped it)
+        if (k < 0) {
+            if (allow_join || !cp.id) *ng = (negent){gen, a, e};   // a multi-segment ask with allow_join == 0 must not hide a later single-segment ask over the same range
+            pthread_mutex_unlock(&g_pmu);
+            if (allow_join && cp.id) join_placed(&cp, a, e, why);
+            return;
+        }   // (gen read before the scan: a pool added since bumped it)
         if (ndone == NDONE) { pthread_mutex_unlock(&g_pmu); static _Atomic int nr; if (!atomic_fetch_add(&nr, 1)) VRED("the GPU is given %#lx+%#lx across more than %d memory pools placed by parts: the rest is not placed", (unsigned long)a, (unsigned long)(e - a), NDONE); return; }
         pool_ent pe = g_pool[k]; g_pool[k].lazy = 2;
         pthread_mutex_unlock(&g_pmu);
@@ -1066,7 +1071,7 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
                                    (pe.size - pe.pbytes) / 1048576.0, (unsigned long)a, (unsigned long)(e - a), why);   // (before: it takes seconds for a pool of GiB)
         pthread_mutex_lock(&g_pl);
         int placed = place_pool(plo, phi - plo, &l, &lg, &tot, &mine);
-        if (placed && !whole) span = !vka_addr(sa, se - sa, NULL, NULL, NULL);
+        if (placed && !whole && allow_join) span = !vka_addr(sa, se - sa, NULL, NULL, NULL);
         pthread_mutex_unlock(&g_pl);
         pthread_mutex_lock(&g_pmu);   // (mtl_pool_del waits while the pool is being placed: it is still in the table)
         uint32_t nparts = 0, nspan = 0;
@@ -1100,6 +1105,8 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         if (lg) placed_line(tot);
     }
 }
+void mtl_pool_need(const void *addr, uint64_t len, const char *why) { pool_need(addr, len, why, 1); }
+void mtl_pool_need_parts(const void *addr, uint64_t len, const char *why) { pool_need(addr, len, why, 0); }
 static void lazy_release_note(uintptr_t lo, uintptr_t hi) {
     pthread_mutex_lock(&g_pmu);   // pools not placed yet (DM_VK_PLACE_LAZY) over the range: their storage leaves the guest too
     for (int i = 0; i < g_npool; i++) if (g_pool[i].lazy && g_pool[i].mem < hi && lo < g_pool[i].mem + g_pool[i].size) {

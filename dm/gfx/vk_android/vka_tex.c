@@ -305,6 +305,8 @@ static int vl_learn(VkFormat a, VkFormat b, uint32_t w, uint32_t h);
 static pthread_mutex_t g_vlmu;
 static int same_shape(const vka_img *a, const tex_t *t, const vka_fmt *f, int learn) {   // learn = 0: a diagnostic's question (vka_cap_shared), nothing learned or logged
     if (a->mem != t->mem || a->d.target != t->d.target || a->d.width != t->d.width || a->d.height != t->d.height || a->d.depth != t->d.depth || a->d.levels != t->d.levels || a->d.samples != t->d.samples) return 0;
+    const uint32_t lf = NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_MINIMAL_LAYOUT | NVN_TEXTURE_FLAGS_SPARSE;
+    if ((a->d.flags & lf) != (t->d.flags & lf) || a->d.pkg_layout != t->d.pkg_layout || ((a->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) && a->d.stride != t->d.stride)) return 0;
     if (a->f.vk == f->vk) return 1;
     if (!(a->f.kind <= 2 && f->kind <= 2 && a->f.bpb == f->bpb && !compressed(&a->f) && !compressed(f))) return 0;
     int lv = img_lists(a, f->vk), lw = img_lists(a, f->view);
@@ -993,6 +995,29 @@ int vka_tex_gw_read(uint64_t addr, uint64_t n, void *out) {
     pthread_mutex_unlock(&g_tmu);
     return ok;
 }
+int vka_tex_gw_pending(uint64_t addr, uint64_t n) {
+    if (!n) return 0;
+    pthread_mutex_lock(&g_tmu);
+    uint64_t a = addr, b = a + n, done = vka_done();
+    int r = 0;
+    for (int i = 0; i < g_ngw; i++) {
+        const gw_t *w = &g_gw[i];
+        if (w->fence && w->fence <= done) continue;
+        if (w->hi <= a || w->lo >= b) continue;
+        if (w->kind == GW_OPAQUE) { r = 2; break; }
+        if (w->kind == GW_COPY) {
+            uint64_t lo = w->lo > a ? w->lo : a, hi = w->hi < b ? w->hi : b;
+            for (int j = 0; j < i; j++) {
+                const gw_t *x = &g_gw[j];
+                if ((!x->fence || x->fence > done) && x->lo < w->src + (hi - w->lo) && x->hi > w->src + (lo - w->lo)) { r = 2; break; }
+            }
+            if (r == 2) break;
+        }
+        r = 1;
+    }
+    pthread_mutex_unlock(&g_tmu);
+    return r;
+}
 // Storage the guest has not mapped (all or part of it): its content as zeros, in a copy (NULL: all mapped). A memory pool is placed memory only once the GPU gets an address
 // in it (vka_mem.c mtl_pool_need); before, placing mapped the whole pool read-write, and Mario Kart World 1.8.0 uploads a texture of a CPU_NO_ACCESS pool whose pages its
 // SDK has not mapped (SIGSEGV in the deswizzle at 0x4074003000, phone m22)
@@ -1061,12 +1086,18 @@ static void upload_fill(vka_img *im, const tex_t *t, VkCommandBuffer cb) {   // 
     if (!c && !im->vpool) c = unmapped_content(t);
     if (c) { tex_t tc = *t; tc.mem = c; upload(im, &tc, cb); free(c); g_gw_over++; } else upload(im, t, cb);
 }
+static size_t linear_stride(const nvn_texdesc *d, uint32_t fallback_stride, size_t pitch) {
+    if (d->stride) return d->stride;
+    if (fallback_stride) return fallback_stride;
+    size_t al = (d->flags & NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET) ? 128 : 32;
+    return (pitch + al - 1) & ~(al - 1);
+}
 // A linear 2D texture of one level and layer whose pages the CPU wrote between byte lo and hi of its storage: only those rows again (Donkey Kong Bananza's glyph cache,
 // 1024x8192 R8: the whole 8 MB was deswizzled and copied each time a glyph was rasterized into it). 0 = not such a texture (the caller uploads all of it)
 static int upload_rows_tracked(vka_img *im, const tex_t *t, VkCommandBuffer cb, size_t lo, size_t hi) {
     const nvn_texdesc *d = &t->d; const vka_fmt *f = &im->f;
     if (!(im->is_video || (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET))) || im->levels > 1 || im->layers > 1 || im->depth > 1 || f->kind >= 3) return 0;
-    uint32_t bx = (im->w + f->bw - 1) / f->bw, by = (im->h + f->bh - 1) / f->bh; size_t pitch = (size_t)bx * f->bpb, st = im->d.stride ? im->d.stride : d->stride ? d->stride : pitch;
+    uint32_t bx = (im->w + f->bw - 1) / f->bw, by = (im->h + f->bh - 1) / f->bh; size_t pitch = (size_t)bx * f->bpb, st = linear_stride(d, im->d.stride, pitch);
     if (st < pitch) return 0;
     uint32_t r0 = (uint32_t)(lo / st), r1 = (uint32_t)((hi + st - 1) / st); if (r1 > by) r1 = by;
     if (r0 >= r1) r0 = 0, r1 = by;
@@ -2097,6 +2128,7 @@ static int bc_copy_levels(vka_img *s, vka_img *d, VkCommandBuffer cb, uint32_t l
     return copied;
 }
 
+static void redo_add_locked(vka_img *im);
 vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
     if (!t || !t->serial || !vka_ok()) return NULL;
     pthread_mutex_lock(&g_tmu);
@@ -2148,6 +2180,24 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
             if (t->pool && (im->pool != t->pool || revived)) { uint64_t fin = nvn_pool_fin(), g = nvn_pool_live(t->pool, NULL, NULL); if (g) { im->pool = t->pool; im->pfin = fin; im->pgen = g; im->cpu_vis = !(t->pool->flags & (NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS | NVN_MEMORY_POOL_FLAGS_VIRTUAL)) ? 1 : 0; } } }
         if (!im) im = level_child(t, &f);   // (a texture over mip levels of a live image: that image)
         if (im && !im->par) big_share(im, t);   // (another texture object of the same storage and shape: DM_VK_BIGIMG_MB diagnostic)
+        if (im) {
+            int cw = cpuw_take(t->serial, 0);
+            if (!im->gpu_owned && !im->par && !img_pool_dead(im)) {
+                int m = (cw || im->cpu_dirty || (!im->from_mem && !im->vpool && !(t->d.flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_IMAGE)))) ? first_mode(t, &f, cw) : ST_ZERO;
+                if (cw || im->cpu_dirty || (m != ST_ZERO && !im->from_mem)) {
+                    im->from_mem = 1; im->cpu_dirty = 0;
+                    if (m == ST_TRACK && !im->wt && !im->track && (im->span = nvn_dirty_span(t->mem, t->L.size))) im->track = 1;
+                    if (im->m.z) img_own(im, cb);
+                    VkCommandBuffer ucb = !ds_here(im, cb) && cb && cb == vka_rp_cb() && vka_up_on() ? vka_up_begin() : VK_NULL_HANDLE;
+                    VkCommandBuffer rcb = ucb ? ucb : (cb && !vka_rp_is_open()) ? cb : VK_NULL_HANDLE;
+                    if (rcb) {
+                        if (im->track) upload_tracked(im, t, rcb); else upload_fill(im, t, rcb);
+                        if (ucb) { VkCommandBuffer ec = vka_up_cur(ucb); if (ec) vka_barrier(ec); vka_up_end(); throttle = 1; }
+                        else vka_barrier(rcb);
+                    } else redo_add_locked(im);
+                }
+            }
+        }
         vka_img *bc_src = NULL;
         if (!im && t->mem && f.kind <= 2 && f.bw == 4 && f.bh == 4 && (f.bpb == 8 || f.bpb == 16) && VKA_ENV("DM_VK_BC_ALIAS", 1)) {
             int blk;
@@ -2405,7 +2455,7 @@ static void upload_(vka_img *im, const tex_t *t, VkCommandBuffer cb, uint64_t *n
         size_t pitch = (size_t)bx * f->bpb, piece = pitch * by * z;
         for (uint32_t ly = 0; ly < (linear ? 1 : im->layers); ly++) {
             vka_span s; if (!vka_scratch(piece, 16, &s)) { free(part); return; }
-            if (linear) { size_t st = im->d.stride ? im->d.stride : d->stride ? d->stride : pitch; for (uint32_t y = 0; y < by; y++) memcpy(s.ptr + y * pitch, src + y * st, pitch); }
+            if (linear) { size_t st = linear_stride(d, im->d.stride, pitch); for (uint32_t y = 0; y < by; y++) memcpy(s.ptr + y * pitch, src + y * st, pitch); }
             else if (nvn_deswizzle(d, lv + im->base, ly, src, s.ptr, pitch)) { VRED_ONCE("texture serial %llu format %#x target %d: no CPU deswizzle", (unsigned long long)t->serial, d->format, d->target); free(part); return; }   // (image level lv is texture level lv + base: a soft texture's; a sparse pool's go above)
             if (d->format >= 0x79 && d->format <= 0x94 && vka_nan_on()) {   // DM_VK_NANSCAN: all-zero blocks of ASTC textures (an all-zero ASTC block is an error block)
                 uint64_t zb = 0, nb = piece / 16; for (uint64_t k = 0; k < nb; k++) if (!mem_any(s.ptr + 16 * k, 16)) zb++;
@@ -2484,14 +2534,56 @@ void vka_img_written_at(vka_img *im, const char *file, int line) {
 // (260x260 RG8, 9 levels, MINIMAL_LAYOUT, CPU_CACHED | GPU_CACHED) on the GPU, then its defragmentation moves each tile with
 // memcpy and creates a new texture at the new address. Without writing drawn levels back into guest memory, the new texture
 // uploads zeros, grass blades get length 0, and ground loses lighting. DM_VK_RT_WB=0 turns this off.
-enum { BLWB_SLOTS = 24, BLWB_SLOT = 512u << 10 };
+enum { BLWB_SLOTS = 32, BLWB_SLOT = 512u << 10 };
 typedef struct { vka_img *im; uint32_t lv, l0, nl, lw, lh, bpb; } blwb_req;
-typedef struct { tex_t t; uint64_t pgen, fence; uint32_t lv, l0, nl, lw, lh, bpb; int busy; } blwb_slot;
+typedef struct {
+    tex_t t; uint64_t pgen, fence;
+    NVNcopyRegion r;
+    uint32_t lv_tex, l0, wb, hb, nz;
+    uint8_t is_copy, has_dyn;
+    int busy;
+    VkBuffer dbuf; VkDeviceMemory dmem; void *dptr;
+} blwb_slot;
 static blwb_req *g_blq; static int g_nblq, g_blqcap;
 static blwb_slot g_bl[BLWB_SLOTS]; static vka_span g_blbuf; static int g_blbuf_init;
 static pthread_mutex_t g_blmu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int g_bl_busy;
 static uint64_t g_bl_done_cnt, g_bl_drop_cnt;
+
+static void copy_mirror_land(const tex_t *t, int was_clean) {   // caller holds nvn_pool_use(1) and does NOT hold g_tmu
+    pthread_mutex_lock(&g_tmu);
+    smap_ent *se = map_get(t->serial);
+    vka_img *im = se ? se->im : NULL;
+    vka_img *root = im ? (im->par ? im->par : im) : NULL;
+    if (root && !root->gpu_owned && !img_pool_dead(root)) {
+        root->from_mem = 1;
+        root->last_frame = vka_frame();
+        root->last_fence = vka_fence_last();
+        if (was_clean && root->track && root->span) {
+            root->stamp = nvn_dirty_now();
+            nvn_dirty_protect(root->mem, root->L.size);
+            img_edges_take(root);
+        }
+    }
+    for (int oi = 0; oi < g_nlive; oi++) {
+        vka_img *o = g_live[oi];
+        if (o == root || o->par || !o->mem || o->gpu_owned || o->vpool || img_pool_dead(o)) continue;
+        if (!ranges_meet(o->mem, o->L.size, t->mem, t->L.size)) continue;
+        if (!o->from_mem && !(o->samples == 1 && o->f.kind < 3 && !(o->d.flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_IMAGE)))) continue;
+        o->from_mem = 1;
+        redo_add_locked(o);
+    }
+    pthread_mutex_unlock(&g_tmu);
+    vka_tbuf_wrote((uint64_t)(uintptr_t)t->mem, t->L.size);
+}
+static int blwb_pending_for(uint64_t serial) {
+    if (!atomic_load_explicit(&g_bl_busy, memory_order_relaxed)) return 0;
+    pthread_mutex_lock(&g_blmu);
+    int r = 0;
+    for (int k = 0; k < BLWB_SLOTS && !r; k++) if (g_bl[k].busy && g_bl[k].t.serial == serial) r = 1;
+    pthread_mutex_unlock(&g_blmu);
+    return r;
+}
 
 static int blwb_eligible(const vka_img *im, uint32_t lv, uint32_t l0, uint32_t nl, uint32_t *lw_out, uint32_t *lh_out, uint32_t *bpb_out) {
     if (!im || im->par || !im->mem || !im->cpu_vis || im->is_video || im->vpool || im->pdead) return 0;
@@ -2521,7 +2613,13 @@ void vka_tex_rt_wb(vka_img *im, uint32_t lv, uint32_t l0, uint32_t nl) {
     pthread_mutex_unlock(&g_tmu);
 }
 int vka_tex_blwb_pending(void) {
-    pthread_mutex_lock(&g_tmu); int r = g_nblq > 0; pthread_mutex_unlock(&g_tmu); return r;
+    pthread_mutex_lock(&g_tmu); int r = g_nblq > 0; pthread_mutex_unlock(&g_tmu);
+    if (!r && atomic_load_explicit(&g_bl_busy, memory_order_relaxed)) {
+        pthread_mutex_lock(&g_blmu);
+        for (int k = 0; k < BLWB_SLOTS && !r; k++) if (g_bl[k].busy == 1 && !g_bl[k].fence) r = 1;
+        pthread_mutex_unlock(&g_blmu);
+    }
+    return r;
 }
 void vka_tex_blwb_done(uint64_t fence) {
     if (!atomic_load_explicit(&g_bl_busy, memory_order_relaxed)) return;
@@ -2530,7 +2628,7 @@ void vka_tex_blwb_done(uint64_t fence) {
     blwb_slot done_s[BLWB_SLOTS];
     pthread_mutex_lock(&g_blmu);
     for (int k = 0; k < BLWB_SLOTS; k++) {
-        if (g_bl[k].busy == 1 && g_bl[k].fence <= fence) {
+        if (g_bl[k].busy == 1 && g_bl[k].fence && g_bl[k].fence <= fence) {
             g_bl[k].busy = 2;   // claimed for swizzle; slot memory stays pinned until released below
             idx[nd] = k; done_s[nd] = g_bl[k]; nd++;
         }
@@ -2543,18 +2641,40 @@ void vka_tex_blwb_done(uint64_t fence) {
     }
     for (int i = 0; i < nd; i++) {
         const blwb_slot *s = &done_s[i];
-        if (!s->t.pool || nvn_pool_live(s->t.pool, NULL, NULL) == s->pgen) {
-            NVNcopyRegion r = {0, 0, 0, (int)s->lw, (int)s->lh, (int)s->nl};
-            size_t row = (size_t)s->lw * s->bpb;
-            nvn_tex_mirror_b2t(&s->t, s->lv, s->l0, &r, g_blbuf.ptr + (size_t)idx[i] * BLWB_SLOT, row, row * s->lh);
-            uint64_t cnt = ++g_bl_done_cnt;
-            if (cnt <= 4) VLOG("block-linear target serial %llu %ux%u lv %u/%u format %#x: GPU content swizzled back into guest storage (DM_VK_RT_WB=0 off)",
-                               (unsigned long long)s->t.serial, s->t.d.width, s->t.d.height, s->lv, s->t.d.levels, s->t.d.format);
+        const uint8_t *src = s->has_dyn ? (const uint8_t *)s->dptr : g_blbuf.ptr + (size_t)idx[i] * BLWB_SLOT;
+        if (src && (!s->t.pool || nvn_pool_live(s->t.pool, NULL, NULL) == s->pgen)) {
+            int was_clean = 0;
+            if (s->is_copy) {
+                pthread_mutex_lock(&g_tmu);
+                smap_ent *se = map_get(s->t.serial);
+                vka_img *root = se && se->im ? (se->im->par ? se->im->par : se->im) : NULL;
+                if (root && !root->gpu_owned && !img_pool_dead(root) && root->track && root->span)
+                    was_clean = !nvn_dirty_since_span(root->span, root->mem, root->L.size, root->stamp);
+                pthread_mutex_unlock(&g_tmu);
+            }
+            if (!nvn_tex_mirror_b2t(&s->t, s->lv_tex, s->l0, &s->r, src, s->wb, (size_t)s->wb * s->hb)) {
+                if (s->is_copy) {
+                    copy_mirror_land(&s->t, was_clean);
+                    static _Atomic int ncb;
+                    if (atomic_fetch_add(&ncb, 1) < 4)
+                        VLOG("copy->texture into serial %llu %ux%ux%u lv %u format %#x: read back into storage on completion",
+                             (unsigned long long)s->t.serial, s->t.d.width, s->t.d.height, s->t.d.depth, s->lv_tex, s->t.d.format);
+                } else {
+                    uint64_t cnt = ++g_bl_done_cnt;
+                    if (cnt <= 4) VLOG("block-linear target serial %llu %ux%u lv %u/%u format %#x: GPU content swizzled back into guest storage (DM_VK_RT_WB=0 off)",
+                                       (unsigned long long)s->t.serial, s->t.d.width, s->t.d.height, s->lv_tex, s->t.d.levels, s->t.d.format);
+                }
+            }
+        }
+        if (s->has_dyn) {
+            if (s->dptr) vk.vkUnmapMemory(V.dev, s->dmem);
+            if (s->dbuf) vk.vkDestroyBuffer(V.dev, s->dbuf, NULL);
+            if (s->dmem) vk.vkFreeMemory(V.dev, s->dmem, NULL);
         }
     }
     if (nd) {
         pthread_mutex_lock(&g_blmu);
-        for (int i = 0; i < nd; i++) g_bl[idx[i]].busy = 0;
+        for (int i = 0; i < nd; i++) g_bl[idx[i]] = (blwb_slot){0};
         atomic_fetch_sub_explicit(&g_bl_busy, nd, memory_order_release);
         pthread_mutex_unlock(&g_blmu);
     }
@@ -2566,7 +2686,7 @@ void vka_tex_writeback(VkCommandBuffer cb, uint64_t fence) {
     int any = 0;
     for (int i = 0; i < g_nwb; i++) {
         vka_img *im = g_wb[i]; im->wb_pending = 0;
-        uint32_t bpb = im->f.bpb, h = im->h; size_t row = im->d.stride ? im->d.stride : (size_t)im->w * bpb;
+        uint32_t bpb = im->f.bpb, h = im->h; size_t row = linear_stride(&im->d, 0, (size_t)im->w * bpb);
         VkBuffer b; VkDeviceSize o;
         if (row % bpb || !vka_addr((uint64_t)(uintptr_t)im->mem, (uint64_t)row * (h - 1) + (uint64_t)im->w * bpb, &b, &o, NULL) || o % (bpb % 4 ? 4 * bpb : bpb)) {
             VRED_ONCE("linear texture serial %llu (format %#x, row %zu) cannot be copied back into its storage: the CPU reads what it held", (unsigned long long)im->serial, im->d.format, row); unref_locked(im); continue; }
@@ -2588,7 +2708,12 @@ void vka_tex_writeback(VkCommandBuffer cb, uint64_t fence) {
                 for (int k = 0; k < BLWB_SLOTS; k++) if (!g_bl[k].busy) { slot = k; g_bl[k].busy = 1; break; }
                 if (slot >= 0) {
                     tex_t t = {0}; t.serial = im->serial; t.d = im->d; t.L = im->L; t.mem = (uint8_t *)im->mem; t.pool = (void *)im->pool;
-                    g_bl[slot] = (blwb_slot){t, im->pgen, fence, q->lv, q->l0, q->nl, q->lw, q->lh, q->bpb, 1};
+                    g_bl[slot] = (blwb_slot){
+                        .t = t, .pgen = im->pgen, .fence = fence,
+                        .r = {0, 0, 0, (int)q->lw, (int)q->lh, (int)q->nl},
+                        .lv_tex = q->lv, .l0 = q->l0, .wb = q->lw * q->bpb, .hb = q->lh, .nz = q->nl,
+                        .is_copy = 0, .has_dyn = 0, .busy = 1,
+                    };
                     atomic_fetch_add_explicit(&g_bl_busy, 1, memory_order_release);
                 }
                 pthread_mutex_unlock(&g_blmu);
@@ -2604,7 +2729,135 @@ void vka_tex_writeback(VkCommandBuffer cb, uint64_t fence) {
         }
         g_nblq = 0;
     }
+    pthread_mutex_lock(&g_blmu);
+    for (int k = 0; k < BLWB_SLOTS; k++) if (g_bl[k].busy == 1 && !g_bl[k].fence) g_bl[k].fence = fence;
+    pthread_mutex_unlock(&g_blmu);
     pthread_mutex_unlock(&g_tmu);
+}
+static int copy_mirror_elig(vka_img *root, const tex_t *t) {
+    if (!root || !t || !t->mem || !root->mem || !root->cpu_vis || root->is_video || root->vpool || img_pool_dead(root) || root->gpu_owned) return 0;
+    if (root->samples != 1 || root->f.kind >= 3 || (t->d.flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_IMAGE))) return 0;
+    return !dm_guest_unmapped((uintptr_t)t->mem, t->L.size);
+}
+int vka_tex_copy_wb(vka_img *im, const tex_t *t, unsigned lv_tex, unsigned l0, const NVNcopyRegion *r, VkCommandBuffer cb) {
+    static int on = -1;
+    if (on < 0) on = VKA_ENV("DM_VK_RT_WB", 1) != 0;
+    if (!on || !im || !t || !t->mem || !cb || !r || r->width <= 0 || r->height <= 0 || r->xoffset < 0 || r->yoffset < 0 || r->zoffset < 0) return 0;
+    unsigned lv_img = lv_tex;
+    if (!vka_img_lv(im, &lv_img)) return 0;
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    if (!bpb || bpb != im->f.bpb || bw != im->f.bw || bh != im->f.bh) return 0;
+    int is3d = im->depth > 1 || t->d.target == NVN_TEXTURE_TARGET_3D;
+    uint32_t nz = r->depth > 0 ? (uint32_t)r->depth : 1;
+    uint32_t bx = (uint32_t)((r->width + bw - 1) / bw);
+    uint32_t by = (uint32_t)((r->height + bh - 1) / bh);
+    uint32_t wb = bx * (uint32_t)bpb;
+    uint64_t total = (uint64_t)wb * by * nz;
+    if (!total || total > (16u << 20)) return 0;
+    if (total > BLWB_SLOT) {
+        VkBuffer dbuf = VK_NULL_HANDLE; VkDeviceMemory dmem = VK_NULL_HANDLE; void *dptr = NULL;
+        VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = total, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        if (vk.vkCreateBuffer(V.dev, &bi, NULL, &dbuf)) return 0;
+        VkMemoryRequirements mr; vk.vkGetBufferMemoryRequirements(V.dev, dbuf, &mr);
+        uint32_t mt = vka_mem_type(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0);
+        if (mt == UINT32_MAX) mt = vka_mem_type(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0);
+        VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size, .memoryTypeIndex = mt};
+        if (mt == UINT32_MAX || vk.vkAllocateMemory(V.dev, &ai, NULL, &dmem) || vk.vkBindBufferMemory(V.dev, dbuf, dmem, 0) || vk.vkMapMemory(V.dev, dmem, 0, VK_WHOLE_SIZE, 0, &dptr)) {
+            if (dmem) vk.vkFreeMemory(V.dev, dmem, NULL); if (dbuf) vk.vkDestroyBuffer(V.dev, dbuf, NULL); return 0;
+        }
+        pthread_mutex_lock(&g_tmu);
+        vka_img *root = im->par ? im->par : im;
+        if (!copy_mirror_elig(root, t)) { pthread_mutex_unlock(&g_tmu); vk.vkUnmapMemory(V.dev, dmem); vk.vkDestroyBuffer(V.dev, dbuf, NULL); vk.vkFreeMemory(V.dev, dmem, NULL); return 0; }
+        int slot = -1;
+        pthread_mutex_lock(&g_blmu);
+        for (int k = 0; k < BLWB_SLOTS; k++) if (!g_bl[k].busy) { slot = k; g_bl[k] = (blwb_slot){.t = *t, .pgen = root->pgen, .fence = 0, .r = *r, .lv_tex = lv_tex, .l0 = l0, .wb = wb, .hb = by, .nz = nz, .is_copy = 1, .has_dyn = 1, .busy = 1, .dbuf = dbuf, .dmem = dmem, .dptr = dptr}; atomic_fetch_add_explicit(&g_bl_busy, 1, memory_order_release); break; }
+        pthread_mutex_unlock(&g_blmu);
+        pthread_mutex_unlock(&g_tmu);
+        if (slot < 0) { vk.vkUnmapMemory(V.dev, dmem); vk.vkDestroyBuffer(V.dev, dbuf, NULL); vk.vkFreeMemory(V.dev, dmem, NULL); return 0; }
+        vka_barrier(cb);
+        VkBufferImageCopy c = {0, bx * (uint32_t)bw, by * (uint32_t)bh, {VK_IMAGE_ASPECT_COLOR_BIT, lv_img, is3d ? 0u : l0 + (uint32_t)r->zoffset, is3d ? 1u : nz}, {r->xoffset, r->yoffset, is3d ? r->zoffset : 0}, {(uint32_t)r->width, (uint32_t)r->height, is3d ? nz : 1u}};
+        vk.vkCmdCopyImageToBuffer(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, dbuf, 1, &c);
+        vka_barrier(cb);
+        return 1;
+    }
+    pthread_mutex_lock(&g_tmu);
+    vka_img *root = im->par ? im->par : im;
+    if (!copy_mirror_elig(root, t)) { pthread_mutex_unlock(&g_tmu); return 0; }
+    if (!g_blbuf_init) { g_blbuf_init = vka_static((VkDeviceSize)BLWB_SLOTS * BLWB_SLOT, 16, &g_blbuf) ? 1 : -1; }
+    int slot = -1;
+    if (g_blbuf_init == 1) {
+        pthread_mutex_lock(&g_blmu);
+        for (int k = 0; k < BLWB_SLOTS; k++) if (!g_bl[k].busy) { slot = k; g_bl[k] = (blwb_slot){.t = *t, .pgen = root->pgen, .fence = 0, .r = *r, .lv_tex = lv_tex, .l0 = l0, .wb = wb, .hb = by, .nz = nz, .is_copy = 1, .has_dyn = 0, .busy = 1}; atomic_fetch_add_explicit(&g_bl_busy, 1, memory_order_release); break; }
+        pthread_mutex_unlock(&g_blmu);
+    }
+    pthread_mutex_unlock(&g_tmu);
+    if (slot < 0) return 0;
+    vka_barrier(cb);
+    VkBufferImageCopy c = {g_blbuf.off + (VkDeviceSize)slot * BLWB_SLOT, bx * (uint32_t)bw, by * (uint32_t)bh, {VK_IMAGE_ASPECT_COLOR_BIT, lv_img, is3d ? 0u : l0 + (uint32_t)r->zoffset, is3d ? 1u : nz}, {r->xoffset, r->yoffset, is3d ? r->zoffset : 0}, {(uint32_t)r->width, (uint32_t)r->height, is3d ? nz : 1u}};
+    vk.vkCmdCopyImageToBuffer(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, g_blbuf.buf, 1, &c);
+    vka_barrier(cb);
+    return 1;
+}
+int vka_tex_copy_mirror_b2t(vka_img *im, const tex_t *t, unsigned lv_tex, unsigned l0, const NVNcopyRegion *r, uint64_t src_addr, uint64_t span, size_t row, size_t img_stride) {
+    if (!im || !t || !t->mem || !r || !span) return 0;
+    nvn_pool_use(1);
+    pthread_mutex_lock(&g_tmu);
+    vka_img *root = im->par ? im->par : im;
+    int elig = copy_mirror_elig(root, t);
+    int was_clean = elig && root->track && root->span && !nvn_dirty_since_span(root->span, root->mem, root->L.size, root->stamp);
+    uint64_t root_ser = root ? root->serial : 0;
+    pthread_mutex_unlock(&g_tmu);
+    if (!elig) { nvn_pool_use(0); return 0; }
+    if (blwb_pending_for(root_ser) || vka_tex_gw_pending((uint64_t)(uintptr_t)t->mem, t->L.size)) { nvn_pool_use(0); return -1; }
+    int sp = vka_tex_gw_pending(src_addr, span);
+    if (sp == 2) { nvn_pool_use(0); return -1; }
+    uint8_t *tmp = NULL;
+    const uint8_t *src_ptr = NULL;
+    if (sp == 1) {
+        if (!(tmp = malloc(span)) || !vka_tex_gw_read(src_addr, span, tmp)) { free(tmp); nvn_pool_use(0); return -1; }
+        src_ptr = tmp;
+    } else {
+        if (!vka_addr(src_addr, span, NULL, NULL, NULL) && dm_guest_unmapped((uintptr_t)src_addr, span)) { nvn_pool_use(0); return -1; }
+        src_ptr = (const uint8_t *)(uintptr_t)src_addr;
+    }
+    int rc = nvn_tex_mirror_b2t(t, lv_tex, l0, r, src_ptr, row, img_stride);
+    free(tmp);
+    if (rc) { nvn_pool_use(0); return -1; }
+    copy_mirror_land(t, was_clean);
+    nvn_pool_use(0);
+    static _Atomic int nlog;
+    if (atomic_fetch_add(&nlog, 1) < 4)
+        VLOG("buffer->texture copy into serial %llu %ux%ux%u format %#x level %u: written into storage as well",
+             (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format, lv_tex);
+    return 1;
+}
+int vka_tex_copy_mirror_t2t(vka_img *s, const tex_t *st, unsigned sl_tex, unsigned ss, const NVNcopyRegion *sr, vka_img *d, const tex_t *dt, unsigned dl_tex, unsigned ds, const NVNcopyRegion *dr, uint32_t flags) {
+    if (!s || !st || !d || !dt || !dt->mem) return 0;
+    nvn_pool_use(1);
+    pthread_mutex_lock(&g_tmu);
+    vka_img *sroot = s->par ? s->par : s, *droot = d->par ? d->par : d;
+    int elig = copy_mirror_elig(droot, dt);
+    int plain = elig && !(flags & (DM_COPY_RESOLVE | NVN_COPY_FLAGS_MIRROR_X_BIT | NVN_COPY_FLAGS_MIRROR_Y_BIT | NVN_COPY_FLAGS_MIRROR_Z_BIT))
+        && sr->width == dr->width && sr->height == dr->height && (sr->depth ? sr->depth : 1) == (dr->depth ? dr->depth : 1)
+        && s->f.vk == d->f.vk && s->samples == d->samples && st->mem && !sroot->gpu_owned && sroot->from_mem && !sroot->vpool && !sroot->is_video
+        && !img_pool_dead(sroot) && !dm_guest_unmapped((uintptr_t)st->mem, st->L.size);
+    int was_clean = plain && droot->track && droot->span && !nvn_dirty_since_span(droot->span, droot->mem, droot->L.size, droot->stamp);
+    uint64_t sser = sroot->serial, dser = droot->serial;
+    pthread_mutex_unlock(&g_tmu);
+    if (!elig) { nvn_pool_use(0); return 0; }
+    if (!plain || blwb_pending_for(dser) || blwb_pending_for(sser) || vka_tex_gw_pending((uint64_t)(uintptr_t)dt->mem, dt->L.size) || vka_tex_gw_pending((uint64_t)(uintptr_t)st->mem, st->L.size)) {
+        nvn_pool_use(0);
+        return -1;
+    }
+    int rc = nvn_tex_mirror_t2t(st, sl_tex, ss, sr, dt, dl_tex, ds, dr);
+    if (rc) { nvn_pool_use(0); return -1; }
+    copy_mirror_land(dt, was_clean);
+    nvn_pool_use(0);
+    static _Atomic int nlog;
+    if (atomic_fetch_add(&nlog, 1) < 4)
+        VLOG("texture->texture copy into serial %llu %ux%ux%u format %#x level %u: written into storage as well",
+             (unsigned long long)dt->serial, dt->d.width, dt->d.height, dt->d.depth, dt->d.format, dl_tex);
+    return 1;
 }
 int mtl_tex_gpu_owned(uint64_t serial) {   // hle_nvn.c nvn_ft_poll: the GPU has written the image (render target, copy or clear destination)
     pthread_mutex_lock(&g_tmu); smap_ent *e = map_get(serial); int r = e && e->im && (e->im->gpu_owned || (e->im->par && e->im->par->gpu_owned)); pthread_mutex_unlock(&g_tmu); return r;
@@ -3702,7 +3955,9 @@ void vka_tex_prepare(VkCommandBuffer cb) {
         // does not promise either way
         static vka_img **by; static int bycap, nall; static uint64_t by_gen = ~0ull; int nby = 0; uint64_t maxsz = 0, done = vka_done(); int k = 0, any = 0;
         int keep = VKA_ENV("DM_VK_GW_SORT_KEEP", 1) != 0;
-        #define GW_TAKES(im) ((im)->from_mem && !(im)->gpu_owned && (im)->mem && !(im)->vpool && !img_pool_dead(im))
+        #define GW_TAKES_MEM(im) (!(im)->gpu_owned && (im)->mem && !(im)->vpool && !img_pool_dead(im))
+        #define GW_TAKES_UNINIT(im) ((im)->samples == 1 && (im)->f.kind < 3 && !((im)->d.flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_IMAGE)))
+        #define GW_TAKES(im) (GW_TAKES_MEM(im) && ((im)->from_mem || GW_TAKES_UNINIT(im)))
         for (int i = 0; i < g_ngw && !any; i++) any = g_gw[i].fence && g_gw[i].fence <= done;
         if (any) {
             if (bycap < g_nlive) { bycap = g_nlive + 256; by = realloc(by, (size_t)bycap * sizeof *by); by_gen = ~0ull; }
@@ -3723,7 +3978,9 @@ void vka_tex_prepare(VkCommandBuffer cb) {
             for (int j = lo - 1; j >= 0 && (uint64_t)(uintptr_t)by[j]->mem + maxsz > w->lo; j--) {
                 vka_img *im = by[j]; uint64_t a = (uint64_t)(uintptr_t)im->mem;
                 if (w->lo >= a + im->L.size || im->gw_seen >= w->seq || im->gpu_owned) continue;
-                if (keep && !GW_TAKES(im)) continue;
+                if (!GW_TAKES_MEM(im)) continue;
+                if (!im->from_mem && (w->kind == GW_OPAQUE || !GW_TAKES_UNINIT(im))) continue;
+                im->from_mem = 1;
                 tex_t t = {0}; t.serial = im->serial; t.d = im->d; t.L = im->L; t.mem = (uint8_t *)im->mem;
                 if (im->track) upload_tracked(im, &t, cb); else upload_fill(im, &t, cb);
                 g_gw_late++; if (g_gw_late <= 8 || !(g_gw_late & (g_gw_late - 1))) VLOG("textures re-uploaded after a GPU write into their storage: %llu (uploads that applied pending GPU writes: %llu; pages raw global memory stores wrote: %llu)", (unsigned long long)g_gw_late, (unsigned long long)g_gw_over, (unsigned long long)g_gml_pages);
@@ -3732,6 +3989,8 @@ void vka_tex_prepare(VkCommandBuffer cb) {
             }
             free(w->data);
         }
+        #undef GW_TAKES_MEM
+        #undef GW_TAKES_UNINIT
         #undef GW_TAKES
         g_ngw = k;
     }
