@@ -10,7 +10,7 @@ Version 1.5.1 (`v1703936`), SDK 19.3.11, Firaxis's engine with Coherent Gameface
 |---|---|
 | `sys_resource 0x200000` | the NPDM declares 2 MB of system resource, enabling the SDK's virtual address memory |
 | `app_pool 0x140000000` | A/B for the 1.5.1 menu crash: the Switch-sized `0xCD500000` made the game request a 3.01 GB heap, whose Firaxis global allocator region was `0x7f000000` (2 GiB − 16 MiB); a larger pool may give it a full 2 GiB for the 1.1875 GiB buffer the menu asks for. Revert if the crash stays |
-| `mem_reserve 0x300000000`, `mem_alias 0x218000000`, `mem_stack 0x10000000` | 3.125 GB heap region, 256 MB stacks, 8.375 GB alias region; the Mac automatically uses a 64 GB alias region with the same heap/stack partition |
+| `mem_reserve 0x380000000`, `mem_alias 0x218000000`, `mem_stack 0x10000000` | 14 GB guest address space: 5.125 GB heap region (the A/B's 4.805 GB `SetHeapSize` request needs it), 256 MB stacks, 8.375 GB alias region; the Mac automatically uses a 64 GB alias region with the same heap/stack partition |
 | `depth_mode zero` | the game calls `nvnDeviceSetDepthMode` with near = 0 |
 
 No game-specific code patches, host branches or new profile switches. The existing SDK matcher reduces the address-region node area; the existing general odd-stack-frame rule handles this build's four hand-written SVC blocks.
