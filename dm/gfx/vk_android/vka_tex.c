@@ -61,7 +61,7 @@ static fmt_ent fmt_ent_of(int f) {
     case 0x2E: case 0x76: return C(R32G32B32A32_SFLOAT); case 0x2F: case 0x77: case 0x67: return U(R32G32B32A32_UINT); case 0x30: case 0x78: case 0x68: return S(R32G32B32A32_SINT);
     case 0x31: return (fmt_ent){VK_FORMAT_S8_UINT, 4, 0};
     case 0x32: return (fmt_ent){VK_FORMAT_D16_UNORM, 3, 0};
-    case 0x33: return (fmt_ent){VK_FORMAT_X8_D24_UNORM_PACK32, 3, 0};
+    case 0x33: return (fmt_ent){VK_FORMAT_D24_UNORM_S8_UINT, 5, 0};   // Maxwell/NVN backs DEPTH24 with D24S8 storage and allows stencil ops on it
     case 0x34: return (fmt_ent){VK_FORMAT_D32_SFLOAT, 3, 0};
     case 0x35: return (fmt_ent){VK_FORMAT_D24_UNORM_S8_UINT, 5, 0};
     case 0x36: return (fmt_ent){VK_FORMAT_D32_SFLOAT_S8_UINT, 5, 0};
@@ -126,7 +126,6 @@ int vka_fmt_of(int nf, vka_fmt *o) {
 static int fmt_of_slow(int nf, vka_fmt *o) {
     fmt_ent e = fmt_ent_of(nf); int bw, bh, bpb = nvn_fmt_bpb(nf, &bw, &bh);
     if (e.vk == VK_FORMAT_D24_UNORM_S8_UINT && !(feats(e.vk) & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) e.vk = VK_FORMAT_D32_SFLOAT_S8_UINT;
-    if (e.vk == VK_FORMAT_X8_D24_UNORM_PACK32 && !(feats(e.vk) & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) e.vk = VK_FORMAT_D32_SFLOAT;
     if (e.vk == VK_FORMAT_UNDEFINED || !bpb || !(feats(e.vk) & (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))) {
         static uint64_t logged[4]; unsigned b = (unsigned)nf & 255;
         if (!(__atomic_fetch_or(&logged[b >> 6], 1ull << (b & 63), __ATOMIC_RELAXED) >> (b & 63) & 1)) VRED("NVN format %#x has no Vulkan format on this device (VkFormat %d)", nf, e.vk);

@@ -1263,7 +1263,7 @@ static int t2t_depth_draw(vka_img *s, vka_img *d, VkImageSubresourceLayers ss, V
     vka_barrier(g_cb);
     for (uint32_t i = 0; i < ds.layerCount; i++) {
         VkImageView sv = vka_view(s, s->f.view ? s->f.view : s->f.vk, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT, ss.mipLevel, 1, ss.baseArrayLayer + i, 1, NULL);
-        VkImageView dv = vka_view(d, d->f.vk, VK_IMAGE_VIEW_TYPE_2D, d->aspect, ds.mipLevel, 1, ds.baseArrayLayer + i, 1, NULL);
+        VkImageView dv = vka_view(d, d->f.vk, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT, ds.mipLevel, 1, ds.baseArrayLayer + i, 1, NULL);
         if (!sv || !dv) return 0;
         VkRenderingAttachmentInfo a = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = dv, .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
         VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = dr, .layerCount = 1, .pDepthAttachment = &a};
@@ -1307,7 +1307,9 @@ static void copy_t2t(const p_copy_t2t *c) {
         vk.vkCmdCopyImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
     } else {   // a scaled, mirrored or format-changing copy: a blit (filtered with LINEAR_FILTER), or a draw into a depth format that is no blit destination (vka_t2tpath.h)
         VkFormatProperties dp; vk.vkGetPhysicalDeviceFormatProperties(V.pd, d->f.vk, &dp);
-        int path = t2t_path(0, s->f.kind, d->f.kind, s->f.bw > 1 || d->f.bw > 1, s->samples > 1 || d->samples > 1, (dp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0);
+        int sk = c->src->d.format == NVN_FORMAT_DEPTH24 && c->dst->d.format != NVN_FORMAT_DEPTH24_STENCIL8 ? 3 : s->f.kind;
+        int dk = c->dst->d.format == NVN_FORMAT_DEPTH24 && c->src->d.format != NVN_FORMAT_DEPTH24_STENCIL8 ? 3 : d->f.kind;
+        int path = t2t_path(0, sk, dk, s->f.bw > 1 || d->f.bw > 1, s->samples > 1 || d->samples > 1, (dp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0);
         if (path == T2T_NONE) {
             VRED_ONCE("texture copy %#x → %#x needs a draw (integer, compressed, multisampled, stencil, or into a format that is no blit destination, VkFormat %d)", c->src->d.format, c->dst->d.format, d->f.vk); return; }
         int x0 = c->sr.xoffset, x1 = x0 + c->sr.width, y0 = c->sr.yoffset, y1 = y0 + c->sr.height, t;
