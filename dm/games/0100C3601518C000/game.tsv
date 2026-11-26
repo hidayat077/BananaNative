@@ -29,7 +29,7 @@ zip_store	.bs:.cache:.civ7save:.dat:.nro:.otf:.png:.ttf:.webm:.metallib
 # 3.125 GB heap region for the measured 3.01 GB request, 256 MB stacks and 8.375 GB alias region.
 # V8 retains an 8 GB reservation to obtain a 4 GB-aligned pointer-compression cage.
 # The Mac's automatic 64 GB alias region ran this same heap/stack partition. This 12 GB layout does not fit iOS.
-mem_reserve	0x380000000
+mem_reserve	0x300000000
 mem_alias	0x218000000
 mem_stack	0x10000000
 app_pool	0x140000000
@@ -37,8 +37,7 @@ app_pool	0x140000000
 sys_resource	0x200000
 # A/B 2026-11-26: the main menu crashed on an unchecked null after the Firaxis allocator refused a 1.1875 GiB
 # request (its global region is 0x7f000000 = 2 GiB - 16 MiB). Try a larger application pool so the game's heap
-# partition can give that allocator a full 2 GiB; the reserve rises with it because SetHeapSize asks for
-# 0x133800000 and the 12 GB reserve capped the heap region at 0xc8000000 (README.md). Revert if the crash stays.
+# partition can give that allocator a full 2 GiB; revert if the crash stays (README.md).
 
 # ---- Shader split ----
 shader_groups	/Base/=base /DLC/=dlc /.nrr/=nrr /nro/=nro
