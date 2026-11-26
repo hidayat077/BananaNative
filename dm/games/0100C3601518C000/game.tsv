@@ -32,12 +32,9 @@ zip_store	.bs:.cache:.civ7save:.dat:.nro:.otf:.png:.ttf:.webm:.metallib
 mem_reserve	0x300000000
 mem_alias	0x218000000
 mem_stack	0x10000000
-app_pool	0x140000000
+app_pool	0xCD500000
 # the NPDM declares 2 MB of system resource
 sys_resource	0x200000
-# A/B 2026-11-26: the main menu crashed on an unchecked null after the Firaxis allocator refused a 1.1875 GiB
-# request (its global region is 0x7f000000 = 2 GiB - 16 MiB). Try a larger application pool so the game's heap
-# partition can give that allocator a full 2 GiB; revert if the crash stays (README.md).
 
 # ---- Shader split ----
 shader_groups	/Base/=base /DLC/=dlc /.nrr/=nrr /nro/=nro
