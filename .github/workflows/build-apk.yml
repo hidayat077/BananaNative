@@ -102,16 +102,13 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VER_ARG="-PnxVersion=${GITHUB_REF_NAME#v}"
           fi
-          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} $VER_ARG --build-cache apk
-          # Android 12/12L: minSdk 31; UpdateCheck on those phones takes only the asset marked -android12.
           ./gradlew -PnxGames=$nxGames -PnxMinSdk=31 -PnxVersionCode=${{ github.run_number }} $VER_ARG --build-cache apk
+          mv out/polar-android-android12.apk out/polar-android.apk
           ccache -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: polar-android
-          path: |
-            android/app/out/polar-android.apk
-            android/app/out/polar-android-android12.apk
+          path: android/app/out/polar-android.apk
       - name: Publish Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -133,9 +130,9 @@ jobs:
           - LEGO Star Wars: The Skywalker Saga (`010042D00D900000`) — bring-up: no Android run yet
           - No Man's Sky (`0100853015E86000`)
 
-          Android 13+: `polar-android.apk`. Android 12/12L (experimental): `polar-android-android12.apk`.
+          Android 12+: `polar-android.apk`.
           EOF
-          gh release create "$GITHUB_REF_NAME" android/app/out/polar-android.apk android/app/out/polar-android-android12.apk \
+          gh release create "$GITHUB_REF_NAME" android/app/out/polar-android.apk \
             --title "Polar $GITHUB_REF_NAME" \
             --notes-file /tmp/release-notes.md
 
