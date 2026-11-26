@@ -1,0 +1,4 @@
+# Sid Meier's Civilization VII (0100C3601518C000): Mac gameplay tested, no Android run yet.
+# The profile's 12 GB address-space layout (V8 pointer-compression cage + 3.01 GB heap, README.md "Memory") is above
+# the iOS budget; Android bring-up is open. The launcher warns on every phone until a run confirms it.
+status	bring-up

@@ -48,9 +48,14 @@ The supplied folder has 42 licence-only DLC packages; the game displayed owned c
 - [Stack frames of an odd size](../../../docs/reference/rewriter.md#stack-frames-of-an-odd-size-sub-sp-sp-imm): existing general rule, no new cut in this port.
 - [A written secondary blend source](../../../docs/reference/rendering.md#a-written-secondary-blend-source-nvn-dual-source-blending): two measured shaders (`064c4ce6df409438`, `f2755f3bfebde977`), originally in `dual_want.tsv`, now handled by `main0_u` in `<key>_bx`.
 
+## Android
+
+The profile is in `android/app/gradle.properties`' `nxGames` and in the APK build workflows, with `status bring-up` in [`readiness.tsv`](readiness.tsv): the launcher warns on every phone. This packages the game but is **not** a claim that it boots on Android — there has been no phone run. The Mac's 12 GB address-space layout (V8 cage plus the 3.01 GB heap) may be the same obstacle on Android as on iOS; that is the first thing a bring-up run must check. The supplied `.nup` is base v0, while the profile registers v1638400 (1.5.0.1), so a base run needs a profile derived from v0 and its own shader split.
+
 ## Open
 
 - iOS support: the V8 cage and main heap exceed the address-space budget described above; no working IPA claimed.
+- Android bring-up: the game is packaged in the APK but has no phone run; check the address-space request and whether the V8 cage succeeds before calling it playable.
 - The run logs a failed initial upload of a multisample Depth24 texture (`format 0x33`, target 5). Both GPU and CPU deswizzle reject multisample geometry; the Metal substitute also requires depth conversion. The observed map renders, but the upload's relevance and later shadow/rendering coverage remain unverified; no blanket skip was added.
 - Quick Save was written and appeared in Load Game with the correct turn and civilization. A reload was started, but its return to the map was not verified before the ten-minute gameplay-testing budget ended.
 - Later turns, age transitions, multiplayer, long-session memory stability, and full movie coverage have not been tested.
