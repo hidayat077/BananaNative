@@ -114,28 +114,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat <<'EOF' | sed 's/^          //' > /tmp/release-notes.md
-          Currently supported games:
-          - The Legend of Zelda: Tears of the Kingdom (`0100F2C0115B6000`)
-          - The Legend of Zelda: Breath of the Wild (`01007EF00011E000`)
-          - Pokémon Legends: Z-A (`0100F43008C44000`)
-          - FINAL FANTASY RESONANCE (`0100606026F12000`)
-          - South Park: The Fractured but Whole (`01008F2005154000`)
-          - Hogwarts Legacy (`0100F7E00C70E000`)
-          - DRAGON BALL: Sparking! ZERO (`010035F022078000`)
-          - Luigi's Mansion 3 (`0100DCA0064A6000`)
-          - Pokémon Scarlet (`0100A3D008C5C000`)
-          - What Remains of Edith Finch (`010038900DFE0000`)
-          - Sid Meier's Civilization VII (`0100C3601518C000`)
-          - LEGO Star Wars: The Skywalker Saga (`010042D00D900000`)
-          - No Man's Sky (`0100853015E86000`)
-          - Super Mario Odyssey (`0100000000010000`)
-
-          Android 12+: `polar-android.apk`.
-          EOF
           gh release create "$GITHUB_REF_NAME" android/app/out/polar-android.apk \
             --title "Polar $GITHUB_REF_NAME" \
-            --notes-file /tmp/release-notes.md
+            --generate-notes
 
 # The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
 # generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \
