@@ -47,6 +47,7 @@ The supplied folder has 42 licence-only DLC packages; the game displayed owned c
 - [Mac prewarm pipelines reused after a packed shader library changes](https://github.com/seedds/nxnative/blob/main/docs/reference/shaders.md#mac-prewarm-pipelines-reused-after-a-packed-shader-library-changes): stamp lookup now follows the packed library.
 - [Stack frames of an odd size](../../../docs/reference/rewriter.md#stack-frames-of-an-odd-size-sub-sp-sp-imm): existing general rule, no new cut in this port.
 - [A written secondary blend source](../../../docs/reference/rendering.md#a-written-secondary-blend-source-nvn-dual-source-blending): two measured shaders (`064c4ce6df409438`, `f2755f3bfebde977`), originally in `dual_want.tsv`, now handled by `main0_u` in `<key>_bx`.
+- **1.5.1 main-menu crash (workaround, open):** on Turnip the 1.5.1 build boots and reaches the frame loop but crashes at the menu after 20–70 s. Live probes (2026-11-26) showed `CRASH sig=11 addr=0 pc=main+0x33ba08`: the game allocates a temp buffer of `count × 0x98` for a sort, gets NULL from its Firaxis allocator, and writes to it unchecked (see [game-patches.md](../../../docs/agents/game-patches.md) for the build-keyed cut). The request grows with play time (measured 0x4c000000 and 0x98000000 bytes), so the count of records being sorted is what needs explaining; the allocator's global region is `0x7f000000` and was not exhausted, RAM was ~744 MiB resident with ~1.9 GB available, and raising `app_pool` to 5 GiB with a matching `mem_reserve` changed nothing. The cut skips the sort when its buffer is NULL, leaving the original container; it is a workaround, not a fix of the game's growth.
 
 ## Android
 
@@ -57,7 +58,7 @@ The supplied `.nup` is 1.5.1 (`v1703936`), whose module build IDs differ from th
 ## Open
 
 - iOS support: the V8 cage and main heap exceed the address-space budget described above; no working IPA claimed.
-- Android bring-up: the game is packaged in the APK but has no phone run; check the address-space request and whether the V8 cage succeeds before calling it playable.
+- Android bring-up: 1.5.1 boots on Turnip and reaches the frame loop; the menu crash above is the open blocker. The build-keyed cut is a workaround, so the growing sort and its out-of-memory request still need a root-cause fix or a playable test that shows the cut is harmless.
 - The 1.5.1 shader tables come from the split alone: no Mac run has compiled them or checked them against the runtime, and the 1.5.0.1 selected-set and prewarm seeds were dropped. A first phone run (or Mac bring-up) should confirm Prepare finds all 440 shaders and that no program is missing from the map.
 - The run logs a failed initial upload of a multisample Depth24 texture (`format 0x33`, target 5). Both GPU and CPU deswizzle reject multisample geometry; the Metal substitute also requires depth conversion. The observed map renders, but the upload's relevance and later shadow/rendering coverage remain unverified; no blanket skip was added.
 - Quick Save was written and appeared in Load Game with the correct turn and civilization. A reload was started, but its return to the map was not verified before the ten-minute gameplay-testing budget ended.

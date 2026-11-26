@@ -149,6 +149,7 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Pokémon Shield](#pokémon-shield) | 4 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [Pokémon Shining Pearl](#pokémon-shining-pearl) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [Pokémon Sword](#pokémon-sword) | 0 | 0 | 0 | 0 | 1 | `build` → `game` |
+| [Sid Meier's Civilization VII](#sid-meiers-civilization-vii) | 1 | 0 | 0 | 0 | 0 | `game` |
 | [South Park: The Stick of Truth](#south-park-the-stick-of-truth) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Super Mario 3D All-Stars: Super Mario Sunshine](#super-mario-3d-all-stars-super-mario-sunshine) | 2 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Super Mario Bros. Wonder - Nintendo Switch 2 Edition](#super-mario-bros-wonder---nintendo-switch-2-edition) | 1 | 0 | 0 | 0 | 0 | `build` → `host` |
@@ -705,6 +706,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **1.3.2 `main`** `a3b75bcd…`
   - host [hle_fpslock.c:91](../../dm/host/hle_fpslock.c#L91): engine frame limit set to fps_target: Game Freak frame time of interval 2
+
+### Sid Meier's Civilization VII
+
+[Sid Meier's Civilization VII](../../dm/games/0100C3601518C000/README.md), `0100C3601518C000`, [patches.py](../../dm/games/0100C3601518C000/patches.py).
+
+- **`game`**, runtime, at goal, checked: the original bytes were read from the registered build's main; the replacement cbz was disassembled to main+0x33bb3c, just after the container update, so a null buffer skips both the copy and the free of the old container. Not yet checked on a phone run. Open: this is a workaround; why the container grows to millions of 0x98-byte records at the menu, and why the game asks for a buffer no allocator can satisfy, is still unknown: menu sort with an unsatisfiable temp-buffer allocation on Civilization VII 1.5.1. The oversized request and the unchecked null write are in the game's own main of this build; no Horizon or NVN semantics the host could implement are on this path. The cut changes the game's behaviour on purpose: it leaves the sort un-applied instead of crashing. The underlying growth of the sorted container is not fixed
+
+- **1.5.1 `main`** `e656e23d…` ([patches.py:13](../../dm/games/0100C3601518C000/patches.py#L13))
+  - cut `+0x33b9f8`: menu sort: cbz x27 to main+0x33bb3c when the temp buffer is null; keep the original container
 
 ### South Park: The Stick of Truth
 
