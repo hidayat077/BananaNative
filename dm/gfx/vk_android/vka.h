@@ -591,6 +591,7 @@ int vka_mdi_gpu(int indexed, uint32_t n, uint32_t stride);   // 1 = an indirect-
 int vka_mdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o);   // an indirect mesh draw's {x, y, z} arguments: its record's {count, 1, 1} copy (vka_exec.c)
 int vka_rp_depth(uint32_t *w, uint32_t *h);   // the open pass has a depth / stencil attachment (*w, *h: its render area)
 int vka_rp_color_count(void);                // number of colour attachments in the open pass (0 if none open)
+int vka_pass_throttle_skip(uint64_t serial); // DM_VK_PASS_THROTTLE=<hex>:<N>: 1 = skip draw/clear for this target this frame
 void vka_rp_zstats(char *b, size_t n);   // DM_VK_PARTLOG: the depth state of the part's draws into depth targets, then reset (vka_draw.c)
 void vka_rp_note_ts(void);                 // a timestamp recorded (inside the open pass or not: counted when one is open)
 int vka_rp_game_barrier(uint32_t bits);                // a game barrier (OP_BARRIER): 1 = taken inside the open pass (DM_VK_BAR_KEEP), 0 = the caller ends the pass and records a full barrier

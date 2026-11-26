@@ -1037,6 +1037,7 @@ static void clear_color(const p_clear_color *c) {
     if (!S.has_rt || c->index < 0 || c->index >= S.rt.n || c->index >= 8 || !S.rt.color[c->index]) { VRED_ONCE("color clear of target %d, which is not bound", c->index); return; }
     if (!c->mask) return;
     const tex_t *t = S.rt.color[c->index]; const view_t *v = &S.rt.cview[c->index]; int hv = S.rt.has_cview[c->index];
+    if (c->index == 0 && vka_pass_throttle_skip(t->serial)) return;
     vka_img *im = vka_tex_get(t, g_cb); vka_fmt f;
     if (!im || !vka_fmt_of(hv && v->set_format ? v->format : t->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("color clear of a depth texture (format %#x)", t->d.format); return; }
@@ -1111,6 +1112,7 @@ static void stencil_masked(vka_img *im, uint32_t lv, uint32_t l0, uint32_t nl, V
 static void clear_ds(const p_clear_ds *c) {
     vka_rp_prep_clear(&S.rt, S.has_rt);
     if (S.rc_skip || !S.has_rt || !S.rt.depth) return;
+    if (S.rt.n > 0 && S.rt.color[0] && vka_pass_throttle_skip(S.rt.color[0]->serial)) return;
     vka_img *im = vka_tex_get(S.rt.depth, g_cb);
     if (!im || im->f.kind < 3) return;
     vka_tex_own(im, g_cb);
@@ -1133,6 +1135,7 @@ static void clear_ds(const p_clear_ds *c) {
 }
 static void clear_tex(const p_clear_tex *c) {
     if (S.rc_skip || !c->tex) return;
+    if (vka_pass_throttle_skip(c->tex->serial)) return;
     vka_img *im = vka_tex_get(c->tex, g_cb); vka_fmt f;
     if (!im || !vka_fmt_of(c->has_view && c->view.set_format ? c->view.format : c->tex->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("ClearTexture of a depth / stencil texture (format %#x)", c->tex->d.format); return; }

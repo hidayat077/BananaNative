@@ -640,6 +640,7 @@ DM_VK_PACE_PROF	developer	Diagnostics			text			both
 DM_VK_PARTLOG	developer	Diagnostics			text			both							
 DM_VK_PASS_CLEARS	developer	Graphics			text			both							
 DM_VK_PASS_KEEP	developer	Graphics			text			both							
+DM_VK_PASS_THROTTLE	developer	Diagnostics			text			both							
 DM_VK_PCACHE	developer	Diagnostics			text			both							
 DM_VK_PCACHE_KEEP	developer	Memory			text			both							
 DM_VK_PCACHE_SAVE_S	developer	Memory			text			both							

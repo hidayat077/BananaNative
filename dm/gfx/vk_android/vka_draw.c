@@ -880,6 +880,43 @@ int vka_rp_open_for(const p_set_rt *rt, int has_rt) { return R.on && rt_same(rt,
 // The open pass has a depth or stencil attachment; *w, *h: its render area (vka_exec.c chunk_check: a pass ended to split a submission is begun again with LOAD)
 int vka_rp_depth(uint32_t *w, uint32_t *h) { if (w) *w = R.area.extent.width; if (h) *h = R.area.extent.height; return R.on && (R.df || R.sf); }
 int vka_rp_color_count(void) { return R.on ? R.nci : 0; }
+// Target-pass throttling (DM_VK_PASS_THROTTLE=<hex_pixel_key>:<N>): learns colour[0] target serials drawn by pixel key and updates each target 1 in N frames
+typedef struct { uint64_t serial, last_frame; } pth_ent;
+static pth_ent g_pth[8]; static int g_pth_cnt;
+static uint64_t g_pth_key; static uint32_t g_pth_every; static int g_pth_init;
+static void pth_init(void) {
+    g_pth_init = 1;
+    const char *e = getenv("DM_VK_PASS_THROTTLE");
+    unsigned long long k = 0; unsigned n = 0;
+    if (e && sscanf(e, "%llx:%u", &k, &n) == 2 && k && n > 1) {
+        g_pth_key = (uint64_t)k; g_pth_every = n;
+        VLOG("pass throttle: pixel shader %016llx targets updated 1 in %u frames (DM_VK_PASS_THROTTLE)", k, n);
+    }
+}
+static pth_ent *pth_find(uint64_t serial) {
+    for (int i = 0; i < g_pth_cnt; i++) if (g_pth[i].serial == serial) return &g_pth[i];
+    return NULL;
+}
+static void pth_learn(uint64_t pkey, uint64_t serial) {
+    if (!g_pth_init) pth_init();
+    if (!g_pth_every || !serial || pkey != g_pth_key || pth_find(serial)) return;
+    if (g_pth_cnt < 8) {
+        uint64_t vka_frame(void);
+        g_pth[g_pth_cnt++] = (pth_ent){serial, vka_frame()};
+        VLOG("pass throttle: target serial %llu registered for pixel shader %016llx (every %u frames)", (unsigned long long)serial, (unsigned long long)pkey, g_pth_every);
+    }
+}
+int vka_pass_throttle_skip(uint64_t serial) {
+    if (!g_pth_init) pth_init();
+    if (!g_pth_every || !serial) return 0;
+    pth_ent *e = pth_find(serial);
+    if (!e) return 0;
+    uint64_t vka_frame(void);
+    uint64_t f = vka_frame();
+    if (f == e->last_frame) return 0;
+    if (f < e->last_frame || f - e->last_frame >= g_pth_every) { e->last_frame = f; return 0; }
+    return 1;
+}
 // The draw about to come may start a new part of the submission: no pass is open over its targets and no clear waits for them (an open pass over other targets ends at it anyway)
 int vka_rp_split_ok(const p_set_rt *rt, int has_rt) { return R.on ? !rt_same(rt, has_rt, &R.rt, R.has_rt) : PC.n ? has_rt && !rt_same(rt, has_rt, &PC.rt, 1) : 1; }
 void vka_draw_cb_switch(VkCommandBuffer cb) { g_cb = cb; vka_dyn_invalidate(); }   // the submission goes on in another command buffer (vka_exec.c chunk): its bound state is gone
@@ -2756,6 +2793,11 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     // DM_VK_DRAW_SKIP_KEY=<pixel shader key>,... (diagnostic): the draws of those pixel shaders are not drawn (their pass still opens and clears), to see a pass's share of the picture
     { static char sk[1024]; static int got; if (!got) { const char *e = getenv("DM_VK_DRAW_SKIP_KEY"); snprintf(sk, sizeof sk, "%s", e ? e : ""); got = 1; }
       if (sk[0] && sh[1]) { char hex[17]; snprintf(hex, sizeof hex, "%016llx", (unsigned long long)sh[1]->key); if (strstr(sk, hex)) { g_skipped++; return; } } }
+    if (has_rt && rt->n > 0 && rt->color[0]) {
+        uint64_t c0s = rt->color[0]->serial;
+        if (sh[1]) pth_learn(sh[1]->key, c0s);
+        if (vka_pass_throttle_skip(c0s)) return;
+    }
     if (d->poly.cull == NVN_FACE_FRONT_AND_BACK && !d->rast_discard) { vka_rtlog_skip(rt, has_rt, d, "not drawn: both faces culled"); return; }
     if (!g_pp_side) rd_run(d);   // rasterizer-discard runs (above draw_body)
     int prim = dw ? dw->prim : di->prim, expand = 0;
