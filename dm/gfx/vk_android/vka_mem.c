@@ -1005,14 +1005,20 @@ static void parts_mark(pool_ent *p, uintptr_t lo, uintptr_t hi) {   // caller ho
 // joined bytes twice (the new allocation before the old ones are freed): at most DM_VK_PLACE_JOIN_MB (256) a join; a larger run stays in parts ([RED], as before;
 // 0 = no joins). Only segments the pool alone holds are joined (a segment shared with another pool keeps its own memory). Pools placed whole after parts are not
 // joined either (a whole-pool ask: every range across the parts' ends; their bytes would be the whole pool twice)
-enum { NJOIN = 32 };
-static struct { uint64_t id; uintptr_t a, e; const char *why; } g_join[NJOIN];   // the asks across parts, by pool (under g_pmu)
-static int g_njoin; static _Atomic int g_join_n;   // (g_join_n: the count, read without the lock by vka_mem_join_due)
+typedef struct { uint64_t id; uintptr_t a, e; const char *why; } join_req;
+static join_req *g_join;   // the asks across parts, by pool (under g_pmu)
+static int g_njoin, g_joincap; static _Atomic int g_join_n;   // (g_join_n: the count, read without the lock by vka_mem_join_due)
 static uint64_t join_cap(void) { static int64_t v = -1; if (v < 0) { v = (int64_t)VKA_ENV("DM_VK_PLACE_JOIN_MB", 256) << 20; if (v < 0) v = 0; if (!v) VLOG("DM_VK_PLACE_JOIN_MB=0: parts of a pool that a range given to the GPU lies across are not joined"); } return (uint64_t)v; }
 static int join_queue(uint64_t id, uintptr_t a, uintptr_t e, const char *why) {   // caller holds g_pmu; 0 = not queued
-    for (int j = 0; j < g_njoin; j++) if (g_join[j].id == id && g_join[j].a == a && g_join[j].e == e) return 1;   // (queued already)
-    if (!join_cap() || g_njoin == NJOIN) return 0;
-    g_join[g_njoin++] = (typeof(g_join[0])){id, a, e, why}; atomic_store(&g_join_n, g_njoin);
+    if (!join_cap()) return 0;
+    for (int j = 0; j < g_njoin; j++) if (g_join[j].id == id && g_join[j].a <= a && g_join[j].e >= e) return 1;   // (covered by a queued join)
+    if (g_njoin == g_joincap) {
+        int ncap = g_joincap ? g_joincap * 2 : 32;
+        join_req *nj = realloc(g_join, (size_t)ncap * sizeof *nj);
+        if (!nj) return 0;
+        g_join = nj; g_joincap = ncap;
+    }
+    g_join[g_njoin++] = (join_req){id, a, e, why}; atomic_store(&g_join_n, g_njoin);
     return 1;
 }
 typedef struct { uint64_t gen; uintptr_t a, e; } negent;
@@ -1027,7 +1033,7 @@ static void join_placed(const pool_ent *p, uintptr_t a, uintptr_t e, const char 
     if (q && (k < 4 || !(k & 63))) VLOG("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across parts placed earlier: they are joined into one at the replay's next submission",
                                         (unsigned long)p->mem, (unsigned long long)p->size, (unsigned long)a, (unsigned long)(e - a), why);
     else if (!q && k < 8) VRED("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across parts placed earlier, which are not joined (%s): lookups over the whole range fail (draws that need it in one piece are skipped)",
-                               (unsigned long)p->mem, (unsigned long long)p->size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "more than 32 joins waiting" : "DM_VK_PLACE_JOIN_MB=0");
+                               (unsigned long)p->mem, (unsigned long long)p->size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "out of memory for the join queue" : "DM_VK_PLACE_JOIN_MB=0");
 }
 void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
     if (!atomic_load_explicit(&g_nlazy, memory_order_relaxed)) return;
@@ -1090,7 +1096,7 @@ void mtl_pool_need(const void *addr, uint64_t len, const char *why) {
         if (span && joinq && (nspan <= 4 || !(nspan & 63))) VLOG("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across two of its parts: they are joined into one at the replay's next submission (%u so far)",
                                                                (unsigned long)pe.mem, (unsigned long long)pe.size, (unsigned long)a, (unsigned long)(e - a), why, nspan);
         else if (span && !joinq) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across two of its parts, which are not joined (%s): lookups over the whole range fail (draws that need it in one piece are skipped)",
-                                     (unsigned long)pe.mem, (unsigned long long)pe.size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "more than 32 joins waiting" : "DM_VK_PLACE_JOIN_MB=0"); }
+                                     (unsigned long)pe.mem, (unsigned long long)pe.size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "out of memory for the join queue" : "DM_VK_PLACE_JOIN_MB=0"); }
         if (lg) placed_line(tot);
     }
 }

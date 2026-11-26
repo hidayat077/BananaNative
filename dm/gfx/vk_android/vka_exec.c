@@ -1176,15 +1176,50 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
     int is3d = im->depth > 1 || c->tex->d.target == NVN_TEXTURE_TARGET_3D, nz = c->r.depth > 0 ? c->r.depth : 1;
     if (row % f->bpb) { VRED_ONCE("buffer copy row stride %zu is not a whole number of %u-byte blocks", row, f->bpb); return; }
     uint64_t span = img * (size_t)(nz - 1) + row * (rows - 1) + (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
-    VkBuffer b; VkDeviceSize o;
-    if (!vka_addr(c->src, span, &b, &o, NULL)) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
+    VkBuffer b = VK_NULL_HANDLE; VkDeviceSize o = 0;
+    int single = vka_addr(c->src, span, &b, &o, NULL);
+    if (!single) {
+        for (uint64_t done = 0; done < span;) {
+            VkBuffer sb; VkDeviceSize so;
+            uint64_t k = vka_addr_run(c->src + done, span - done, &sb, &so);
+            if (!k) {
+                static _Atomic int nr;
+                if (atomic_fetch_add(&nr, 1) < 8)
+                    VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span);
+                return;
+            }
+            done += k;
+        }
+    }
     vka_span s = {0}; VkDeviceSize al = asp == VK_IMAGE_ASPECT_COLOR_BIT ? (f->bpb % 4 == 0 ? f->bpb : f->bpb % 2 == 0 ? 2 * f->bpb : 4 * f->bpb) : 4;   // a whole block and a multiple of 4
-    int bounce = o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets and layers a whole number of rows apart
+    size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
+    int bounce = !single || o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets, layers a whole number of rows apart, and a single buffer
     if (bounce) {
-        size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
-        if (!vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
-        if (to_tex) for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {o + z * img + y * row, s.off + (z * rows + y) * wb, wb}; vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &bc); }
-        if (to_tex) vka_barrier(g_cb);
+        if (!wb || !rows || (size_t)nz > SIZE_MAX / wb / rows || !vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
+        if (to_tex) {
+            if (single) {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {o + z * img + y * row, s.off + (z * rows + y) * wb, wb}; vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &bc); }
+            } else if (row == wb && img == wb * rows) {
+                uint64_t total = (uint64_t)wb * rows * (size_t)nz;
+                for (uint64_t done = 0; done < total;) {
+                    VkBuffer sb; VkDeviceSize so; uint64_t k = vka_addr_run(c->src + done, total - done, &sb, &so);
+                    if (!k) return;
+                    VkBufferCopy bc = {so, s.off + done, k}; vk.vkCmdCopyBuffer(g_cb, sb, s.buf, 1, &bc);
+                    done += k;
+                }
+            } else {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) {
+                    uint64_t sa = c->src + (uint64_t)z * img + (uint64_t)y * row, dst_off = s.off + ((size_t)z * rows + y) * wb;
+                    for (uint64_t done = 0; done < wb;) {
+                        VkBuffer sb; VkDeviceSize so; uint64_t k = vka_addr_run(sa + done, wb - done, &sb, &so);
+                        if (!k) return;
+                        VkBufferCopy bc = {so, dst_off + done, k}; vk.vkCmdCopyBuffer(g_cb, sb, s.buf, 1, &bc);
+                        done += k;
+                    }
+                }
+            }
+            vka_barrier(g_cb);
+        }
         row = wb; img = wb * rows;
     }
     VkBufferImageCopy rg[64]; int n = 0;
@@ -1197,8 +1232,28 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
         vk.vkCmdCopyImageToBuffer(g_cb, im->img, VK_IMAGE_LAYOUT_GENERAL, bounce ? s.buf : b, (uint32_t)n, rg);
         if (bounce) {
             vka_barrier(g_cb);
-            size_t wb = row, srow = S.copy_stride ? (size_t)S.copy_stride : wb, simg = S.copy_img_stride ? (size_t)S.copy_img_stride : srow * rows;
-            for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {s.off + (z * rows + y) * wb, o + z * simg + y * srow, wb}; vk.vkCmdCopyBuffer(g_cb, s.buf, b, 1, &bc); }
+            size_t srow = S.copy_stride ? (size_t)S.copy_stride : wb, simg = S.copy_img_stride ? (size_t)S.copy_img_stride : srow * rows;
+            if (single) {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {s.off + (z * rows + y) * wb, o + z * simg + y * srow, wb}; vk.vkCmdCopyBuffer(g_cb, s.buf, b, 1, &bc); }
+            } else if (srow == wb && simg == wb * rows) {
+                uint64_t total = (uint64_t)wb * rows * (size_t)nz;
+                for (uint64_t done = 0; done < total;) {
+                    VkBuffer db; VkDeviceSize dof; uint64_t k = vka_addr_run(c->src + done, total - done, &db, &dof);
+                    if (!k) break;
+                    VkBufferCopy bc = {s.off + done, dof, k}; vk.vkCmdCopyBuffer(g_cb, s.buf, db, 1, &bc);
+                    done += k;
+                }
+            } else {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) {
+                    uint64_t da = c->src + (uint64_t)z * simg + (uint64_t)y * srow, src_off = s.off + ((size_t)z * rows + y) * wb;
+                    for (uint64_t done = 0; done < wb;) {
+                        VkBuffer db; VkDeviceSize dof; uint64_t k = vka_addr_run(da + done, wb - done, &db, &dof);
+                        if (!k) break;
+                        VkBufferCopy bc = {src_off + done, dof, k}; vk.vkCmdCopyBuffer(g_cb, s.buf, db, 1, &bc);
+                        done += k;
+                    }
+                }
+            }
         }
     }
     g_stat_ops++;
