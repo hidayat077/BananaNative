@@ -1649,7 +1649,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
             break; }
         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {   // a buffer texture over guest memory (vka_tbuf.c)
             int storage = r[i].desc == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-            VkBufferView bv = (r[i].what == VKA_R_TBUF || r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid ? vka_tbuf_view(r[i].tid, storage) : VK_NULL_HANDLE;
+            VkBufferView bv = (r[i].what == VKA_R_TBUF || r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid ? vka_tbuf_view(r[i].tid, storage, r[i].dim) : VK_NULL_HANDLE;
             if (!bv && !V.null_desc) { VRED_ONCE("an unbound texel buffer and no null descriptors: the draw is skipped"); g_skip_dev[VKS_FEATURE]++; return 0; }
             g_w.bv[k] = bv; w->pTexelBufferView = &g_w.bv[k];
             break; }
@@ -2906,12 +2906,16 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
                                                                        out_cls == 0 ? "float" : out_cls == 1 ? "sint" : "uint", att_cls == 0 ? "float" : att_cls == 1 ? "sint" : "uint", i);
             written = 0;
         }
-        k.att[i].mask = written ? (uint8_t)(m & fs->fcomp[i]) : 0;   // outputs, and components of an output, the shader does not write leave the target as it was (Maxwell writes only the shader's outputs)
-        if (written && (d->color.blend_en >> i & 1) && att_cls == DMSH_VK_TYPE_FLOAT) {
+        uint8_t wmask = written ? (uint8_t)(m & fs->fcomp[i]) : 0;
+        k.att[i].mask = wmask;   // outputs, and components of an output, the shader does not write leave the target as it was (Maxwell writes only the shader's outputs)
+        if (wmask && (d->color.blend_en >> i & 1) && att_cls == DMSH_VK_TYPE_FLOAT) {
             blend_st b = adv_blend(d->blend[i]);
             if (variant != DMSH_VK_MOD_DUAL && (is_src1(b.src_rgb) || is_src1(b.dst_rgb) || is_src1(b.src_a) || is_src1(b.dst_a))) {   // no second source: it reads as zero
                 src1_used = 1; b.src_rgb = zero_src1(b.src_rgb); b.dst_rgb = zero_src1(b.dst_rgb); b.src_a = zero_src1(b.src_a); b.dst_a = zero_src1(b.dst_a); }
-            k.att[i] = (typeof(k.att[i])){1, (uint8_t)bfac(b.src_rgb), (uint8_t)bfac(b.dst_rgb), (uint8_t)bop(b.eq_rgb), (uint8_t)bfac(b.src_a), (uint8_t)bfac(b.dst_a), (uint8_t)bop(b.eq_a), (uint8_t)m};
+            int rgb_id = !(wmask & 7) || ((b.eq_rgb == NVN_BLEND_EQUATION_ADD || b.eq_rgb == NVN_BLEND_EQUATION_SUB) && b.src_rgb == NVN_BLEND_FUNC_ONE && b.dst_rgb == NVN_BLEND_FUNC_ZERO);
+            int a_id = !(wmask & 8) || ((b.eq_a == NVN_BLEND_EQUATION_ADD || b.eq_a == NVN_BLEND_EQUATION_SUB) && b.src_a == NVN_BLEND_FUNC_ONE && b.dst_a == NVN_BLEND_FUNC_ZERO);
+            if (!(rgb_id && a_id))
+                k.att[i] = (typeof(k.att[i])){1, (uint8_t)bfac(b.src_rgb), (uint8_t)bfac(b.dst_rgb), (uint8_t)bop(b.eq_rgb), (uint8_t)bfac(b.src_a), (uint8_t)bfac(b.dst_a), (uint8_t)bop(b.eq_a), wmask};
         }
     }
     if (src1_used) VRED_ONCE("a SRC1 blend factor with no dual-source module (MOD_DUAL; the profile's dual_want.tsv) or no dualSrcBlend (fs %016llx): the second source reads as zero",

@@ -1167,38 +1167,107 @@ static void copy_bt(const p_copy_b2t *c, int to_tex) {
     if (to_tex) vka_tex_own(im, g_cb);
     VkImageAspectFlags asp = copy_aspect(im, to_tex ? "buffer → texture copy" : "texture → buffer copy"); if (!asp) return;
     if (im->samples > 1) { VRED_ONCE("buffer copy of a multisampled texture"); return; }
-    const vka_fmt *f = &im->f;
+    vka_fmt vf;
+    const vka_fmt *f = (c->has_view && c->view.set_format && vka_fmt_of(c->view.format, &vf) && vf.bpb == im->f.bpb && vf.bw == im->f.bw && vf.bh == im->f.bh) ? &vf : &im->f;
     unsigned lv = c->has_view && c->view.set_levels ? c->view.base_level : 0, l0 = c->has_view && c->view.set_layers ? c->view.min_layer : 0;
+    unsigned lv_tex = lv;
     vka_tex_soft_copy(im, to_tex ? (int)lv : -1, g_cb);   // (a soft texture copied from, or into at level 0: made whole first)
     if (!vka_img_lv(im, &lv) || c->r.width <= 0 || c->r.height <= 0) return;
     size_t row = S.copy_stride ? (size_t)S.copy_stride : (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb, rows = (size_t)(c->r.height + f->bh - 1) / f->bh;
     size_t img = S.copy_img_stride ? (size_t)S.copy_img_stride : row * rows;
+    size_t orig_row = row, orig_img = img;
     int is3d = im->depth > 1 || c->tex->d.target == NVN_TEXTURE_TARGET_3D, nz = c->r.depth > 0 ? c->r.depth : 1;
     if (row % f->bpb) { VRED_ONCE("buffer copy row stride %zu is not a whole number of %u-byte blocks", row, f->bpb); return; }
     uint64_t span = img * (size_t)(nz - 1) + row * (rows - 1) + (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
-    VkBuffer b; VkDeviceSize o;
-    if (!vka_addr(c->src, span, &b, &o, NULL)) { static _Atomic int nr; if (atomic_fetch_add(&nr, 1) < 8) VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span); return; }
+    VkBuffer b = VK_NULL_HANDLE; VkDeviceSize o = 0;
+    int single = vka_addr(c->src, span, &b, &o, NULL);
+    if (!single) {
+        for (uint64_t done = 0; done < span;) {
+            VkBuffer sb; VkDeviceSize so;
+            uint64_t k = vka_addr_run(c->src + done, span - done, &sb, &so);
+            if (!k) {
+                static _Atomic int nr;
+                if (atomic_fetch_add(&nr, 1) < 8)
+                    VRED("%s at %#llx (%llu bytes) is not in placed guest RAM", to_tex ? "buffer → texture copy source" : "texture → buffer copy destination", (unsigned long long)c->src, (unsigned long long)span);
+                return;
+            }
+            done += k;
+        }
+    }
     vka_span s = {0}; VkDeviceSize al = asp == VK_IMAGE_ASPECT_COLOR_BIT ? (f->bpb % 4 == 0 ? f->bpb : f->bpb % 2 == 0 ? 2 * f->bpb : 4 * f->bpb) : 4;   // a whole block and a multiple of 4
-    int bounce = o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets and layers a whole number of rows apart
+    size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
+    int bounce = !single || o % al != 0 || (img % row) != 0;   // Vulkan wants block-aligned offsets, layers a whole number of rows apart, and a single buffer
     if (bounce) {
-        size_t wb = (size_t)((c->r.width + f->bw - 1) / f->bw) * f->bpb;
-        if (!vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
-        if (to_tex) for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {o + z * img + y * row, s.off + (z * rows + y) * wb, wb}; vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &bc); }
-        if (to_tex) vka_barrier(g_cb);
+        if (!wb || !rows || (size_t)nz > SIZE_MAX / wb / rows || !vka_scratch(wb * rows * (size_t)nz, al * 16, &s)) return;
+        if (to_tex) {
+            if (single) {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {o + z * img + y * row, s.off + (z * rows + y) * wb, wb}; vk.vkCmdCopyBuffer(g_cb, b, s.buf, 1, &bc); }
+            } else if (row == wb && img == wb * rows) {
+                uint64_t total = (uint64_t)wb * rows * (size_t)nz;
+                for (uint64_t done = 0; done < total;) {
+                    VkBuffer sb; VkDeviceSize so; uint64_t k = vka_addr_run(c->src + done, total - done, &sb, &so);
+                    if (!k) return;
+                    VkBufferCopy bc = {so, s.off + done, k}; vk.vkCmdCopyBuffer(g_cb, sb, s.buf, 1, &bc);
+                    done += k;
+                }
+            } else {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) {
+                    uint64_t sa = c->src + (uint64_t)z * img + (uint64_t)y * row, dst_off = s.off + ((size_t)z * rows + y) * wb;
+                    for (uint64_t done = 0; done < wb;) {
+                        VkBuffer sb; VkDeviceSize so; uint64_t k = vka_addr_run(sa + done, wb - done, &sb, &so);
+                        if (!k) return;
+                        VkBufferCopy bc = {so, dst_off + done, k}; vk.vkCmdCopyBuffer(g_cb, sb, s.buf, 1, &bc);
+                        done += k;
+                    }
+                }
+            }
+            vka_barrier(g_cb);
+        }
         row = wb; img = wb * rows;
     }
-    VkBufferImageCopy rg[64]; int n = 0;
-    for (int z = 0; z < (is3d ? 1 : nz) && n < 64; z++)
-        rg[n++] = (VkBufferImageCopy){(bounce ? s.off : o) + (is3d ? 0 : z * img), (uint32_t)(row / f->bpb * f->bw), (uint32_t)(img / row * f->bh),
-            {asp, lv, is3d ? 0 : l0 + (uint32_t)c->r.zoffset + (uint32_t)z, 1}, {c->r.xoffset, c->r.yoffset, is3d ? c->r.zoffset : 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, is3d ? (uint32_t)nz : 1}};
-    if (to_tex) { vk.vkCmdCopyBufferToImage(g_cb, bounce ? s.buf : b, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)n, rg); vka_img_written(im); }
+    int mr = to_tex ? vka_tex_copy_mirror_b2t(im, c->tex, lv_tex, l0, &c->r, c->src, span, orig_row, orig_img) : 0;
+    VkBufferImageCopy rg[64]; int n = 0, lim = is3d ? 1 : nz;
+    if (to_tex) {
+        for (int z = 0; z < lim; z++) {
+            rg[n++] = (VkBufferImageCopy){(bounce ? s.off : o) + (is3d ? 0 : z * img), (uint32_t)(row / f->bpb * f->bw), (uint32_t)(img / row * f->bh),
+                {asp, lv, is3d ? 0 : l0 + (uint32_t)c->r.zoffset + (uint32_t)z, 1}, {c->r.xoffset, c->r.yoffset, is3d ? c->r.zoffset : 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, is3d ? (uint32_t)nz : 1}};
+            if (n == 64 || z + 1 == lim) { vk.vkCmdCopyBufferToImage(g_cb, bounce ? s.buf : b, im->img, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)n, rg); n = 0; }
+        }
+        if (mr < 0) {
+            if (!vka_tex_copy_wb(im, c->tex, lv_tex, l0, &c->r, g_cb)) vka_img_written(im);
+        } else if (mr == 0) vka_img_written(im);
+    }
     else {
         vka_tex_gw_opaque(c->src, span);
-        vk.vkCmdCopyImageToBuffer(g_cb, im->img, VK_IMAGE_LAYOUT_GENERAL, bounce ? s.buf : b, (uint32_t)n, rg);
+        for (int z = 0; z < lim; z++) {
+            rg[n++] = (VkBufferImageCopy){(bounce ? s.off : o) + (is3d ? 0 : z * img), (uint32_t)(row / f->bpb * f->bw), (uint32_t)(img / row * f->bh),
+                {asp, lv, is3d ? 0 : l0 + (uint32_t)c->r.zoffset + (uint32_t)z, 1}, {c->r.xoffset, c->r.yoffset, is3d ? c->r.zoffset : 0}, {(uint32_t)c->r.width, (uint32_t)c->r.height, is3d ? (uint32_t)nz : 1}};
+            if (n == 64 || z + 1 == lim) { vk.vkCmdCopyImageToBuffer(g_cb, im->img, VK_IMAGE_LAYOUT_GENERAL, bounce ? s.buf : b, (uint32_t)n, rg); n = 0; }
+        }
         if (bounce) {
             vka_barrier(g_cb);
-            size_t wb = row, srow = S.copy_stride ? (size_t)S.copy_stride : wb, simg = S.copy_img_stride ? (size_t)S.copy_img_stride : srow * rows;
-            for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {s.off + (z * rows + y) * wb, o + z * simg + y * srow, wb}; vk.vkCmdCopyBuffer(g_cb, s.buf, b, 1, &bc); }
+            size_t srow = S.copy_stride ? (size_t)S.copy_stride : wb, simg = S.copy_img_stride ? (size_t)S.copy_img_stride : srow * rows;
+            if (single) {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) { VkBufferCopy bc = {s.off + (z * rows + y) * wb, o + z * simg + y * srow, wb}; vk.vkCmdCopyBuffer(g_cb, s.buf, b, 1, &bc); }
+            } else if (srow == wb && simg == wb * rows) {
+                uint64_t total = (uint64_t)wb * rows * (size_t)nz;
+                for (uint64_t done = 0; done < total;) {
+                    VkBuffer db; VkDeviceSize dof; uint64_t k = vka_addr_run(c->src + done, total - done, &db, &dof);
+                    if (!k) break;
+                    VkBufferCopy bc = {s.off + done, dof, k}; vk.vkCmdCopyBuffer(g_cb, s.buf, db, 1, &bc);
+                    done += k;
+                }
+            } else {
+                for (int z = 0; z < nz; z++) for (size_t y = 0; y < rows; y++) {
+                    uint64_t da = c->src + (uint64_t)z * simg + (uint64_t)y * srow, src_off = s.off + ((size_t)z * rows + y) * wb;
+                    for (uint64_t done = 0; done < wb;) {
+                        VkBuffer db; VkDeviceSize dof; uint64_t k = vka_addr_run(da + done, wb - done, &db, &dof);
+                        if (!k) break;
+                        VkBufferCopy bc = {src_off + done, dof, k}; vk.vkCmdCopyBuffer(g_cb, s.buf, db, 1, &bc);
+                        done += k;
+                    }
+                }
+            }
         }
     }
     g_stat_ops++;
@@ -1288,6 +1357,7 @@ static void copy_t2t(const p_copy_t2t *c) {
     if (!s || !d) return;
     vka_tex_own(d, g_cb);
     unsigned sl = c->has_sv && c->sv.set_levels ? c->sv.base_level : 0, dl = c->has_dv && c->dv.set_levels ? c->dv.base_level : 0;
+    unsigned sl_tex = sl, dl_tex = dl;
     unsigned sz0 = c->has_sv && c->sv.set_layers ? c->sv.min_layer : 0, dz0 = c->has_dv && c->dv.set_layers ? c->dv.min_layer : 0;
     vka_tex_soft_copy(s, -1, g_cb); vka_tex_soft_copy(d, (int)dl, g_cb);   // (a soft texture copied from, or into at level 0: made whole first)
     if (!vka_img_lv(s, &sl) || !vka_img_lv(d, &dl)) return;
@@ -1297,6 +1367,7 @@ static void copy_t2t(const p_copy_t2t *c) {
     int s3 = s->depth > 1, d3 = d->depth > 1, nz = c->sr.depth > 0 ? c->sr.depth : 1;
     VkImageSubresourceLayers ss = {sa, sl, s3 ? 0 : sz0 + (uint32_t)c->sr.zoffset, s3 ? 1 : (uint32_t)nz}, ds = {sa, dl, d3 ? 0 : dz0 + (uint32_t)c->dr.zoffset, d3 ? 1 : (uint32_t)nz};
     if (ss.baseArrayLayer + ss.layerCount > s->layers || ds.baseArrayLayer + ds.layerCount > d->layers) { VRED_ONCE("texture copy layers out of range"); return; }
+    int mr = vka_tex_copy_mirror_t2t(s, c->src, sl_tex, sz0, &c->sr, d, c->dst, dl_tex, dz0, &c->dr, c->flags);
     if (c->flags & DM_COPY_RESOLVE && s->samples > 1 && d->samples == 1) {
         VkImageResolve r = {ss, {c->sr.xoffset, c->sr.yoffset, 0}, ds, {c->dr.xoffset, c->dr.yoffset, 0}, {(uint32_t)c->sr.width, (uint32_t)c->sr.height, 1}};
         if (sa == VK_IMAGE_ASPECT_COLOR_BIT) vk.vkCmdResolveImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r);
@@ -1324,7 +1395,10 @@ static void copy_t2t(const p_copy_t2t *c) {
         VkFilter fl = (c->flags & NVN_COPY_FLAGS_LINEAR_FILTER_BIT) && sa == VK_IMAGE_ASPECT_COLOR_BIT && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
         vk.vkCmdBlitImage(g_cb, s->img, VK_IMAGE_LAYOUT_GENERAL, d->img, VK_IMAGE_LAYOUT_GENERAL, 1, &r, fl);
     }
-    vka_img_written(d); g_stat_ops++;
+    if (mr < 0) {
+        if (!vka_tex_copy_wb(d, c->dst, dl_tex, dz0, &c->dr, g_cb)) vka_img_written(d);
+    } else if (mr == 0) vka_img_written(d);
+    g_stat_ops++;
     vka_barrier(g_cb);
 }
 

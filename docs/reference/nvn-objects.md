@@ -564,6 +564,26 @@ Games read this count as a position in their own command memory and size their h
 - **Check:** `t_nvn` 6c3 checks region and whole-level copies between textures of different block heights (RGBA8, BC1) and from a strided buffer, byte for byte against a level round trip; `t_readback` copies a cleared render target into a packaged texture and reads the clear colour back from its storage. In the log, `texture→texture copy into ser=… written into the storage as well` or `… read back into the storage when the GPU completes`.
 - **Found on:** [Yoshi's Crafted World](../../dm/games/01006000040C2000/README.md): the Yoshis' 1024² DXT1 base colour and BC5 normal textures, 11 levels; level 4 of one held a pink felt texture, of the others zeros; the speckles began when the opening went dark.
 
+### GPU copies into storage-backed textures and linear/layout cache keys on the Vulkan replay (Android)
+
+- **Symptom:** (Android) title logos, character clothes/ground, 8px/16px font glyphs, or lightsaber glows show rainbow static or horizontal striping, and textures overwritten via GPU `CopyBufferToBuffer` or `CopyBufferToTexture`/`CopyTextureToTexture` stay stale or corrupt.
+- **Cause:** on the Vulkan replay (`dm/gfx/vk_android/`):
+  1. `copy_bt` and `copy_t2t` (`vka_exec.c`) did not mirror writes back into guest storage and marked storage-backed textures `gpu_owned = 1`; meanwhile `nvn_tex_mirror_b2t` and `nvn_tex_mirror_t2t` (`hle_nvn.c`) rejected 3D and linear textures, and `copy_bt` exceeded Vulkan/driver layer limits when `nz > 64`.
+  2. `same_shape` (`vka_tex.c`) ignored layout flags, `pkg_layout`, and `stride`, `linear_stride` lacked NVN's 32/128-byte alignment when `d->stride == 0`, `vka_tex_get` skipped re-uploading on a `same_shape` hit when `cpuw`/`cpu_dirty` or non-zero storage was present, and `vka_tex_prepare` skipped `ST_ZERO` uncompressed textures (`GW_TAKES_UNINIT`) written by `CopyBufferToBuffer`.
+- **Fix:** general, in `dm/gfx/nvn/hle_nvn.c`, `dm/gfx/vk_android/vka.h`, `vka_tex.c`, and `vka_exec.c`:
+  - Extended `write_region_bl` (`z_slice`), `tex_lin_stride`, `nvn_tex_mirror_b2t`, and `nvn_tex_mirror_t2t` for 3D and linear textures; added `vka_tex_copy_mirror_b2t`, `vka_tex_copy_mirror_t2t`, and `vka_tex_copy_wb` (generalizing `blwb_slot` with `is_copy` and up to 16 MiB `has_dyn` staging, stamping uncommitted `g_bl` slots in `vka_tex_blwb_pending`), and chunked `copy_bt` in 64-layer batches when `nz > 64`.
+  - Added layout/package/stride checks to `same_shape`, added `linear_stride`, refreshed `same_shape` cache hits on `cpuw`/`cpu_dirty`/non-zero storage in `vka_tex_get`, and included `GW_TAKES_UNINIT` in `vka_tex_prepare`.
+- **Check:** `t_android_texcontent` (0 failures), `t_android_t2tpath`, `t_android_wbfollow`; phone run (`b71f8f0a`, Adreno 650, Turnip v27.0.0-R3, 2026-11-26, 20,565 frames) resolved all rainbow static and striped glyph/glow artifacts.
+- **Found on:** [LEGO Star Wars: The Skywalker Saga](../../dm/games/010042D00D900000/README.md#found-on-this-game) (`010042D00D900000`, 2026-11-26).
+
+### Multi-segment pool placement spans on part-placed pools (Android)
+
+- **Symptom:** (Android) `[RED] lies across … parts` during `SHK_COPY`/`SHK_CLEAR`/`SHK_UPDATE` or indirect indexed draws on a 1 GiB+ memory pool placed in parts (`DM_VK_PLACE_LAZY`), triggering unnecessary segment joins or poisoning `t_neg`.
+- **Cause:** `rec_draw_idx` (`hle_nvn.c`) passed `len = 0` for indirect/count<=0 draws, and `shp_bind_slow` called `mtl_pool_need` (which queued joins across parts) even for multi-segment operations (`SHK_COPY`, `SHK_CLEAR`, `SHK_UPDATE`).
+- **Fix:** general, in `dm/gfx/vk_android/vka_mem.c`, `dm/gfx/nvn/hle_nvn.c`, `nvn_mtl.h`, and `nvn_mtl.m`: split `pool_need(..., allow_join)` and added `mtl_pool_need_parts` (called by `shp_bind_slow` for `SHK_COPY`/`SHK_CLEAR`/`SHK_UPDATE`) to place missing parts without queuing joins or poisoning `t_neg`; updated `rec_draw_idx` to pass `isz` when `ind || count <= 0`.
+- **Check:** `t_android_place` (`400 asks, 9 across parts, all joined`); phone run (`b71f8f0a`, 2026-11-26) logged 0 `lies across … parts` `[RED]` lines across 20,565 frames.
+- **Found on:** [LEGO Star Wars: The Skywalker Saga](../../dm/games/010042D00D900000/README.md#found-on-this-game) (`010042D00D900000`, 2026-11-26).
+
 ### Render passes into textures uploaded from their storage
 
 - **Symptom:** what the GPU drew into a texture is lost later: a texture re-created from the same memory, or one the game moved with `memcpy`, comes out zero; on the Switch it holds the drawing. Tears of the Kingdom: the grass of a meadow is drawn with no length and the ground under it goes dark, a few seconds after loading, tile by tile around Link.
