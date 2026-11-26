@@ -212,6 +212,13 @@ static int init_once(void) {
     const char *x_cal = has_ext(de, nde, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) ? VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME
                       : has_ext(de, nde, VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) ? VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME : NULL;
     if (x_cal) { dext[ndext++] = x_cal; V.cal_ts = 1; }
+    // Mixed colour/depth sample counts (1x colour + Nx depth): VK_AMD_mixed_attachment_samples or VK_NV_framebuffer_mixed_samples; DM_VK_MIXED_SAMPLES=0 leaves it off (core resolve fallback)
+    const char *ms_env = getenv("DM_VK_MIXED_SAMPLES");
+    const char *x_ms = !(ms_env && !strcmp(ms_env, "0"))
+                     ? (has_ext(de, nde, VK_AMD_MIXED_ATTACHMENT_SAMPLES_EXTENSION_NAME) ? VK_AMD_MIXED_ATTACHMENT_SAMPLES_EXTENSION_NAME
+                      : has_ext(de, nde, VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME) ? VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME : NULL)
+                     : NULL;
+    if (x_ms) { dext[ndext++] = x_ms; V.mixed_samples = 1; }
     free(de);
 
     // Every feature the device has, but robustness and capture-replay (they cost and nothing needs them); the shader side takes what it needs from the same device
@@ -381,10 +388,11 @@ static int init_once(void) {
          V.props.deviceName, VK_API_VERSION_MAJOR(V.props.apiVersion), VK_API_VERSION_MINOR(V.props.apiVersion), VK_API_VERSION_PATCH(V.props.apiVersion), V.props.driverVersion,
          V.placed ? "yes" : "no", V.placed_range ? "yes" : "no", (unsigned long long)V.placed_align, V.bda ? "yes" : "no", V.uab ? "yes" : "no", V.display_timing ? "yes" : "no",
          V.guest_type, V.guest_type < 32 ? V.memp.memoryTypes[V.guest_type].propertyFlags : 0, (unsigned long long)(V.max_alloc >> 20), V.props.limits.maxMemoryAllocationCount);   // (images take one allocation each: Mario Kart World ran out of them)
-    VLOG("draw path: push descriptors %s (%u), vertex input dynamic state %s, null descriptors %s, 8-bit indices %s, instance divisors %s, logic op %s, dual source %s, geometry %s, tessellation %s; "
+    VLOG("draw path: push descriptors %s (%u), vertex input dynamic state %s, null descriptors %s, 8-bit indices %s, instance divisors %s, logic op %s, dual source %s, geometry %s, tessellation %s, mixed samples %s; "
          "uniform alignment %llu (range %llu), storage alignment %llu, subgroups %u (%u-%u), vertex input attributes %u bindings %u",
          V.push_desc ? "yes" : "no", V.max_push, V.vin_dyn ? "yes" : "no", V.null_desc ? "yes" : "no", V.idx8 ? "yes" : "no", V.divisor ? "yes" : "no", V.logic_op ? "yes" : "no",
-         V.dual_src ? "yes" : "no", V.geom ? "yes" : "no", V.tess ? "yes" : "no", (unsigned long long)V.ub_align, (unsigned long long)V.ub_range, (unsigned long long)V.sb_align, V.subgroup_size, V.subgroup_min, V.subgroup_max,
+         V.dual_src ? "yes" : "no", V.geom ? "yes" : "no", V.tess ? "yes" : "no", V.mixed_samples ? "yes" : "no",
+         (unsigned long long)V.ub_align, (unsigned long long)V.ub_range, (unsigned long long)V.sb_align, V.subgroup_size, V.subgroup_min, V.subgroup_max,
          V.props.limits.maxVertexInputAttributes, V.max_vin_bindings);
     if (placed && V.placed && VKA_ENV("DM_VK_PLACED_PROBE", 1)) { vka_placed_probe_n(64 << 10, 1); vka_placed_probe_n(32 << 20, 1); }   // (diagnostic only: V.placed stays as advertised)
     void vka_driver_notes(void); vka_driver_notes();   // what driver_open did before the log was open (the Turnip UBWC hint)

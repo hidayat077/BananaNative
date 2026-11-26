@@ -271,6 +271,7 @@ static struct {
     int bar_pending;                                     // a game barrier came inside the pass and was taken there (vka_rp_game_barrier): the draws after it are checked (bar_hazard)
     int rt_cont, dread;                                  // SET_RT continued the pass; a draw of the pass sampled its depth attachment
     struct { vka_img *im, *sh; uint32_t lv, l0, nl, bw, bh; } bc[8]; int nbc;   // block-compressed targets drawn through their shadows (bcrt_attach), copied back at the pass end
+    struct { vka_img *im, *sh; uint32_t lv, l0, nl, w, h; } ms[8]; int nms;      // 1x colour targets drawn through MSAA shadows (msrt_upgrade) and resolved at pass end
 } R;
 // Inline uniform updates (OP_UPDATE_UB) that came with a render pass open (DM_VK_UB_DEFER, default 1): Vulkan forbids vkCmdCopyBuffer inside a rendering pass, and ending the
 // pass for each update split Splatoon Raiders' 6400x6400 ink-map occlusion-query pass 150-1,550 times a frame (7 inline updates per query). While R.on is open, the updates are
@@ -466,6 +467,7 @@ static fbatt fb_att(const vka_img *im, uint32_t lv, uint32_t nl, VkFormat view) 
     return a;
 }
 static void bcrt_flush(void);   // block-compressed render targets (below)
+static void msrt_flush(void);   // MSAA-shadowed colour targets resolved on pass end (below)
 // DM_VK_PARTLOG: the depth state of the draws into a depth target in the part in progress, logged with the part's end (vka_rp_zstats); DM_VK_ZLOG=1 also logs each draw of a
 // depth pass of at least DM_VK_ZLOG_MIN (default 4096) pixels a side and each such pass's begin and end (up to DM_VK_ZLOG_LINES lines, default 30000). For the Turnip LRZ hang
 // (docs/reference/rendering.md "Turnip hangs in the first 3D frame of a cold run"): Turnip's LRZ is invalidated for the rest of a pass by a depth compare direction change
@@ -515,6 +517,7 @@ void vka_rp_end(void) {
     vka_barrier(g_cb);   // the pass's writes before whatever reads them next (copies, the present, the next pass's samples)
     vka_xp_ts(g_cb, 1);
     bcrt_flush();        // block-compressed targets drawn through shadows: their blocks back (bcrt_attach)
+    msrt_flush();        // MSAA colour shadows for mixed-sample passes without the extension: resolved back (msrt_upgrade)
     if (UB.n) g_ub_gen++;
     ub_flush();          // inline uniform updates deferred during the pass: copied into placed guest RAM
     R.on = 0; vka_tex_feedback(NULL, NULL, 0);
@@ -579,6 +582,70 @@ static void bcrt_flush(void) {   // the shadows' blocks into their textures (aft
         vka_img_written(R.bc[k].im);
     }
     R.nbc = 0; vka_barrier(g_cb);
+}
+// Core-Vulkan fallback when a pass binds 1x colour target(s) with an Nx depth target and the device lacks mixed_attachment_samples (or DM_VK_CLASSIC_RP is on):
+// promote whole-cleared 1x colour targets to Nx shadows of matching format/dimensions/layers, clear & draw at Nx, and resolve back to the 1x targets at pass end
+static struct { int fmt; uint32_t w, h, nl, samp; tex_t t; } g_mssh[16]; static int g_nmssh;
+static vka_img *msrt_shadow(int fmt, uint32_t w, uint32_t h, uint32_t nl, uint32_t samp) {
+    int k = 0;
+    while (k < g_nmssh && !(g_mssh[k].fmt == fmt && g_mssh[k].w == w && g_mssh[k].h == h && g_mssh[k].nl == nl && g_mssh[k].samp == samp)) k++;
+    if (k == g_nmssh) {
+        if (k == 16) { VRED_ONCE("mixed-sample fallback: more than 16 MSAA shadow shapes: remaining passes drop depth"); return NULL; }
+        tex_t *t = &g_mssh[k].t; memset(t, 0, sizeof *t);
+        t->d.target = nl > 1 ? NVN_TEXTURE_TARGET_2D_MULTISAMPLE_ARRAY : NVN_TEXTURE_TARGET_2D_MULTISAMPLE;
+        t->d.format = (uint32_t)fmt; t->d.width = w; t->d.height = h; t->d.depth = nl; t->d.levels = 1; t->d.samples = samp;
+        nvn_tex_layout(&t->d, &t->L); t->serial = nvn_new_serial();
+        g_mssh[k].fmt = fmt; g_mssh[k].w = w; g_mssh[k].h = h; g_mssh[k].nl = nl; g_mssh[k].samp = samp; g_nmssh++;
+    }
+    return vka_tex_get(&g_mssh[k].t, g_cb);
+}
+static void msrt_flush(void) {
+    if (!R.nms) return;
+    for (int k = 0; k < R.nms; k++) {
+        VkImageResolve rr = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, R.ms[k].nl},
+                             .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, R.ms[k].lv, R.ms[k].l0, R.ms[k].nl},
+                             .extent = {R.ms[k].w, R.ms[k].h, 1}};
+        vk.vkCmdResolveImage(g_cb, R.ms[k].sh->img, VK_IMAGE_LAYOUT_GENERAL, R.ms[k].im->img, VK_IMAGE_LAYOUT_GENERAL, 1, &rr);
+        vka_img_written(R.ms[k].im);
+    }
+    R.nms = 0; vka_barrier(g_cb);
+}
+static int msrt_upgrade(const p_set_rt *rt, int n, uint32_t dsamp, uint32_t dlw, uint32_t dlh, uint32_t dnl,
+                        VkRenderingAttachmentInfo *ca, vka_img **s_im, uint32_t *s_lv, vka_img **fb_im, uint32_t *fb_lv, int nfb) {
+    vka_img *shs[8] = {0}; VkImageView svs[8] = {0};
+    for (int i = 0; i < n; i++) {
+        if (!ca[i].imageView) continue;
+        for (int b = 0; b < R.nbc; b++) if (R.bc[b].sh == s_im[i]) return 0;
+        if (R.ckind[i] != 0 || !s_im[i] || s_im[i]->samples != 1) return 0;
+        if (R.cext[i].width != dlw || R.cext[i].height != dlh || R.cnl[i] != dnl) return 0;
+        int whole_clear = 0;
+        for (int k = 0; k < PC.n; k++) {
+            const vka_pclear *c = &PC.c[k];
+            if (c->ci == i && !c->rc.offset.x && !c->rc.offset.y && c->rc.extent.width == dlw && c->rc.extent.height == dlh && c->nl == dnl) {
+                whole_clear = 1; break;
+            }
+        }
+        if (!whole_clear) return 0;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!ca[i].imageView) continue;
+        shs[i] = msrt_shadow((int)s_im[i]->d.format, R.cext[i].width, R.cext[i].height, R.cnl[i], dsamp);
+        if (!shs[i] || !(shs[i]->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) return 0;
+        svs[i] = vka_view(shs[i], R.cf[i], R.cnl[i] > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, R.cnl[i], NULL);
+        if (!svs[i]) return 0;
+    }
+    for (int i = 0; i < n; i++) {
+        if (!ca[i].imageView) continue;
+        vka_tex_own(shs[i], g_cb);
+        uint32_t lv = 0, l0 = 0, nl = 0; rt_range(s_im[i], &rt->cview[i], rt->has_cview[i], &lv, &l0, &nl);
+        R.ms[R.nms++] = (typeof(R.ms[0])){s_im[i], shs[i], s_lv[i], l0, R.cnl[i], R.cext[i].width, R.cext[i].height};
+        for (int j = 0; j < nfb; j++) if (fb_im[j] == s_im[i]) { fb_im[j] = shs[i]; fb_lv[j] = 0; }
+        ca[i].imageView = svs[i]; s_im[i] = shs[i]; s_lv[i] = 0;
+    }
+    static _Atomic int nlog;
+    if (atomic_fetch_add(&nlog, 1) < 4)
+        VLOG("mixed-sample render pass fallback: promoted %d whole-cleared 1x colour target(s) to %ux shadow(s) for %ux depth (%ux%ux%u)", R.nms, dsamp, dsamp, dlw, dlh, dnl);
+    return 1;
 }
 static void rt_range(const vka_img *im, const view_t *v, int has_v, uint32_t *lv, uint32_t *l0, uint32_t *nl) {
     *lv = has_v && v->set_levels ? v->base_level : 0;
@@ -646,23 +713,34 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
     VkRenderingAttachmentInfo *dp = NULL, *sp = NULL;
     if (has_rt && rt->depth) {
         vka_img *im = vka_tex_get(rt->depth, g_cb);
-        if (im && im->f.kind >= 3 && (im->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) && (!samples || im->samples == samples)) {
+        if (im && im->f.kind >= 3 && (im->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
             uint32_t lv, l0, nl; rt_range(im, &rt->dview, rt->has_dview, &lv, &l0, &nl);
-            if (lv < im->levels && nl) vka_tex_own(im, g_cb);
-            VkImageView v = lv < im->levels && nl ? vka_view(im, im->f.vk, nl > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, im->aspect, lv, 1, l0, nl, NULL) : VK_NULL_HANDLE;
-            if (v) {
-                da = (VkRenderingAttachmentInfo){VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = v, .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
-                if (im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) { dp = &da; R.df = im->f.vk; }
-                if (im->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) { sp = &da; R.sf = im->f.vk; }
-                samples = im->samples; fb_im[nfb] = im; fb_lv[nfb++] = lv; s_im[8] = im; s_lv[8] = lv; s_nl[8] = nl;
-                uint32_t lw = im->w >> lv ? im->w >> lv : 1, lh = im->h >> lv ? im->h >> lv : 1;
-                R.dnl = nl; R.dext = (VkExtent2D){lw, lh};
-                rt_peek("depth", 0, rt->depth, im, lv, l0, nl);
-                if (lw < w) w = lw; if (lh < h) h = lh; if (nl < layers) layers = nl;
-                vka_img_written(im);
-            }
+            uint32_t lw = im->w >> lv ? im->w >> lv : 1, lh = im->h >> lv ? im->h >> lv : 1;
+            int mixed_cand = samples == 1 && im->samples > 1 && lv < im->levels && nl;
+            if (!samples || im->samples == samples || mixed_cand) {
+                if (lv < im->levels && nl) vka_tex_own(im, g_cb);
+                VkImageView v = lv < im->levels && nl ? vka_view(im, im->f.vk, nl > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, im->aspect, lv, 1, l0, nl, NULL) : VK_NULL_HANDLE;
+                int mixed_ok = v && (!mixed_cand || (V.mixed_samples && !vka_classic_rp()) || msrt_upgrade(rt, n, im->samples, lw, lh, nl, ca, s_im, s_lv, fb_im, fb_lv, nfb));
+                if (v && mixed_ok) {
+                    da = (VkRenderingAttachmentInfo){VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = v, .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
+                    if (im->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) { dp = &da; R.df = im->f.vk; }
+                    if (im->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) { sp = &da; R.sf = im->f.vk; }
+                    samples = im->samples; fb_im[nfb] = im; fb_lv[nfb++] = lv; s_im[8] = im; s_lv[8] = lv; s_nl[8] = nl;
+                    R.dnl = nl; R.dext = (VkExtent2D){lw, lh};
+                    rt_peek("depth", 0, rt->depth, im, lv, l0, nl);
+                    if (mixed_cand && !R.nms) {
+                        static _Atomic int mln; if (atomic_fetch_add(&mln, 1) < 4)
+                            VLOG("mixed-sample render pass: 1x colour with %ux depth (serial %llu, %ux%u)", im->samples, (unsigned long long)rt->depth->serial, lw, lh);
+                    }
+                    if (lw < w) w = lw; if (lh < h) h = lh; if (nl < layers) layers = nl;
+                    vka_img_written(im);
+                } else if (mixed_cand && !mixed_ok)
+                    VRED_ONCE("depth target (format %#x, VkFormat %d, target %d, %ux%u, samples %u vs pass %u, usage %#x) cannot be a Vulkan depth attachment: drawn without depth",
+                              rt->depth->d.format, im->f.vk, rt->depth->d.target, im->w, im->h, im->samples, samples, im->usage);
+            } else VRED_ONCE("depth target (format %#x, VkFormat %d, target %d, %ux%u, samples %u vs pass %u, usage %#x) cannot be a Vulkan depth attachment: drawn without depth",
+                             rt->depth->d.format, im->f.vk, rt->depth->d.target, im->w, im->h, im->samples, samples, im->usage);
         } else if (im) VRED_ONCE("depth target (format %#x, VkFormat %d, target %d, %ux%u, samples %u vs pass %u, usage %#x) cannot be a Vulkan depth attachment: drawn without depth",
-                                rt->depth->d.format, im->f.vk, rt->depth->d.target, im->w, im->h, im->samples, samples, im->usage);
+                                 rt->depth->d.format, im->f.vk, rt->depth->d.target, im->w, im->h, im->samples, samples, im->usage);
     }
     if (w == UINT32_MAX) {   // no attachment at all (rasterizer discard, or targets Vulkan cannot take): the viewport's size, for side effects
         if (!d->has_vp) { VRED_ONCE("a draw with no render target and no viewport: skipped"); return 0; }
