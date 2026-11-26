@@ -61,7 +61,7 @@ static fmt_ent fmt_ent_of(int f) {
     case 0x2E: case 0x76: return C(R32G32B32A32_SFLOAT); case 0x2F: case 0x77: case 0x67: return U(R32G32B32A32_UINT); case 0x30: case 0x78: case 0x68: return S(R32G32B32A32_SINT);
     case 0x31: return (fmt_ent){VK_FORMAT_S8_UINT, 4, 0};
     case 0x32: return (fmt_ent){VK_FORMAT_D16_UNORM, 3, 0};
-    case 0x33: return (fmt_ent){VK_FORMAT_X8_D24_UNORM_PACK32, 3, 0};
+    case 0x33: return (fmt_ent){VK_FORMAT_D24_UNORM_S8_UINT, 5, 0};   // Maxwell/NVN backs DEPTH24 with D24S8 storage and allows stencil ops on it
     case 0x34: return (fmt_ent){VK_FORMAT_D32_SFLOAT, 3, 0};
     case 0x35: return (fmt_ent){VK_FORMAT_D24_UNORM_S8_UINT, 5, 0};
     case 0x36: return (fmt_ent){VK_FORMAT_D32_SFLOAT_S8_UINT, 5, 0};
@@ -126,7 +126,6 @@ int vka_fmt_of(int nf, vka_fmt *o) {
 static int fmt_of_slow(int nf, vka_fmt *o) {
     fmt_ent e = fmt_ent_of(nf); int bw, bh, bpb = nvn_fmt_bpb(nf, &bw, &bh);
     if (e.vk == VK_FORMAT_D24_UNORM_S8_UINT && !(feats(e.vk) & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) e.vk = VK_FORMAT_D32_SFLOAT_S8_UINT;
-    if (e.vk == VK_FORMAT_X8_D24_UNORM_PACK32 && !(feats(e.vk) & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) e.vk = VK_FORMAT_D32_SFLOAT;
     if (e.vk == VK_FORMAT_UNDEFINED || !bpb || !(feats(e.vk) & (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))) {
         static uint64_t logged[4]; unsigned b = (unsigned)nf & 255;
         if (!(__atomic_fetch_or(&logged[b >> 6], 1ull << (b & 63), __ATOMIC_RELAXED) >> (b & 63) & 1)) VRED("NVN format %#x has no Vulkan format on this device (VkFormat %d)", nf, e.vk);
@@ -3400,7 +3399,13 @@ static VkImageView id_view(int id, VkCommandBuffer cb, uint8_t dim, int storage,
         // Another class (a compute pass reading a UINT texture as float, or the reverse: Ocarina of Time's UI pass, R16G16_UINT): a view in the same-size format of the shader's
         // class when the image's format list takes it (learned on first use: vka_view, then the next images of this format and size are made with it). Not the bits' own class
         // otherwise: that reads as unbound
-        ovr = class_twin(vf.vk, want);
+        // Ryujinx's translator emits OpTypeImage ... R32ui / R32i when a shader reads or writes a 32-bit packed image as an integer storage image (it bit-unpacks the 32-bit word from .x). Binding A2B10G10R10_UINT returns 4 unpacked channels in .rgba, zeroing bits 10..31 in .x (No Man's Sky's fsr2switch_comp_fsr2cs_lock).
+        if (storage && want != 0 &&
+            (vf.vk == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || vf.vk == VK_FORMAT_A2B10G10R10_SNORM_PACK32 ||
+             vf.vk == VK_FORMAT_B10G11R11_UFLOAT_PACK32 || vf.vk == VK_FORMAT_E5B9G9R9_UFLOAT_PACK32))
+            ovr = want == 1 ? VK_FORMAT_R32_UINT : VK_FORMAT_R32_SINT;
+        else
+            ovr = class_twin(vf.vk, want);
         if (!ovr || vf.kind > 2) { pthread_mutex_lock(&g_tmu); im_unhold_locked(im); pthread_mutex_unlock(&g_tmu); return VK_NULL_HANDLE; }
     }
     VkFormat need = storage ? img_view_learn_fmt(ovr ? ovr : vf.vk, im) : VK_FORMAT_UNDEFINED;   // (a storage view in a format the image's list lacks: learned, the image remade below)

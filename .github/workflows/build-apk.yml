@@ -1,4 +1,4 @@
-# Builds the APK with Zelda TotK, Zelda BotW, Pokemon Legends: Z-A, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, Pokemon Scarlet, What Remains of Edith Finch, Sid Meier's Civilization VII, LEGO Star Wars: The Skywalker Saga, and No Man's Sky; add a game by adding its ID to nxGames.
+# Builds the APK with Zelda TotK, Zelda BotW, Pokemon Legends: Z-A, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, Pokemon Scarlet, What Remains of Edith Finch, Sid Meier's Civilization VII, LEGO Star Wars: The Skywalker Saga, No Man's Sky, and Super Mario Odyssey; add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F2C0115B6000,01007EF00011E000,0100F43008C44000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000,0100A3D008C5C000,010038900DFE0000,0100C3601518C000,010042D00D900000,0100853015E86000
+  nxGames: 0100F2C0115B6000,01007EF00011E000,0100F43008C44000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000,0100A3D008C5C000,010038900DFE0000,0100C3601518C000,010042D00D900000,0100853015E86000,0100000000010000
 
 jobs:
   apk:
@@ -129,6 +129,7 @@ jobs:
           - Sid Meier's Civilization VII (`0100C3601518C000`)
           - LEGO Star Wars: The Skywalker Saga (`010042D00D900000`)
           - No Man's Sky (`0100853015E86000`)
+          - Super Mario Odyssey (`0100000000010000`)
 
           Android 12+: `polar-android.apk`.
           EOF
