@@ -102,9 +102,17 @@ Most service calls can be found before they crash, before the first boot or the 
 
 - **Symptom:** the loading screen stays at 22% for ever while the music plays (Twelve Minutes). No red line, no crash. `DM_FS=1` shows `level0` and the FMOD master bank read, then no other scene and no save mount; `DM_HLECOUNT` shows `account::TryOpenPreselectedUser`, `GetUserId`, `GetNickname` and `friends::UserPresence::Initialize` once each, and `fs::MountSaveData` never.
 - **Cause:** the host's `UserPresence::Initialize` returned `RES_FAIL` like the other friends calls. The game's start-up takes the failure as fatal and stops before it mounts its save, so the loading screen waits for a scene that is never asked for. A presence is the game's own object until the friends service publishes it, so failing to set one up is not what an offline console reports.
-- **Fix:** `UserPresence::Initialize`, `SetDescription` and `Commit` succeed and publish nothing (`hle_friends.c`). The calls that need the service (friend lists, notification queue, online play sessions, invitations) still fail.
+- **Fix:** `UserPresence::Initialize`, `SetDescription` and `Commit` succeed and publish nothing (`hle_friends.c`). The calls that need the service (friend lists, online play sessions, invitations) still fail.
 - **Check:** `make -C dm/host/tests GAME=<id> run` runs `t_friends`.
 - **Found on:** Twelve Minutes (`0100CD701434C000`, Unity 2019.4.31f1 IL2CPP, SDK 12.3.7; seedds/nxnative#217), which has no profile in this repository; Core Keeper is reported to abort on the same failure.
+
+### Friends notification queue initializes offline
+
+- **Symptom:** crash in `Network::Friends::Manager::Update` (`main+0x33ba08`) after reaching the main menu, with an OOM null write after requesting >1 GiB (`count × 0x98`) to grow the blocked-users vector.
+- **Cause:** `nn::friends::NotificationQueue::Initialize` returned `RES_FAIL`, causing `NintendoProvider`'s constructor (`main+0x512494`) to skip `RefreshBlockedUsers` (`main+0x5127b0`) and leave `m_blockedCount` (`+0xd00`) as uninitialized heap memory.
+- **Fix:** `NotificationQueue::Initialize` returns `RES_OK` and `NotificationQueue::Finalize` is a no-op (`hle_friends.c`), while `GetSystemEvent` returns a quiet event and `Pop` still fails; `EnsureBlockedUserListAvailable` and the `NetworkServiceAccountId` overload of `GetFriendList` are also hooked to fail cleanly.
+- **Check:** `make -C dm/host/tests GAME=<id> run` runs `t_friends`.
+- **Found on:** [Sid Meier's Civilization VII](../../dm/games/0100C3601518C000/README.md) (1.5.1, SDK 19.3.11).
 
 ## File system and save data
 

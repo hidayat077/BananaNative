@@ -21,9 +21,20 @@ int main(void) {
     CHECK(h_fr_UpInit(presence, uid) == RES_OK, "UserPresence::Initialize succeeds");
     CHECK(h_fr_UpDesc(presence, "in game") == RES_OK, "UserPresence::SetDescription succeeds");
     CHECK(h_fr_UpCommit(presence) == RES_OK, "UserPresence::Commit succeeds");
-    CHECK(h_fr_NqInit(presence, uid) == RES_FAIL, "NotificationQueue::Initialize still fails");
+    CHECK(h_fr_NqInit(presence, uid) == RES_OK, "NotificationQueue::Initialize succeeds offline");
     CHECK(h_fr_OpenSession(uid) == RES_FAIL, "DeclareOpenOnlinePlaySession still fails");
     // Resolve the actual takeovers: a missing or misspelled overload would run the SDK's friends client instead (PR #2162).
+    void (*nq_fin)(void *) = hook("_ZN2nn7friends17NotificationQueue8FinalizeEv");
+    if (nq_fin) nq_fin(presence);
+    Result (*blocked_ensure)(void *, const void *) = hook("_ZN2nn7friends30EnsureBlockedUserListAvailableEPNS0_12AsyncContextERKNS_7account3UidE");
+    if (blocked_ensure) CHECK(blocked_ensure(presence, uid) == RES_FAIL, "EnsureBlockedUserListAvailable fails");
+    Result (*friend_list_nsa)(int *, void *, const void *, int, int, const void *) =
+        hook("_ZN2nn7friends13GetFriendListEPiPNS_7account23NetworkServiceAccountIdERKNS2_3UidEiiRKNS0_12FriendFilterE");
+    if (friend_list_nsa) {
+        int count = 42;
+        CHECK(friend_list_nsa(&count, NULL, uid, 0, 10, NULL) == RES_FAIL && count == 0,
+              "GetFriendList(NetworkServiceAccountId*) zeroes count and fails");
+    }
     Result (*key_uid)(void *, const void *, int) = hook("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyERKNS_7account3UidEb");
     Result (*key_no_uid)(void *, int) = hook("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyEb");
     uint8_t key[0x100], before[sizeof key];

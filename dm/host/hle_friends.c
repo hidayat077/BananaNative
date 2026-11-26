@@ -17,6 +17,12 @@ HLE_FORCE("_ZNK2nn7friends12AsyncContext9GetResultEv", "async result always fail
 HLE_FORCE("_ZN2nn7friends13GetFriendListEPiPNS0_6FriendEiiRKNS0_12FriendFilterE", "friend list is empty (cut)", Result, h_fr_GetFriendList, int *count, void *out, int off, int n, const void *filt) {
     (void)out; (void)off; (void)n; (void)filt; if (count) *count = 0; return RES_FAIL;
 }
+HLE_FORCE("_ZN2nn7friends13GetFriendListEPiPNS_7account23NetworkServiceAccountIdERKNS2_3UidEiiRKNS0_12FriendFilterE", "friend list is empty (cut)",
+          Result, h_fr_GetFriendListNsa, int *count, void *out, const void *uid, int off, int n, const void *filt) {
+    (void)out; (void)uid; (void)off; (void)n; (void)filt; if (count) *count = 0; return RES_FAIL;
+}
+HLE_FORCE("_ZN2nn7friends30EnsureBlockedUserListAvailableEPNS0_12AsyncContextERKNS_7account3UidE", "blocked user list (cut): the request fails at once",
+          Result, h_fr_BlockedEnsure, void *ctx, const void *uid) { (void)ctx; (void)uid; return RES_FAIL; }
 // Blocked users, SDK 4's overload without a Uid: an empty list and success. Dark Souls Remastered asks after the opening movie and turns a failure into an error for the error applet
 // (main+0x8ff9f0). The Uid overload below reports a failure, which DRAGON QUEST XI S takes as it is
 HLE_FORCE("_ZN2nn7friends18GetBlockedUserListEPiPNS_7account23NetworkServiceAccountIdEii", "blocked user list is empty (cut)", Result, h_fr_GetBlocked4, int *count, void *out, int off, int n) {
@@ -34,10 +40,13 @@ HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegis
 // aborts with 0xe15 when it cannot; cut the same way as the Uid form
 HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyEb", "play history key unavailable (cut)",
           Result, h_fr_GetPHKeyNoUid, void *k, int local) { (void)k; (void)local; return RES_FAIL; }
-// Notification queue
+// Notification queue: creating a local queue for a valid Uid succeeds offline (its event never fires and Pop fails).
+// Returning RES_FAIL causes callers such as Civilization VII's NintendoProvider constructor to skip RefreshBlockedUsers
+// and leave its blocked-user count uninitialized on the heap.
 HLE_FORCE("_ZN2nn7friends17NotificationQueueC1Ev", "notification queue creates no session (cut)", void, h_fr_NqCtor, void *self) { (void)self; }
 HLE_FORCE("_ZN2nn7friends17NotificationQueueD1Ev", "notification queue has no session to close (cut)", void, h_fr_NqDtor, void *self) { (void)self; }
-HLE_FORCE("_ZN2nn7friends17NotificationQueue10InitializeERKNS_7account3UidE", "notification queue init fails (cut)", Result, h_fr_NqInit, void *self, const void *uid) { (void)self; (void)uid; return RES_FAIL; }
+HLE_FORCE("_ZN2nn7friends17NotificationQueue10InitializeERKNS_7account3UidE", "notification queue succeeds offline; event never fires (cut)", Result, h_fr_NqInit, void *self, const void *uid) { (void)self; (void)uid; return RES_OK; }
+HLE_FORCE("_ZN2nn7friends17NotificationQueue8FinalizeEv", "notification queue has no session to close (cut)", void, h_fr_NqFin, void *self) { (void)self; }
 HLE_FORCE("_ZN2nn7friends17NotificationQueue14GetSystemEventEv", "notification event never fires (cut)", void *, h_fr_NqGetEv, void *self) { (void)self; return quiet_event(g_ev_notify); }
 HLE_FORCE("_ZN2nn7friends17NotificationQueue3PopEPNS0_16NotificationInfoE", "notification queue is always empty (cut)", Result, h_fr_NqPop, void *self, void *info) { (void)self; (void)info; return RES_FAIL; }
 // Invitations
