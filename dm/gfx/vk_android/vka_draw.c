@@ -661,7 +661,8 @@ static int rp_begin(const p_set_rt *rt, int has_rt, const p_scissor *sc, int has
                 if (lw < w) w = lw; if (lh < h) h = lh; if (nl < layers) layers = nl;
                 vka_img_written(im);
             }
-        } else if (im) VRED_ONCE("depth target (format %#x) cannot be a Vulkan depth attachment: drawn without depth", rt->depth->d.format);
+        } else if (im) VRED_ONCE("depth target (format %#x, VkFormat %d, target %d, %ux%u, samples %u vs pass %u, usage %#x) cannot be a Vulkan depth attachment: drawn without depth",
+                                rt->depth->d.format, im->f.vk, rt->depth->d.target, im->w, im->h, im->samples, samples, im->usage);
     }
     if (w == UINT32_MAX) {   // no attachment at all (rasterizer discard, or targets Vulkan cannot take): the viewport's size, for side effects
         if (!d->has_vp) { VRED_ONCE("a draw with no render target and no viewport: skipped"); return 0; }
@@ -2835,7 +2836,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             k.att[i] = (typeof(k.att[i])){1, (uint8_t)bfac(b.src_rgb), (uint8_t)bfac(b.dst_rgb), (uint8_t)bop(b.eq_rgb), (uint8_t)bfac(b.src_a), (uint8_t)bfac(b.dst_a), (uint8_t)bop(b.eq_a), (uint8_t)m};
         }
     }
-    if (src1_used) VRED_ONCE("a SRC1 blend factor with no dual-source module (MOD_DUAL; the profile's dual_want.tsv) or no dualSrcBlend: the second source reads as zero");
+    if (src1_used) VRED_ONCE("a SRC1 blend factor with no dual-source module (MOD_DUAL; the profile's dual_want.tsv) or no dualSrcBlend (fs %016llx): the second source reads as zero",
+                             (unsigned long long)(fs ? fs->key : 0));
 
     PT(3);
     if (!mesh) vin_build_kept(d, sh[0], &k);

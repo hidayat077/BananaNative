@@ -3052,7 +3052,10 @@ static VkImageView view_of(const treg_ent *e, vka_img *im, int vt_want, int stor
         (img3d ? (vt != VK_IMAGE_VIEW_TYPE_3D && vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) : vt == VK_IMAGE_VIEW_TYPE_3D)) return VK_NULL_HANDLE;   // no 1D images (img_create)
     if (img3d && vt != VK_IMAGE_VIEW_TYPE_3D) nl = 1;   // Vulkan requires levelCount == 1 for 2D / 2D-array slice views of a 3D image
     if (vt == VK_IMAGE_VIEW_TYPE_CUBE || vt == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
-        if (im->w != im->h || im->layers < 6 || im->layers % 6 || im->samples > 1 || na < 6) return VK_NULL_HANDLE;
+        if (im->w != im->h || im->layers < 6 || im->layers % 6 || im->samples > 1) return VK_NULL_HANDLE;
+        // A NVNtextureView on a cubemap (or cubemap array) with numLayers == 1 names one cube (6 faces) rather than a single face
+        if (vt == VK_IMAGE_VIEW_TYPE_CUBE && na == 1 && (tgt == NVN_TEXTURE_TARGET_CUBEMAP || tgt == NVN_TEXTURE_TARGET_CUBEMAP_ARRAY) && a0 + 6 <= im->layers) na = 6;
+        if (na < 6) return VK_NULL_HANDLE;
         if (vt == VK_IMAGE_VIEW_TYPE_CUBE) na = 6; else na -= na % 6;
     } else if (vt == VK_IMAGE_VIEW_TYPE_1D || vt == VK_IMAGE_VIEW_TYPE_2D) na = 1;
     else if (vt == VK_IMAGE_VIEW_TYPE_3D) { a0 = 0; na = 1; }
