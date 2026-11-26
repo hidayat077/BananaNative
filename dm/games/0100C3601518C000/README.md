@@ -9,7 +9,7 @@ Version 1.5.1 (`v1703936`), SDK 19.3.11, Firaxis's engine with Coherent Gameface
 | Setting | Why |
 |---|---|
 | `sys_resource 0x200000` | the NPDM declares 2 MB of system resource, enabling the SDK's virtual address memory |
-| `app_pool 0xCD500000` | hardware application-pool budget; the game requests a 3.01 GB heap |
+| `app_pool 0x140000000` | A/B for the 1.5.1 menu crash: the Switch-sized `0xCD500000` made the game request a 3.01 GB heap, whose Firaxis global allocator region was `0x7f000000` (2 GiB − 16 MiB); a larger pool may give it a full 2 GiB for the 1.1875 GiB buffer the menu asks for. Revert if the crash stays |
 | `mem_reserve 0x300000000`, `mem_alias 0x218000000`, `mem_stack 0x10000000` | 3.125 GB heap region, 256 MB stacks, 8.375 GB alias region; the Mac automatically uses a 64 GB alias region with the same heap/stack partition |
 | `depth_mode zero` | the game calls `nvnDeviceSetDepthMode` with near = 0 |
 
@@ -57,7 +57,7 @@ The supplied `.nup` is 1.5.1 (`v1703936`), whose module build IDs differ from th
 ## Open
 
 - iOS support: the V8 cage and main heap exceed the address-space budget described above; no working IPA claimed.
-- Android bring-up: the game is packaged in the APK but has no phone run; check the address-space request and whether the V8 cage succeeds before calling it playable.
+- Android bring-up: on 1.5.1 the game boots, reaches the frame loop and crashes at the main menu after ~58–70 s. Live probes showed an unchecked null write at `main+0x33ba08` after the Firaxis allocator returned null for a 1.1875 GiB (`0x4c000000`), 16-byte-aligned request; the dump taken just before the crash showed the global region still at `0x4279c00000` + `0x7f000000`, not exhausted by earlier allocations. RAM (~744 MiB resident, ~1.9 GB available) and `DM_ALIAS_SIZE=0x1000000000` (which the phone did not apply: the alias stayed 8.38 GB) are not the cause. The `app_pool` A/B above is being tried; if the crash stays, the allocator's region constants in `main` build `e656e23d5435311081509ba2a2ae81d3` need a build-keyed cut.
 - The 1.5.1 shader tables come from the split alone: no Mac run has compiled them or checked them against the runtime, and the 1.5.0.1 selected-set and prewarm seeds were dropped. A first phone run (or Mac bring-up) should confirm Prepare finds all 440 shaders and that no program is missing from the map.
 - The run logs a failed initial upload of a multisample Depth24 texture (`format 0x33`, target 5). Both GPU and CPU deswizzle reject multisample geometry; the Metal substitute also requires depth conversion. The observed map renders, but the upload's relevance and later shadow/rendering coverage remain unverified; no blanket skip was added.
 - Quick Save was written and appeared in Load Game with the correct turn and civilization. A reload was started, but its return to the map was not verified before the ten-minute gameplay-testing budget ended.
