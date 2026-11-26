@@ -1,5 +1,9 @@
-# Sid Meier's Civilization VII 1.5.0.1, Firaxis's engine, Coherent Gameface / V8, Wwise, NVN.
-# Mac gameplay tested. The V8 cage does not fit iOS without extended virtual addressing (README.md).
+# Sid Meier's Civilization VII 1.5.1 (v1703936), Firaxis's engine, Coherent Gameface / V8, Wwise, NVN.
+# The Mac gameplay check was on 1.5.0.1 (v1638400); the module build IDs below are from the 1.5.1 .nup.
+# The V8 cage does not fit iOS without extended virtual addressing (README.md).
+# The shader tables come from 1.5.1's CIVBSF container (730 records, 440 distinct shaders), split in place from
+# the user's .nup; the Mac gameplay check was on 1.5.0.1. The 1.5.0.1 selected set and prewarm seed have been
+# dropped: their keys have no overlap with 1.5.1's (README.md).
 
 # ---- Identity ----
 title_id	0100C3601518C000
@@ -11,9 +15,9 @@ ipa	SidMeiersCivilizationVII.ipa
 app_category	public.app-category.strategy-games
 
 # ---- Versions ----
-build	v1638400	1.5.0.1	main=5d9401301ab2bb4917bafd939e5b3dd8	sdk=df7a3960c74c3a4803f826c587153252
-package	v1638400
-shader_versions	v1638400
+build	v1703936	1.5.1	main=e656e23d5435311081509ba2a2ae81d3	sdk=ad9ee4518b1d8ca811fbdf35fc4f26d5
+package	v1703936
+shader_versions	v1703936
 
 # ---- Files ----
 # every module main imports from

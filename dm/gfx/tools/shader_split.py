@@ -3186,6 +3186,7 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
     if d[:4] == b'SHN!': out.extend(shn_shaders(d, label)); return
+    if d[:8] == CIVBSF: out.extend(civbsf_shaders(d, label)); return
     if d[:8] == SUMO_MUX:
         members = list(sumo_members(d, label))
         if left is None: left = [NEST * sum(len(member) for _, member in members)] * 2   # as with Yaz0, count decoded bytes, not compressed bytes
@@ -3260,7 +3261,82 @@ def pixel_input_cover(shaders):
         k = min(ins, key=lambda k: (-len(ins[k] & left), k)); cover.append(k); left -= ins[k]
     return cover
 
-SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
+CIVBSF = b'CIVBSF\0\0'
+
+def civbsf_shaders(d, label):
+    """Firaxis's shader library (Civilization VI / VII): +0x20 the shader table, +0x68 its count. Revision 0x1118 (Civilization VI 1.2.19) has 0x48-byte entries; +8 points to four
+    {u64 offset, u32 size, u32 platform} descriptors, platform 3 holding NVBC: an 0x28-byte header, GLSLC output and reflection. Revision 0x1218 has 0x50-byte entries; each entry's +8
+    points to {u64 data offset, u64 size}; the data is {u32 0xff00ff00, code length, control length, flags}, then code and control. Civilization VII 1.5.1 keeps revision 0x1118
+    in the header but uses the 0x1218-style entries: detect it by the payload tag instead of the revision word. All records are single stages; other sections describe effects and
+    resources, whose stage-pair relation is not established."""
+    where = f'{label} CIVBSF'
+    span(d, 0, 0x90, where)
+    version, = field(d, '<I', 8, where)
+    size, = field(d, '<I', 0xc, where)
+    if size != len(d): red(f'{where}: file size {size:#x} does not match {len(d):#x} bytes')
+    table, = field(d, '<Q', 0x20, where)
+    count, = field(d, '<I', 0x68, where)
+    if table < 0x90: red(f'{where}: shader table overlaps the header')
+    if version not in (0x1118, 0x1218): red(f'{where}: unknown revision {version:#x}')
+
+    def pair(entry):
+        """An entry whose +8 points to a plain {data offset, length} pair with the 0xff00ff00 payload tag, or None (the old four-platform-descriptor layout)"""
+        if not 0 <= entry + 8 <= len(d) - 8: return None
+        descriptor, = struct.unpack_from('<Q', d, entry + 8)
+        if not 0x90 <= descriptor <= len(d) - 16: return None
+        off, ln = struct.unpack_from('<QQ', d, descriptor)
+        if not (0x90 <= off <= len(d) - 16 and 16 <= ln <= len(d) - off): return None
+        tag, ncode, nctl, _ = struct.unpack_from('<4I', d, off)
+        return (descriptor, off, ln, ncode, nctl) if tag == 0xff00ff00 and 16 + ncode + nctl == ln else None
+
+    probe = range(min(count, 4))
+    # Civilization VII 1.5.1 keeps revision 0x1118 in the header but uses 0x1218's 0x50-byte entries. Pick the
+    # stride whose entries decode as plain payload pairs; Civ VI 1.2.19's 0x48-byte four-platform entries do not.
+    stride = 0x50 if version == 0x1218 or all(pair(table + i * 0x50) for i in probe) else 0x48
+    span(d, table, count * stride, f'{where} shader table')
+    out = []
+    for i in range(count):
+        entry = table + i * stride
+        source = f'{label} CIVBSF shader {i}'
+        descriptor, = field(d, '<Q', entry + 8, source)
+        p = pair(entry)
+        if p is not None:
+            _, off, ln, ncode, nctl = p
+            payload = span(d, off, ln, source)
+            code, ctl = payload[16:16 + ncode], payload[16 + ncode:]
+            st = glslc_stage(ctl, code)
+            why = check(source, st, ctl, code) if st else 'unknown shader stage'
+            if why: red(f'{source}: {why}')
+            out.append((f'{label}#CIVBSF@{entry:#x}', st, ctl, code))
+            continue
+        if version == 0x1118:
+            span(d, descriptor, 0x40, f'{source} platform descriptors')
+            for platform in range(4):
+                offset, length, kind = field(d, '<QII', descriptor + platform * 16, source)
+                if kind != platform: red(f'{source}: platform descriptor {platform} has kind {kind}')
+                payload = span(d, offset, length, f'{source} platform {platform} data')
+                if platform != 3: continue
+                span(payload, 0, 0x28, f'{source} NVBC')
+                if payload[:8] != b'NVBC\0\0\0\0': red(f'{source}: unknown NVBC tag')
+                nout, nrefl = struct.unpack_from('<QQ', payload, 8)
+                if 0x28 + nout + nrefl != length: red(f'{source}: NVBC output and reflection lengths do not match the data size')
+                output = payload[0x28:0x28 + nout]
+                if output[:4] != b'\x91\x68\x86\x19' or glslc_layout(output, 0)[0] != nout: red(f'{source}: invalid NVBC GLSLC output length or tag')
+                out.extend(glslc_shaders(output, f'{label}#CIVBSF@{entry:#x}'))
+            continue
+        offset, length = field(d, '<QQ', descriptor, source)
+        payload = span(d, offset, length, source)
+        tag, ncode, nctl, _ = field(payload, '<4I', 0, source)
+        if tag != 0xff00ff00: red(f'{source}: unknown data tag {tag:#x}')
+        if 16 + ncode + nctl != length: red(f'{source}: code and control lengths do not match the data size')
+        code, ctl = payload[16:16 + ncode], payload[16 + ncode:]
+        st = glslc_stage(ctl, code)
+        why = check(source, st, ctl, code) if st else 'unknown shader stage'
+        if why: red(f'{source}: {why}')
+        out.append((f'{label}#CIVBSF@{entry:#x}', st, ctl, code))
+    return out
+
+SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#CIVBSF@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@')   # sources whose every shader is a program of one stage: GLSLC outputs, Firaxis's CIVBSF records, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
 # Unreal Engine 3's shader caches (ue3_shaders, '#UE3@'); MonoGame's effects, whose passes may name no vertex shader and keep the one bound (Celeste: 10 of its 13 effects draw through SpriteBatch's vertex shader, which is in main); Next Level Games'
 # archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader); control sections loose in main
 # (Advance Wars 1+2: Re-Boot Camp's Bink shaders, raw_shaders), which no file pairs; YEBIS's effect file (tfxo_shaders); and Sumo's Ninty_NX descriptors and NVNsh records, one stage
@@ -3677,7 +3753,7 @@ def scan_whole(path, rel, head, found, trees):   # scan_file_in for a file no ar
         try: pairs = unity_shaders(d, '/' + rel, found, trees if not TREES else dict(TREES))
         except unityfs.NoTree: return rel, {}, set(), 'defer'
         return rel, uniq_keys(found), var_pairs(found) | {(a, b, 'prog') for a, b in pairs}, trees
-    elif b'BNSH\0\0\0\0' not in d and b'BAHS' not in d and d[:4] != b'MSHD' and d[:4] != b'NDSR' and d[:4] != b'NARC' and d[:4] != b'NDVE' and not (d[:4] == b'SARC' and b'Yaz0' in d) and b'\x91\x68\x86\x19' not in d and MGFX not in d and NEEDLE not in d and d[:8] != PACX4 and d[:8] != SUMO_MUX and SUMO_NX not in d and NVNSH not in d: return rel, {}, set(), {}   # a SARC may hold Yaz0 members, a NARC packed ones (cra.undo)
+    elif b'BNSH\0\0\0\0' not in d and b'BAHS' not in d and d[:4] != b'MSHD' and d[:4] != b'NDSR' and d[:4] != b'NARC' and d[:4] != b'NDVE' and not (d[:4] == b'SARC' and b'Yaz0' in d) and b'\x91\x68\x86\x19' not in d and MGFX not in d and NEEDLE not in d and d[:8] != PACX4 and d[:8] != SUMO_MUX and SUMO_NX not in d and NVNSH not in d and d[:8] != CIVBSF: return rel, {}, set(), {}   # a SARC may hold Yaz0 members, a NARC packed ones (cra.undo)
     else:
         scan_blob(d, '/' + rel, found)
         # whole GLSLC outputs in a file no other reader takes (FINAL FANTASY TACTICS - The Ivalice Chronicles: its engine's technique files, resources_nx/…/shader/*.tec, 261 outputs beside
@@ -3960,10 +4036,17 @@ def main():
             try: needs_archives = uepak.unreal_paks(romfs, inline=False, mains=[mainnso]) or uepak.io_shader_tocs(romfs)
             except ImportError as e: red(f'Unreal paks whose index is encrypted need AES to read ({e}); set PYTHONPATH to the folder with the AES module')
             if needs_archives and os.environ.get('DM_UE_DECODE'):
-                worker = os.environ.get('DM_OODLE_OOZ', '')
-                if not worker: red('Unreal shader archives need a decoder: set DM_OODLE_OOZ (the ooz worker, dm/third_party/ooz/build.sh) or DM_UE_SHADERS (archives decoded on a Mac)')
                 import ue_ondevice
-                ued = ue_ondevice.decode(romfs, mainnso, os.environ['DM_UE_DECODE'], worker)
+                worker = os.environ.get('DM_OODLE_OOZ', '')
+                if worker:
+                    ued = ue_ondevice.decode(romfs, mainnso, os.environ['DM_UE_DECODE'], worker)
+                elif os.environ.get('DM_OODLE_ANDROID_SOCKET'):
+                    # The phone has no ooz worker (x86-64 only): the game's own Oodle answers over OodleService,
+                    # which PackService starts for profiles naming a container the split decodes.
+                    ued = ue_ondevice.decode(romfs, mainnso, os.environ['DM_UE_DECODE'], decoder=oodle)
+                else:
+                    red('Unreal shader archives need a decoder: set DM_OODLE_OOZ (the ooz worker, dm/third_party/ooz/build.sh), '
+                        'DM_UE_SHADERS (archives decoded on a Mac), or let the phone start its OodleService')
                 names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._'))
             if needs_archives and not names:
                 red(f'the RomFS has Unreal shader archives, but there are no decoded shader code archives in {ued}: set DM_UE_SHADERS to a folder decoded on a Mac, or DM_UE_DECODE with DM_OODLE_OOZ to decode them here')

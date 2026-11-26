@@ -29,6 +29,14 @@ def stamp(romfs):
     return ''.join(sorted(out))
 
 
+class _Decoder:
+    """Adapt a decode(compressed, raw length) callable — shader_split.oodle, backed by the game's own decoder
+    on the phone through OodleService — to the worker interface uepak.job expects (call and close)"""
+    def __init__(self, fn): self.fn = fn
+    def __call__(self, comp, n): return self.fn(comp, n)
+    def close(self): pass
+
+
 def rmtree(p):
     """<p> and everything in it. A file already gone is no error: a Mac's AppleDouble metadata on an exFAT drive can be removed with its file mid-walk"""
     if os.path.isdir(p):
@@ -40,8 +48,10 @@ def rmtree(p):
         os.rmdir(p)
 
 
-def decode(romfs, main_nso, out, worker):
-    """<out> holds the decoded shader code archives of the RomFS's paks (made now, or kept from an earlier run with the same paks); → out"""
+def decode(romfs, main_nso, out, worker=None, decoder=None):
+    """<out> holds the decoded shader code archives of the RomFS's paks (made now, or kept from an earlier run with the same paks); → out.
+    worker = the ooz worker on a PC builder; decoder = a decode(compressed, raw length) callable (on the phone,
+    shader_split.oodle through the game's own OodleService). The game's own decoder is the primary path."""
     st = stamp(romfs)
     sf = os.path.join(out, 'stamp')
     if os.path.isfile(sf) and open(sf).read() == st:
@@ -49,16 +59,22 @@ def decode(romfs, main_nso, out, worker):
     t0 = time.time()
     work, part = out + '.job', out + '.partial'
     rmtree(work); rmtree(part)
+    def host():
+        if decoder is not None: return _Decoder(decoder)
+        if not worker: raise ValueError('Unreal shader archives need a decoder: DM_OODLE_OOZ (the ooz worker on a PC builder) '
+                                        'or DM_OODLE_ANDROID_SOCKET (the game\'s own decoder on the phone)')
+        return OozWorker(worker)
+
     dec = None
     try:
         if uepak.io_shader_tocs(romfs):
-            dec = OozWorker(worker)   # IoStore libraries need a decoder before uepak.job can list their shader groups
+            dec = host()   # IoStore libraries need a decoder before uepak.job can list their shader groups
         listing, n = uepak.job(romfs, main_nso, work, decode=dec)
         if not listing: raise ValueError(f'the RomFS has Unreal paks, but none under {romfs} holds a shader code archive')
         print('ue: ' + '; '.join(f'{x["name"]} {x["shaders"]:,} shaders' + (f' ({x["compression"]})' if x.get('compression') else '') for x in listing)
               + (f'; decoding {n:,} with the ooz worker' if n else ''), flush=True)
         if n:
-            dec = dec or OozWorker(worker)
+            dec = dec or host()
             with open(os.path.join(work, 'oodle.job'), 'rb') as f, open(os.path.join(work, 'oodle.job.out.partial'), 'wb') as o:
                 magic, count = struct.unpack('<II', f.read(8))
                 if magic != uepak.JOB_MAGIC or count != n: raise ValueError('the Oodle job file does not match its listing')
@@ -72,7 +88,7 @@ def decode(romfs, main_nso, out, worker):
     finally:
         if dec: dec.close()
     uepak.finish(work, part)
-    open(os.path.join(part, 'stamp'), 'w').write(st)
+    with open(os.path.join(part, 'stamp'), 'w') as f: f.write(st)
     rmtree(out); os.replace(part, out); rmtree(work)
     print(f'ue: {len(listing)} archives decoded into {out} in {time.time() - t0:.1f} s', flush=True)
     return out

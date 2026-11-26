@@ -925,6 +925,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 
 ## Shaders
 
+- the split finds no shaders in `main` or RomFS (0 shaders from `ShaderAutoGen_Linux_NVN_FinalRelease.bs`), and the host would report missing programs while presenting a black picture. → [Firaxis CIVBSF shader libraries](../reference/shaders.md#firaxis-civbsf-shader-libraries)
 - the split finds no shaders (on macOS also `OSError: [Errno 22]`, a single read of the whole file over 2 GiB), and the RomFS is one huge file with a short name (`42`) whose bytes look random past a table at its start (magic `CRA.`). → [One scrambled archive indexed by the NRO](../reference/shaders.md#one-scrambled-archive-indexed-by-the-nro)
 - the split finds no shaders in `main` or RomFS, while reporting control sections in `main` with no code area. The game has `.sp4` resources and loose `.nvnbin` files rather than BNSH archives or whole GLSLC outputs. → [Sumo Ninty_NX shaders and MuxFDMR streams](../reference/shaders.md#sumo-ninty_nx-shaders-and-muxfdmr-streams)
 - the shader split finds no game programs despite loose `.fx.phyre` effects and multi-GB `.vbf` archives. → [Phyre NVN effects in Virtuos VBF archives](../reference/shaders.md#phyre-nvn-effects-in-virtuos-vbf-archives)

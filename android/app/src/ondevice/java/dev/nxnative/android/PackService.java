@@ -599,6 +599,9 @@ public final class PackService extends Service {
         // the dump the split's RomFS is of: a program n > 0 (a Switch 2 Edition's program 1) keeps its shaders in its application's add-ons, which the split then
         // reads too, as pack_android.py does (scripts/pack_dump.py split_addons; Polar issue #356: only the base's RomFS was read)
         PackEngine.setenv("DM_SPLIT_DUMP", s.equals("split") ? dump.getPath() : "");
+        // Unreal shader archives have no decoder on the phone except the game's own Oodle in OodleService. Give
+        // shader_split.py a work folder to decode them into; it uses the game's decoder over the socket above.
+        PackEngine.setenv("DM_UE_DECODE", s.equals("split") ? new File(od, "ue_shaders").getPath() : "");
         // a profile with a selected set: the split keeps the code of only those shaders (and their pixel shaders), as the shaders step builds only them; a full
         // package of Pokopia held 4.3 GB and its scan ran out of memory (docs/reference/memory.md, A shader split that keeps every shader's code in memory)
         PackEngine.setenv("DM_SPLIT_SELECTED", s.equals("split") && selection(j) != null ? "1" : "0");

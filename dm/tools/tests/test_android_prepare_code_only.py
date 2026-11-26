@@ -52,6 +52,14 @@ class Wiring(unittest.TestCase):
         self.assertIn('File.pathSeparator', line)
         self.assertIn('shaders/layer/lib', line)
 
+    def test_split_gives_the_game_decoder_a_work_folder_for_unreal_archives(self):
+        # Hogwarts Legacy's Prepare stopped with "no decoded shader code archives": the phone had OodleService but
+        # shader_split.py was never told where to put the decoded archives (unoodle is x86-64 only).
+        s = (OD / 'PackService.java').read_text(encoding='utf-8')
+        line = next(l for l in s.splitlines() if 'DM_UE_DECODE' in l and 'setenv' in l)
+        self.assertIn('s.equals("split")', line)
+        self.assertIn('new File(od, "ue_shaders")', line)
+
     def test_a_code_only_job_has_no_shader_chain_and_needs_no_library(self):
         s = (OD / 'Job.java').read_text(encoding='utf-8')
         self.assertIn('if (codeOnly()) return false;', s)   # apkChanged

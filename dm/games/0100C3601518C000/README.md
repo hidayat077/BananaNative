@@ -1,6 +1,6 @@
 # Sid Meier's Civilization VII (`0100C3601518C000`)
 
-Version 1.5.0.1 (`v1638400`), SDK 19.3.11, Firaxis's engine with Coherent Gameface / V8 and Wwise, on NVN. Modules `main` (`5d9401301ab2bb4917bafd939e5b3dd8`) and `sdk` (`df7a3960c74c3a4803f826c587153252`); the registered `MediaDecoders.NN.nro` is rewritten and loaded through `nn::ro`.
+Version 1.5.1 (`v1703936`), SDK 19.3.11, Firaxis's engine with Coherent Gameface / V8 and Wwise, on NVN. These module build IDs are from the 1.5.1 `.nup`: `main` (`e656e23d5435311081509ba2a2ae81d3`) and `sdk` (`ad9ee4518b1d8ca811fbdf35fc4f26d5`); the registered `MediaDecoders.NN.nro` is rewritten and loaded through `nn::ro`. The gameplay check below was on 1.5.0.1 (`v1638400`, `main` `5d9401301ab2bb4917bafd939e5b3dd8`, `sdk` `df7a3960c74c3a4803f826c587153252`).
 
 **Mac gameplay tested, 2026-11-15:** first-run display options, main menu, leader/civilization selection, world generation, unit selection and the founder's settlement action (London, turn 1), then Quick Save. Audio plays with no underruns. The gameplay check stayed under ten minutes. iOS is blocked by address space, not yet supported; see [Memory](#memory).
 
@@ -17,11 +17,11 @@ No game-specific code patches, host branches or new profile switches. The existi
 
 ## Rendering
 
-`ShaderAutoGen_Linux_NVN_FinalRelease.bs` holds 801 single-stage CIVBSF records: 357 vertex, 343 pixel and 101 compute records, with duplicates. The split finds 481 distinct shaders (127 vertex, 254 pixel, 100 compute). All 481 compile on the Mac, with zero undecoded bindings and zero driver-bank reads the host cannot fill. The existing pixel-input cover supplies vertex padding; the library's effect-to-stage pairing is not decoded.
+`ShaderAutoGen_Linux_NVN_FinalRelease.bs` holds 730 single-stage CIVBSF records in 1.5.1: 325 vertex, 309 pixel and 96 compute, with duplicates. The split finds **440 distinct shaders** (121 vertex, 224 pixel, 95 compute) with no `[RED]` line; the existing pixel-input cover supplies vertex padding, and the library's effect-to-stage pairing is still not decoded. The 1.5.0.1 Mac check below had 801 records and 481 distinct shaders; the two versions' keys have only one in common, so the 1.5.0.1 `shader_seen.tsv` selected set and `pso_manifest.tsv` prewarm seed were dropped rather than kept stale ([Firaxis CIVBSF shader libraries](../../../docs/reference/shaders.md#firaxis-civbsf-shader-libraries)).
 
-The prewarm list and seen-shader list cover first-run menus, new-game setup and the first settlement. The shader map was compared with the runtime: no shader was missing on that route. All 481 shaders are created during startup. The two measured dual-source programs are built with their existing dual-source entry points.
+Everything in the two paragraphs below is from the **1.5.0.1 Mac run**, not from 1.5.1: the prewarm and seen lists covered first-run menus, new-game setup and the first settlement; the shader map was compared with the runtime with no shader missing on that route; all 481 shaders were created at startup, and the two measured dual-source programs (`064c4ce6df409438`, `f2755f3bfebde977`) used their existing dual-source entry points.
 
-Final Mac app build: 7.9 GB, chain `cd731f39944d`, shader inputs `20383d074091`. Its rebuilt prewarm archive contains 77 render and 20 compute pipelines, with zero failures and no dual-source warning. The graphics suite, focused shader-reader tests, profile/documentation checks and packing-script tests pass; Python lint has no new findings. No `regress.py` game run: reach is narrow and clear (a new container-magic path and the offline prewarm stamp lookup), with no host or chain change.
+The 1.5.0.1 Mac app build was 7.9 GB, chain `cd731f39944d`, shader inputs `20383d074091`; its rebuilt prewarm archive held 77 render and 20 compute pipelines with zero failures and no dual-source warning. The CIVBSF reader used for 1.5.1 was added later to this repo's `shader_split.py` with synthetic tests; no Mac or phone run has used the 1.5.1 tables yet.
 
 On the Apple M6, the settled map held about 60 fps: frame time p50 16.66 ms, p95 17.04 ms, GPU p50 5.57 ms over a 300-frame window. Resident memory reached 3,330 MB, Metal allocations 2,828 MB, then stayed near that level in this short test. These are absolute measurements, not a performance comparison with another port.
 
@@ -50,12 +50,15 @@ The supplied folder has 42 licence-only DLC packages; the game displayed owned c
 
 ## Android
 
-The profile is in `android/app/gradle.properties`' `nxGames` and in the APK build workflows, with `status bring-up` in [`readiness.tsv`](readiness.tsv): the launcher warns on every phone. This packages the game but is **not** a claim that it boots on Android — there has been no phone run. The Mac's 12 GB address-space layout (V8 cage plus the 3.01 GB heap) may be the same obstacle on Android as on iOS; that is the first thing a bring-up run must check. The supplied `.nup` is base v0, while the profile registers v1638400 (1.5.0.1), so a base run needs a profile derived from v0 and its own shader split.
+The profile is in `android/app/gradle.properties`' `nxGames` and in the APK build workflows, with `status bring-up` in [`readiness.tsv`](readiness.tsv): the launcher warns on every phone. This packages the game but is **not** a claim that it boots on Android — there has been no phone run. The Mac's 12 GB address-space layout (V8 cage plus the 3.01 GB heap) may be the same obstacle on Android as on iOS; that is the first thing a bring-up run must check.
+
+The supplied `.nup` is 1.5.1 (`v1703936`), whose module build IDs differ from the Mac-tested 1.5.0.1 build; the build row now names 1.5.1. `shader_split.py` was taught the CIVBSF container and the 1.5.1 entry layout (header revision `0x1118` with `0x50`-byte entries whose `+0x8` points to a `{data offset, length}` pair), so the tables in this profile are now split from the 1.5.1 `.nup` itself — no game data was copied into the repository. Android Prepare should now find all 440 shaders; this still needs a phone run to confirm.
 
 ## Open
 
 - iOS support: the V8 cage and main heap exceed the address-space budget described above; no working IPA claimed.
 - Android bring-up: the game is packaged in the APK but has no phone run; check the address-space request and whether the V8 cage succeeds before calling it playable.
+- The 1.5.1 shader tables come from the split alone: no Mac run has compiled them or checked them against the runtime, and the 1.5.0.1 selected-set and prewarm seeds were dropped. A first phone run (or Mac bring-up) should confirm Prepare finds all 440 shaders and that no program is missing from the map.
 - The run logs a failed initial upload of a multisample Depth24 texture (`format 0x33`, target 5). Both GPU and CPU deswizzle reject multisample geometry; the Metal substitute also requires depth conversion. The observed map renders, but the upload's relevance and later shadow/rendering coverage remain unverified; no blanket skip was added.
 - Quick Save was written and appeared in Load Game with the correct turn and civilization. A reload was started, but its return to the map was not verified before the ten-minute gameplay-testing budget ended.
 - Later turns, age transitions, multiplayer, long-session memory stability, and full movie coverage have not been tested.
