@@ -34,7 +34,7 @@ import java.util.zip.ZipOutputStream;
  * Export (.zip), Import (.zip or raw .bin), and Delete.
  */
 final class ShaderCacheUi {
-    static final int PICK_EXPORT = 70, PICK_IMPORT = 71;
+    static final int PICK_EXPORT = 80, PICK_IMPORT = 81;
     private static final int GPLC_MAGIC = 0x434C5047;   // "GPLC" little-endian (vka_gpl_cache.h)
     private static final int GPLC_HDR_SIZE = 80;
     private static final int GPLC_F_COMPLETE = 1;
