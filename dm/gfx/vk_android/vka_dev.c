@@ -159,7 +159,7 @@ static int init_once(void) {
 
     uint32_t nde = 0; vk.vkEnumerateDeviceExtensionProperties(V.pd, NULL, &nde, NULL);
     VkExtensionProperties *de = calloc(nde ? nde : 1, sizeof *de); vk.vkEnumerateDeviceExtensionProperties(V.pd, NULL, &nde, de);
-    const char *dext[32]; uint32_t ndext = 0;
+    const char *dext[40]; uint32_t ndext = 0;
     { char q[700]; size_t qn = 0; q[0] = 0;   // the vendor's own extensions (tile properties, render pass transforms ...): what a tiler-specific path could use
       for (uint32_t i = 0; i < nde && qn < sizeof q; i++) if (strstr(de[i].extensionName, "_QCOM_")) qn += (size_t)snprintf(q + qn, sizeof q - qn, " %s", de[i].extensionName + 3);
       if (qn) VLOG("device extensions of the vendor:%s", q); }
@@ -181,6 +181,20 @@ static int init_once(void) {
     if (x_rob) dext[ndext++] = x_rob;
     if (x_i8) dext[ndext++] = x_i8;
     if (x_div) dext[ndext++] = x_div;
+    VkPhysicalDeviceDriverProperties pdr0 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 pp0 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pdr0};
+    vk.vkGetPhysicalDeviceProperties2(V.pd, &pp0);
+    const char *dyn_env = getenv("DM_VK_DYNAMIC_STATE");
+    int dyn_state_on = !(dyn_env && !strcmp(dyn_env, "0"));
+    V.dyn_state_on = dyn_state_on;
+    int x_eds2_ext = has_ext(de, nde, VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
+    int x_eds3_ext = has_ext(de, nde, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+    const char *eds3_env = getenv("DM_VK_EDS3");
+    int eds3_want = eds3_env && *eds3_env ? strcmp(eds3_env, "0") != 0 : (pdr0.driverID == VK_DRIVER_ID_MESA_TURNIP);
+    int x_eds2 = dyn_state_on && x_eds2_ext;
+    int x_eds3 = dyn_state_on && eds3_want && x_eds3_ext;
+    if (x_eds2) dext[ndext++] = VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME;
+    if (x_eds3) dext[ndext++] = VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME;
     int x_gpl = has_ext(de, nde, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && has_ext(de, nde, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
     if (x_gpl) { dext[ndext++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME; dext[ndext++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME; }
     int mesh_ext = has_ext(de, nde, VK_EXT_MESH_SHADER_EXTENSION_NAME); const char *mesh_env = getenv("DM_VK_MESH");   // restart only: the device's extensions
@@ -188,9 +202,6 @@ static int init_once(void) {
     // prepass as spikes past the mesh stage and, with the mesh_prepass_cut workaround, Ocarina of Time's tree leaves, flowers, ferns and bushes not at all, while the
     // compute path draws them all and its house runs faster (docs/reference/rendering.md "Depth-only mesh prepass drawn as spikes on Qualcomm's driver", Open: the
     // driver's fault). Keyed on the driver ID it reports. DM_VK_MESH=1 takes the extension there, =0 leaves it off on every driver
-    VkPhysicalDeviceDriverProperties pdr0 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-    VkPhysicalDeviceProperties2 pp0 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pdr0};
-    vk.vkGetPhysicalDeviceProperties2(V.pd, &pp0);
     int mesh_qcom = mesh_ext && pdr0.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY && !(mesh_env && *mesh_env);
     int x_mesh = mesh_ext && !(mesh_env && !strcmp(mesh_env, "0")) && !mesh_qcom;
     if (x_mesh) dext[ndext++] = VK_EXT_MESH_SHADER_EXTENSION_NAME;
@@ -228,6 +239,8 @@ static int init_once(void) {
     VkPhysicalDeviceIndexTypeUint8Features fi8 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES};
     VkPhysicalDeviceVertexAttributeDivisorFeatures fdiv = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES};
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT fgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+    VkPhysicalDeviceExtendedDynamicState2FeaturesEXT feds2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT};
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT feds3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
     VkPhysicalDeviceMeshShaderFeaturesEXT fmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     VkPhysicalDeviceFaultFeaturesEXT ffault = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT};
     VkPhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT ffbl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_FEATURES_EXT};
@@ -235,7 +248,7 @@ static int init_once(void) {
     void *chain = placed ? &fmp : NULL;
 #define LINK(on, st) if (on) { (st).pNext = chain; chain = &(st); }
     struct { VkStructureType sType; void *pNext; VkBool32 queuePerfHint; } fph = {(VkStructureType)1000302001};   // VkPhysicalDeviceQueuePerfHintFeaturesQCOM (not in the NDK's headers yet)
-    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_mesh, fmesh) LINK(x_fault, ffault)
+    LINK(x_vin, fvin) LINK(x_rob, frob) LINK(x_i8, fi8) LINK(x_div, fdiv) LINK(x_ph, fph) LINK(x_gpl, fgpl) LINK(x_eds2, feds2) LINK(x_eds3, feds3) LINK(x_mesh, fmesh) LINK(x_fault, ffault)
     LINK(x_fbl, ffbl) LINK(x_fbl, ffbd)
 #undef LINK
     VkPhysicalDeviceVulkan13Features f13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = chain};
@@ -247,6 +260,21 @@ static int init_once(void) {
     f12.bufferDeviceAddressCaptureReplay = VK_FALSE; f12.bufferDeviceAddressMultiDevice = VK_FALSE;
     frob.robustBufferAccess2 = VK_FALSE; frob.robustImageAccess2 = VK_FALSE;   // only nullDescriptor: unbound slots read a null descriptor
     ffault.deviceFaultVendorBinary = VK_FALSE; g_fault_on = x_fault && ffault.deviceFault;   // (the vendor's binary dump: not read)
+    if (x_eds3) {
+        VkPhysicalDeviceExtendedDynamicState3FeaturesEXT keep = {
+            .sType = feds3.sType, .pNext = feds3.pNext,
+            .extendedDynamicState3DepthClampEnable = feds3.extendedDynamicState3DepthClampEnable,
+            .extendedDynamicState3PolygonMode = feds3.extendedDynamicState3PolygonMode,
+            .extendedDynamicState3RasterizationSamples = feds3.extendedDynamicState3RasterizationSamples,
+            .extendedDynamicState3SampleMask = feds3.extendedDynamicState3SampleMask,
+            .extendedDynamicState3AlphaToCoverageEnable = feds3.extendedDynamicState3AlphaToCoverageEnable,
+            .extendedDynamicState3LogicOpEnable = feds3.extendedDynamicState3LogicOpEnable,
+            .extendedDynamicState3ColorBlendEnable = feds3.extendedDynamicState3ColorBlendEnable,
+            .extendedDynamicState3ColorBlendEquation = feds3.extendedDynamicState3ColorBlendEquation,
+            .extendedDynamicState3ColorWriteMask = feds3.extendedDynamicState3ColorWriteMask,
+        };
+        feds3 = keep;
+    }
     // Mesh shading: the task and mesh stages only (multiview, shading-rate and query support each need more of the device than the replay enables or uses)
     fmesh.multiviewMeshShader = VK_FALSE; fmesh.primitiveFragmentShadingRateMeshShader = VK_FALSE; fmesh.meshShaderQueries = VK_FALSE;
     if (x_mesh && !fmesh.meshShader) fmesh.taskShader = VK_FALSE;   // (task shading is of no use without mesh shading)
@@ -272,6 +300,30 @@ static int init_once(void) {
     if (V.fb_loop && !vk.vkCmdSetAttachmentFeedbackLoopEnableEXT) V.fb_loop = 0;
     VLOG("attachment feedback loops: %s", V.fb_loop ? "on (VK_EXT_attachment_feedback_loop_dynamic_state)" : "off (DM_VK_FB_LOOP=1 on)");
     fp_wrap_compiles();
+    {
+        uint32_t m = 0;
+        if (x_eds2) {
+            if (feds2.extendedDynamicState2LogicOp && V.logic_op && vk.vkCmdSetLogicOpEXT) m |= VKA_EDS_LOGIC_OP;
+            if (feds2.extendedDynamicState2PatchControlPoints && V.tess && vk.vkCmdSetPatchControlPointsEXT) m |= VKA_EDS_PATCH_CP;
+        }
+        if (x_eds3) {
+            if (feds3.extendedDynamicState3DepthClampEnable && vk.vkCmdSetDepthClampEnableEXT) m |= VKA_EDS_DEPTH_CLAMP;
+            if (feds3.extendedDynamicState3PolygonMode && vk.vkCmdSetPolygonModeEXT) m |= VKA_EDS_POLYGON_MODE;
+            if (feds3.extendedDynamicState3RasterizationSamples && vk.vkCmdSetRasterizationSamplesEXT) m |= VKA_EDS_RAST_SAMPLES;
+            if (feds3.extendedDynamicState3SampleMask && vk.vkCmdSetSampleMaskEXT) m |= VKA_EDS_SAMPLE_MASK;
+            if (feds3.extendedDynamicState3AlphaToCoverageEnable && vk.vkCmdSetAlphaToCoverageEnableEXT) m |= VKA_EDS_ALPHA_TO_COV;
+            if (feds3.extendedDynamicState3LogicOpEnable && V.logic_op && vk.vkCmdSetLogicOpEnableEXT) m |= VKA_EDS_LOGIC_OP_ENABLE;
+            if (feds3.extendedDynamicState3ColorBlendEnable && vk.vkCmdSetColorBlendEnableEXT) m |= VKA_EDS_COLOR_BLEND_ENABLE;
+            if (feds3.extendedDynamicState3ColorBlendEquation && vk.vkCmdSetColorBlendEquationEXT) m |= VKA_EDS_COLOR_BLEND_EQ;
+            if (feds3.extendedDynamicState3ColorWriteMask && vk.vkCmdSetColorWriteMaskEXT) m |= VKA_EDS_COLOR_WRITE_MASK;
+        }
+        V.eds_mask = m;
+        VLOG("extended dynamic state: mask %#x (EDS2: logicOp %d patchCP %d; EDS3: depthClamp %d polyMode %d samples %d sampleMask %d a2c %d logicOpEn %d blendEn %d blendEq %d writeMask %d; DM_VK_DYNAMIC_STATE=%d DM_VK_EDS3=%s)",
+             m, !!(m & VKA_EDS_LOGIC_OP), !!(m & VKA_EDS_PATCH_CP), !!(m & VKA_EDS_DEPTH_CLAMP), !!(m & VKA_EDS_POLYGON_MODE),
+             !!(m & VKA_EDS_RAST_SAMPLES), !!(m & VKA_EDS_SAMPLE_MASK), !!(m & VKA_EDS_ALPHA_TO_COV), !!(m & VKA_EDS_LOGIC_OP_ENABLE),
+             !!(m & VKA_EDS_COLOR_BLEND_ENABLE), !!(m & VKA_EDS_COLOR_BLEND_EQ), !!(m & VKA_EDS_COLOR_WRITE_MASK),
+             dyn_state_on, eds3_env && *eds3_env ? eds3_env : (eds3_want ? "auto(1)" : "auto(0)"));
+    }
     vka_shader_pfb_hook();   // (over the FPCR wrapper: the module it makes is the rewritten one)
     if (!vk.vkMapMemory2KHR) vk.vkMapMemory2KHR = (PFN_vkMapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkMapMemory2");   // core in 1.4
     if (!vk.vkUnmapMemory2KHR) vk.vkUnmapMemory2KHR = (PFN_vkUnmapMemory2KHR)vk.vkGetDeviceProcAddr(V.dev, "vkUnmapMemory2");
@@ -350,11 +402,11 @@ static int init_once(void) {
     int vin_dyn_ext = V.vin_dyn;
     if (V.vin_dyn) {
         const char *e = getenv("DM_VK_VIN_DYN");
-        if (e && *e) V.vin_dyn = strcmp(e, "0") != 0; else if (V.qcom_old) V.vin_dyn = 0;
-        if (!V.vin_dyn) VLOG("vertex input dynamic state: off (%s; DM_VK_VIN_DYN=1: on), the vertex input goes into the pipeline", e && *e ? "DM_VK_VIN_DYN=0" : "Qualcomm driver before 512.800");
+        if (e && *e) V.vin_dyn = strcmp(e, "0") != 0; else if (V.qcom_old || !V.dyn_state_on) V.vin_dyn = 0;
+        if (!V.vin_dyn) VLOG("vertex input dynamic state: off (%s; DM_VK_VIN_DYN=1: on), the vertex input goes into the pipeline", e && *e ? "DM_VK_VIN_DYN=0" : !V.dyn_state_on ? "DM_VK_DYNAMIC_STATE=0" : "Qualcomm driver before 512.800");
     }
     auto_log(&(vka_auto_in){.driver_id = V.driver_id, .qcom_old = V.qcom_old, .mesh_ext = mesh_ext, .memu = V.memu, .vin_dyn_ext = vin_dyn_ext,
-                            .prof_one_lane = DM_GAME_NSUBGROUP_ONE_LANE, .prof_prepass_cut = DM_GAME_NMESH_PREPASS_CUT, .prof_oq_split = DM_GAME_OCCLUSION_SPLIT_PASS}, pdr.driverName);
+                            .prof_one_lane = DM_GAME_NSUBGROUP_ONE_LANE, .prof_prepass_cut = DM_GAME_NMESH_PREPASS_CUT, .prof_oq_split = DM_GAME_OCCLUSION_SPLIT_PASS, .eds3_ext = x_eds3_ext}, pdr.driverName);
     vka_enc_install();
     vka_gbar_install();   // on top of the encoder: sees every work command the replay records (vka_gbar.c)
     const VkPhysicalDeviceLimits *lim = &V.props.limits;

@@ -2206,9 +2206,17 @@ static uint32_t *read_indices(uint64_t addr, int itype, uint32_t count) {
 // The dynamic state the command buffer holds: each draw sets only what changed (the draw path set some 25 states a draw). Valid from the first draw of a submission until
 // something else binds a graphics pipeline with static state (the masked stencil clear: vka_dyn_invalidate) or the submission ends; every graphics pipeline of the draws has
 // the same dynamic states (vka_pso.c), so binding one keeps them, except a mesh pipeline, which has no topology or primitive restart (vka_draw resets DY.topo / DY.pr after one)
-static struct { int valid; VkPipeline pipe; VkViewport vp; VkRect2D sc; uint32_t cull, ff, topo, dt, dw, dc, dbt, stt, dbe, rd, pr, sop[8], smask[6], fbl; float db[3], bc[4]; } DY;
-#define DY_SET(f, val, call) do { if (!DY.valid || !g_dyn_filter || memcmp(&DY.f, &(val), sizeof DY.f)) { memcpy(&DY.f, &(val), sizeof DY.f); call; } } while (0)
-#define DY_SET1(f, val, call) do { uint32_t v_ = (val); if (!DY.valid || !g_dyn_filter || DY.f != v_) { DY.f = v_; call; } } while (0)
+static struct {
+    int valid; uint64_t dirty;
+    VkPipeline pipe; VkViewport vp; VkRect2D sc;
+    uint32_t cull, ff, topo, dt, dw, dc, dbt, stt, dbe, rd, pr, sop[8], smask[6], fbl;
+    float db[3], bc[4];
+    uint32_t dclamp, pmode, rsamp, smask_s, smask_v, a2c, logen, logop, patch_cp;
+    uint32_t nc_ben, nc_beq, nc_cwm;
+    VkBool32 ben[8]; VkColorBlendEquationEXT beq[8]; VkColorComponentFlags cwm[8];
+} DY;
+#define DY_SET(bit, f, val, call) do { if (!DY.valid || vka_dyn_is_dirty(DY.dirty, (bit)) || !g_dyn_filter || memcmp(&DY.f, &(val), sizeof DY.f)) { memcpy(&DY.f, &(val), sizeof DY.f); vka_dyn_clear(&DY.dirty, (bit)); call; } } while (0)
+#define DY_SET1(bit, f, val, call) do { uint32_t v_ = (val); if (!DY.valid || vka_dyn_is_dirty(DY.dirty, (bit)) || !g_dyn_filter || DY.f != v_) { DY.f = v_; vka_dyn_clear(&DY.dirty, (bit)); call; } } while (0)
 // The index buffer the command buffer holds: bound again only when it changes (DM_VK_VB_FILTER), forgotten with the dynamic state
 static struct { int valid; VkBuffer b; VkDeviceSize o; VkIndexType t; } IB;
 static void ib_bind(VkBuffer b, VkDeviceSize o, VkIndexType t) {
@@ -2216,8 +2224,8 @@ static void ib_bind(VkBuffer b, VkDeviceSize o, VkIndexType t) {
     vk.vkCmdBindIndexBuffer(g_cb, b, o, t); IB.valid = 1; IB.b = b; IB.o = o; IB.t = t;
 }
 static void inst_reset(void);
-static void fbl_pass_begin(void) { DY.fbl = ~0u; }
-void vka_dyn_invalidate(void) { DY.valid = 0; VB.valid = 0; VBC.valid = 0; IB.valid = 0; g_pd[0].n = g_pd[1].n = 0; inst_reset(); }
+static void fbl_pass_begin(void) { DY.fbl = ~0u; DY.dirty |= VKA_DYN_FBL; }
+void vka_dyn_invalidate(void) { DY.valid = 0; vka_dyn_dirty_all(&DY.dirty); DY.nc_ben = DY.nc_beq = DY.nc_cwm = 0; VB.valid = 0; VBC.valid = 0; IB.valid = 0; g_pd[0].n = g_pd[1].n = 0; inst_reset(); }
 #define PT(i) do { if (g_prof) { uint64_t t_ = cntvct(); if ((i) > 0 && g_pt_ph == (i) - 1) g_pt[(i) > 0 ? (i) - 1 : 0] += t_ - g_pt_last; g_pt_last = t_; g_pt_ph = (i); } } while (0)
 // ---------- Instanced runs (DM_VK_INSTANCE) ----------
 // Donkey Kong Bananza draws many objects as runs of draws that repeat one mesh (the same pipeline, index range, base vertex and vertex streams) and differ only in where one
@@ -3042,7 +3050,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     float n0 = d->dr[0] < 0 ? 0 : d->dr[0] > 1 ? 1 : d->dr[0], n1 = d->dr[1] < 0 ? 0 : d->dr[1] > 1 ? 1 : d->dr[1];
     if (!vw) vw = 1; if (!vh) vh = 1;
     VkViewport vp = {vx, vy + vh, vw, -vh, n0, n1};
-    DY_SET(vp, vp, vk.vkCmdSetViewport(g_cb, 0, 1, &vp));
+    DY_SET(VKA_DYN_VP, vp, vp, vk.vkCmdSetViewport(g_cb, 0, 1, &vp));
     VkRect2D scr = R.area;
     if (has_sc && !d->rast_discard) {
         int64_t x0 = sc->x < 0 ? 0 : sc->x, y0 = sc->y < 0 ? 0 : sc->y, x1 = (int64_t)sc->x + sc->w, y1 = (int64_t)sc->y + sc->h;
@@ -3051,42 +3059,42 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         scr = (VkRect2D){{(int32_t)x0, (int32_t)y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
     }
     if (g_xp_scissor > 0) { if (scr.extent.width > (uint32_t)g_xp_scissor) scr.extent.width = (uint32_t)g_xp_scissor; if (scr.extent.height > (uint32_t)g_xp_scissor) scr.extent.height = (uint32_t)g_xp_scissor; }
-    DY_SET(sc, scr, vk.vkCmdSetScissor(g_cb, 0, 1, &scr));
+    DY_SET(VKA_DYN_SC, sc, scr, vk.vkCmdSetScissor(g_cb, 0, 1, &scr));
     // Rasterizer and depth / stencil
-    DY_SET1(cull, (uint32_t)(d->poly.cull == NVN_FACE_FRONT ? VK_CULL_MODE_FRONT_BIT : d->poly.cull == NVN_FACE_BACK ? VK_CULL_MODE_BACK_BIT : d->poly.cull == NVN_FACE_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_NONE), vk.vkCmdSetCullMode(g_cb, DY.cull));
-    DY_SET1(ff, (uint32_t)((d->poly.front == NVN_FRONT_FACE_CCW) != vka_queue_origin_ll() ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE), vk.vkCmdSetFrontFace(g_cb, DY.ff));   // as nvn_mtl.m's winding
+    DY_SET1(VKA_DYN_CULL, cull, (uint32_t)(d->poly.cull == NVN_FACE_FRONT ? VK_CULL_MODE_FRONT_BIT : d->poly.cull == NVN_FACE_BACK ? VK_CULL_MODE_BACK_BIT : d->poly.cull == NVN_FACE_FRONT_AND_BACK ? VK_CULL_MODE_FRONT_AND_BACK : VK_CULL_MODE_NONE), vk.vkCmdSetCullMode(g_cb, DY.cull));
+    DY_SET1(VKA_DYN_FF, ff, (uint32_t)((d->poly.front == NVN_FRONT_FACE_CCW) != vka_queue_origin_ll() ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE), vk.vkCmdSetFrontFace(g_cb, DY.ff));   // as nvn_mtl.m's winding
     // A mesh pipeline has no input assembly: the topology and primitive restart are not set for it, and set again at the next draw that has them (its pipeline bind may
     // have left them undefined)
-    if (mesh) DY.topo = DY.pr = ~0u;
-    else DY_SET1(topo, (uint32_t)(topo), vk.vkCmdSetPrimitiveTopology(g_cb, DY.topo));
+    if (mesh) { DY.topo = DY.pr = ~0u; DY.dirty |= VKA_DYN_TOPO | VKA_DYN_PR | VKA_DYN_PATCH_CP; }
+    else DY_SET1(VKA_DYN_TOPO, topo, (uint32_t)(topo), vk.vkCmdSetPrimitiveTopology(g_cb, DY.topo));
     int hd = R.df != VK_FORMAT_UNDEFINED, hs = R.sf != VK_FORMAT_UNDEFINED;
-    DY_SET1(dt, (uint32_t)(hd && d->ds.dt), vk.vkCmdSetDepthTestEnable(g_cb, DY.dt));
-    DY_SET1(dw, (uint32_t)(hd && d->ds.dt && d->ds.dw), vk.vkCmdSetDepthWriteEnable(g_cb, DY.dw));
+    DY_SET1(VKA_DYN_DT, dt, (uint32_t)(hd && d->ds.dt), vk.vkCmdSetDepthTestEnable(g_cb, DY.dt));
+    DY_SET1(VKA_DYN_DW, dw, (uint32_t)(hd && d->ds.dt && d->ds.dw), vk.vkCmdSetDepthWriteEnable(g_cb, DY.dw));
     uint32_t dfv = eq_relax && d->ds.df == NVN_DEPTH_FUNC_EQUAL ? NVN_DEPTH_FUNC_LEQUAL : d->ds.df;   // mesh_cut
     if (sh[1] && depth_override_hit(sh[1]->key)) dfv = NVN_DEPTH_FUNC_ALWAYS;   // DM_VK_DEPTHOVR
-    DY_SET1(dc, (uint32_t)(dfv >= 1 && dfv <= 8 ? (VkCompareOp)(dfv - 1) : VK_COMPARE_OP_ALWAYS), vk.vkCmdSetDepthCompareOp(g_cb, DY.dc));
-    DY_SET1(dbt, (uint32_t)(VK_FALSE), vk.vkCmdSetDepthBoundsTestEnable(g_cb, DY.dbt));
-    DY_SET1(stt, (uint32_t)(hs && d->ds.st), vk.vkCmdSetStencilTestEnable(g_cb, DY.stt));
+    DY_SET1(VKA_DYN_DC, dc, (uint32_t)(dfv >= 1 && dfv <= 8 ? (VkCompareOp)(dfv - 1) : VK_COMPARE_OP_ALWAYS), vk.vkCmdSetDepthCompareOp(g_cb, DY.dc));
+    DY_SET1(VKA_DYN_DBT, dbt, (uint32_t)(VK_FALSE), vk.vkCmdSetDepthBoundsTestEnable(g_cb, DY.dbt));
+    DY_SET1(VKA_DYN_STT, stt, (uint32_t)(hs && d->ds.st), vk.vkCmdSetStencilTestEnable(g_cb, DY.stt));
     #define SOP(x) ((x) >= 1 && (x) <= 8 ? (VkStencilOp)((x) - 1) : VK_STENCIL_OP_KEEP)
     #define SCMP(x) ((x) >= 1 && (x) <= 8 ? (VkCompareOp)((x) - 1) : VK_COMPARE_OP_ALWAYS)
     { uint32_t so[8] = {SOP(d->ds.fail_f), SOP(d->ds.zpass_f), SOP(d->ds.zfail_f), SCMP(d->ds.sf_f), SOP(d->ds.fail_b), SOP(d->ds.zpass_b), SOP(d->ds.zfail_b), SCMP(d->ds.sf_b)};
-      DY_SET(sop, so, (vk.vkCmdSetStencilOp(g_cb, VK_STENCIL_FACE_FRONT_BIT, so[0], so[1], so[2], so[3]), vk.vkCmdSetStencilOp(g_cb, VK_STENCIL_FACE_BACK_BIT, so[4], so[5], so[6], so[7]))); }
+      DY_SET(VKA_DYN_SOP, sop, so, (vk.vkCmdSetStencilOp(g_cb, VK_STENCIL_FACE_FRONT_BIT, so[0], so[1], so[2], so[3]), vk.vkCmdSetStencilOp(g_cb, VK_STENCIL_FACE_BACK_BIT, so[4], so[5], so[6], so[7]))); }
     #undef SOP
     #undef SCMP
     { uint32_t sm[6] = {d->st_vmask[0], d->st_vmask[1], d->st_wmask[0], d->st_wmask[1], d->st_ref[0], d->st_ref[1]};
-      DY_SET(smask, sm, (vk.vkCmdSetStencilCompareMask(g_cb, VK_STENCIL_FACE_FRONT_BIT, sm[0]), vk.vkCmdSetStencilCompareMask(g_cb, VK_STENCIL_FACE_BACK_BIT, sm[1]),
+      DY_SET(VKA_DYN_SMASK, smask, sm, (vk.vkCmdSetStencilCompareMask(g_cb, VK_STENCIL_FACE_FRONT_BIT, sm[0]), vk.vkCmdSetStencilCompareMask(g_cb, VK_STENCIL_FACE_BACK_BIT, sm[1]),
                          vk.vkCmdSetStencilWriteMask(g_cb, VK_STENCIL_FACE_FRONT_BIT, sm[2]), vk.vkCmdSetStencilWriteMask(g_cb, VK_STENCIL_FACE_BACK_BIT, sm[3]),
                          vk.vkCmdSetStencilReference(g_cb, VK_STENCIL_FACE_FRONT_BIT, sm[4]), vk.vkCmdSetStencilReference(g_cb, VK_STENCIL_FACE_BACK_BIT, sm[5]))); }
     int bias_bit = d->poly.mode == NVN_POLYGON_MODE_POINT ? NVN_POLYGON_OFFSET_ENABLE_POINT : d->poly.mode == NVN_POLYGON_MODE_LINE ? NVN_POLYGON_OFFSET_ENABLE_LINE : NVN_POLYGON_OFFSET_ENABLE_FILL;
     int bias = (d->poly.offset_en & bias_bit) != 0;
-    DY_SET1(dbe, (uint32_t)(bias), vk.vkCmdSetDepthBiasEnable(g_cb, DY.dbe));
-    { float db[3] = {bias ? d->po.units : 0, bias && V.depth_bias_clamp ? d->po.clamp : 0, bias ? d->po.factor : 0}; DY_SET(db, db, vk.vkCmdSetDepthBias(g_cb, db[0], db[1], db[2])); }
-    DY_SET1(rd, (uint32_t)(d->rast_discard != 0), vk.vkCmdSetRasterizerDiscardEnable(g_cb, DY.rd));
-    DY_SET(bc, d->blend_color, vk.vkCmdSetBlendConstants(g_cb, d->blend_color));
-    if (!DY.valid) vk.vkCmdSetLineWidth(g_cb, 1.0f);
+    DY_SET1(VKA_DYN_DBE, dbe, (uint32_t)(bias), vk.vkCmdSetDepthBiasEnable(g_cb, DY.dbe));
+    { float db[3] = {bias ? d->po.units : 0, bias && V.depth_bias_clamp ? d->po.clamp : 0, bias ? d->po.factor : 0}; DY_SET(VKA_DYN_DB, db, db, vk.vkCmdSetDepthBias(g_cb, db[0], db[1], db[2])); }
+    DY_SET1(VKA_DYN_RD, rd, (uint32_t)(d->rast_discard != 0), vk.vkCmdSetRasterizerDiscardEnable(g_cb, DY.rd));
+    DY_SET(VKA_DYN_BC, bc, d->blend_color, vk.vkCmdSetBlendConstants(g_cb, d->blend_color));
+    if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_LW) || !g_dyn_filter) { vka_dyn_clear(&DY.dirty, VKA_DYN_LW); vk.vkCmdSetLineWidth(g_cb, 1.0f); }
     int restart = di && d->restart.on;
     if (restart) { uint32_t all = di->itype == 0 ? 0xff : di->itype == 1 ? 0xffff : 0xffffffffu; if (d->restart.index != all) VRED_ONCE("primitive restart index %#x is not the all-ones index Vulkan restarts at", d->restart.index); }
-    if (!mesh) DY_SET1(pr, (uint32_t)(restart), vk.vkCmdSetPrimitiveRestartEnable(g_cb, DY.pr));
+    if (!mesh) DY_SET1(VKA_DYN_PR, pr, (uint32_t)(restart), vk.vkCmdSetPrimitiveRestartEnable(g_cb, DY.pr));
     if (V.fb_loop) {
         uint32_t fm = (fbl_seen & VK_IMAGE_ASPECT_COLOR_BIT) | ((fbl_seen & VK_IMAGE_ASPECT_DEPTH_BIT) && DY.dw ? VK_IMAGE_ASPECT_DEPTH_BIT : 0);
         if (fm) {
@@ -3095,7 +3103,51 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             if (k == ns && ns < 16) { seen[ns++] = key; VLOG("feedback loop: fragment %016llx samples its pass's own %s attachment (%u x %u): announced as a feedback loop (%d shaders so far)",
                                                           (unsigned long long)key, fm & VK_IMAGE_ASPECT_COLOR_BIT ? (fm & VK_IMAGE_ASPECT_DEPTH_BIT ? "colour and depth" : "colour") : "depth", R.area.extent.width, R.area.extent.height, ns); }
         }
-        DY_SET1(fbl, fm, vk.vkCmdSetAttachmentFeedbackLoopEnableEXT(g_cb, DY.fbl));
+        DY_SET1(VKA_DYN_FBL, fbl, fm, vk.vkCmdSetAttachmentFeedbackLoopEnableEXT(g_cb, DY.fbl));
+    }
+    {
+        uint32_t eds = V.eds_mask;
+        if (vka_classic_rp()) eds &= ~(uint32_t)(VKA_EDS_RAST_SAMPLES | VKA_EDS_SAMPLE_MASK);
+        if (eds & VKA_EDS_DEPTH_CLAMP) DY_SET1(VKA_DYN_DCLAMP, dclamp, k.depth_clamp ? 1u : 0u, vk.vkCmdSetDepthClampEnableEXT(g_cb, DY.dclamp));
+        if (eds & VKA_EDS_POLYGON_MODE) DY_SET1(VKA_DYN_PMODE, pmode, (uint32_t)k.poly_mode, vk.vkCmdSetPolygonModeEXT(g_cb, (VkPolygonMode)DY.pmode));
+        if (!mesh && (sh[3] || sh[4]) && (eds & VKA_EDS_PATCH_CP)) DY_SET1(VKA_DYN_PATCH_CP, patch_cp, 3u, vk.vkCmdSetPatchControlPointsEXT(g_cb, DY.patch_cp));
+        if (eds & VKA_EDS_RAST_SAMPLES) DY_SET1(VKA_DYN_RSAMP, rsamp, (uint32_t)(k.samples ? k.samples : 1), vk.vkCmdSetRasterizationSamplesEXT(g_cb, (VkSampleCountFlagBits)DY.rsamp));
+        if (eds & VKA_EDS_SAMPLE_MASK) {
+            uint32_t sc = k.samples ? k.samples : 1u, sm = 0xFFFFFFFFu;
+            if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_SAMPLE_MASK) || !g_dyn_filter || DY.smask_s != sc || DY.smask_v != sm) {
+                DY.smask_s = sc; DY.smask_v = sm; vka_dyn_clear(&DY.dirty, VKA_DYN_SAMPLE_MASK);
+                vk.vkCmdSetSampleMaskEXT(g_cb, (VkSampleCountFlagBits)sc, &sm);
+            }
+        }
+        if (eds & VKA_EDS_ALPHA_TO_COV) DY_SET1(VKA_DYN_A2C, a2c, k.a2c ? 1u : 0u, vk.vkCmdSetAlphaToCoverageEnableEXT(g_cb, DY.a2c));
+        if (eds & VKA_EDS_LOGIC_OP_ENABLE) DY_SET1(VKA_DYN_LOGEN, logen, k.logic_en ? 1u : 0u, vk.vkCmdSetLogicOpEnableEXT(g_cb, DY.logen));
+        if (eds & VKA_EDS_LOGIC_OP) DY_SET1(VKA_DYN_LOGOP, logop, (uint32_t)k.logic_op, vk.vkCmdSetLogicOpEXT(g_cb, (VkLogicOp)DY.logop));
+        if (k.ncolor > 0) {
+            if (eds & VKA_EDS_COLOR_BLEND_ENABLE) {
+                VkBool32 en[8]; for (uint32_t i = 0; i < k.ncolor; i++) en[i] = k.att[i].en ? VK_TRUE : VK_FALSE;
+                if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_BLEND_EN) || !g_dyn_filter || DY.nc_ben < k.ncolor || memcmp(DY.ben, en, k.ncolor * sizeof *en)) {
+                    memcpy(DY.ben, en, k.ncolor * sizeof *en); DY.nc_ben = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EN);
+                    vk.vkCmdSetColorBlendEnableEXT(g_cb, 0, k.ncolor, en);
+                }
+            }
+            if (eds & VKA_EDS_COLOR_BLEND_EQ) {
+                VkColorBlendEquationEXT eq[8];
+                for (uint32_t i = 0; i < k.ncolor; i++)
+                    eq[i] = (VkColorBlendEquationEXT){(VkBlendFactor)k.att[i].src, (VkBlendFactor)k.att[i].dst, (VkBlendOp)k.att[i].op,
+                                                      (VkBlendFactor)k.att[i].srca, (VkBlendFactor)k.att[i].dsta, (VkBlendOp)k.att[i].opa};
+                if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_BLEND_EQ) || !g_dyn_filter || DY.nc_beq < k.ncolor || memcmp(DY.beq, eq, k.ncolor * sizeof *eq)) {
+                    memcpy(DY.beq, eq, k.ncolor * sizeof *eq); DY.nc_beq = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EQ);
+                    vk.vkCmdSetColorBlendEquationEXT(g_cb, 0, k.ncolor, eq);
+                }
+            }
+            if (eds & VKA_EDS_COLOR_WRITE_MASK) {
+                VkColorComponentFlags wm[8]; for (uint32_t i = 0; i < k.ncolor; i++) wm[i] = (VkColorComponentFlags)k.att[i].mask;
+                if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_WRITE_MASK) || !g_dyn_filter || DY.nc_cwm < k.ncolor || memcmp(DY.cwm, wm, k.ncolor * sizeof *wm)) {
+                    memcpy(DY.cwm, wm, k.ncolor * sizeof *wm); DY.nc_cwm = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_WRITE_MASK);
+                    vk.vkCmdSetColorWriteMaskEXT(g_cb, 0, k.ncolor, wm);
+                }
+            }
+        }
     }
     DY.valid = 1;
     if (g_rtl_pass && rtl_room()) {   // DM_VK_RT_LOG: the draw's state

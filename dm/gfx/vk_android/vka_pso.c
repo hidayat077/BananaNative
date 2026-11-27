@@ -360,7 +360,7 @@ typedef struct {
     VkVertexInputBindingDescription vb[33]; VkVertexInputAttributeDescription va[32]; VkVertexInputBindingDivisorDescription vd[33];
     VkPipelineVertexInputDivisorStateCreateInfo vds; VkPipelineVertexInputStateCreateInfo vi; VkPipelineInputAssemblyStateCreateInfo ia; VkPipelineTessellationStateCreateInfo ts;
     VkPipelineViewportStateCreateInfo vp; VkPipelineRasterizationStateCreateInfo rs; VkPipelineMultisampleStateCreateInfo ms; VkPipelineDepthStencilStateCreateInfo ds;
-    VkPipelineColorBlendAttachmentState cb[8]; VkPipelineColorBlendStateCreateInfo bs; VkDynamicState dyn[24]; VkPipelineDynamicStateCreateInfo dy;
+    VkPipelineColorBlendAttachmentState cb[8]; VkPipelineColorBlendStateCreateInfo bs; VkDynamicState dyn[40]; VkPipelineDynamicStateCreateInfo dy;
     VkFormat cf[8]; VkPipelineRenderingCreateInfo ri; VkGraphicsPipelineCreateInfo ci; int tess, mesh;   // mesh: a task / mesh pipeline (pstate_fill)
     VkDescriptorSetLayout set0;   // the layout's set 0 (the library probe's independent-sets layout)
     vka_shader *sh[VKA_NSTAGE];
@@ -379,6 +379,17 @@ static void fout_masks(const vka_shader *fs, const vka_gkey *k, uint32_t *um, ui
         int c = vkf_int_class(k->cfmt[i]);
         if (c && (fs->e->fout_mask >> i & 1) && (fs->e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (c == 1) *um |= 1u << i; else *sm |= 1u << i; }
     }
+}
+// Optional EDS2/EDS3 dynamic states active for a pipeline (classic render passes bake sample count)
+static uint32_t active_eds_mask(int mesh) {
+    uint32_t m = V.eds_mask;
+    if (vka_classic_rp()) m &= ~(uint32_t)(VKA_EDS_RAST_SAMPLES | VKA_EDS_SAMPLE_MASK);
+    if (mesh) m &= ~(uint32_t)VKA_EDS_PATCH_CP;
+    return m;
+}
+static void runtime_gkey(vka_shader *const sh[VKA_NSTAGE], const vka_gkey *k_canon, vka_gkey *k_rt) {
+    int keep_a2c = sh[1] && vka_tex_pfb_flags() && vka_shader_pfb_has_twin(sh[1]->mods[DMSH_VK_MOD_BASE]);
+    vka_eds_runtime_key(k_canon, active_eds_mask(sh[7] != NULL), keep_a2c, k_rt);
 }
 // 0 = a stage's module is missing (logged by vka_shader_module)
 static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k) {
@@ -461,6 +472,18 @@ static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_la
         if (!mesh || (base[i] != VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY && base[i] != VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE)) P->dyn[nd++] = base[i];
     if (!k->vin_static && !mesh) P->dyn[nd++] = VK_DYNAMIC_STATE_VERTEX_INPUT_EXT;
     if (V.fb_loop) P->dyn[nd++] = VK_DYNAMIC_STATE_ATTACHMENT_FEEDBACK_LOOP_ENABLE_EXT;
+    uint32_t eds = active_eds_mask(mesh);
+    if (eds & VKA_EDS_DEPTH_CLAMP) P->dyn[nd++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
+    if (eds & VKA_EDS_POLYGON_MODE) P->dyn[nd++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
+    if (!mesh && (sh[3] || sh[4]) && (eds & VKA_EDS_PATCH_CP)) P->dyn[nd++] = VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT;
+    if (eds & VKA_EDS_RAST_SAMPLES) P->dyn[nd++] = VK_DYNAMIC_STATE_RASTERIZATION_SAMPLES_EXT;
+    if (eds & VKA_EDS_SAMPLE_MASK) P->dyn[nd++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
+    if (eds & VKA_EDS_ALPHA_TO_COV) P->dyn[nd++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;
+    if (eds & VKA_EDS_LOGIC_OP_ENABLE) P->dyn[nd++] = VK_DYNAMIC_STATE_LOGIC_OP_ENABLE_EXT;
+    if (eds & VKA_EDS_LOGIC_OP) P->dyn[nd++] = VK_DYNAMIC_STATE_LOGIC_OP_EXT;
+    if (eds & VKA_EDS_COLOR_BLEND_ENABLE) P->dyn[nd++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT;
+    if (eds & VKA_EDS_COLOR_BLEND_EQ) P->dyn[nd++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT;
+    if (eds & VKA_EDS_COLOR_WRITE_MASK) P->dyn[nd++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT;
     P->dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = nd, .pDynamicStates = P->dyn};
     for (int i = 0; i < k->ncolor; i++) P->cf[i] = (VkFormat)k->cfmt[i];
     P->ri = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor, .pColorAttachmentFormats = P->cf,
@@ -717,19 +740,28 @@ static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPip
     return p;
 }
 // Each library names only the dynamic states of its own part (the Adreno 840's driver refused a pre-rasterization library given the whole list, VK_ERROR_UNKNOWN);
-// the link takes them from the libraries
-static int dyn_part(VkDynamicState d) {
+// multisample dynamic states belong to both fragment shader and fragment output libraries; the link takes them from the libraries
+static uint32_t dyn_part_mask(VkDynamicState d) {
     switch (d) {
-    case VK_DYNAMIC_STATE_VERTEX_INPUT_EXT: case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY: case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE: return L_VI;
-    case VK_DYNAMIC_STATE_VIEWPORT: case VK_DYNAMIC_STATE_SCISSOR: case VK_DYNAMIC_STATE_LINE_WIDTH: case VK_DYNAMIC_STATE_DEPTH_BIAS: case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE:
-    case VK_DYNAMIC_STATE_CULL_MODE: case VK_DYNAMIC_STATE_FRONT_FACE: case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE: return L_PRE;
-    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: case VK_DYNAMIC_STATE_ATTACHMENT_FEEDBACK_LOOP_ENABLE_EXT: return L_FO;
-    default: return L_FS;   // depth and stencil tests, depth bounds
+    case VK_DYNAMIC_STATE_VERTEX_INPUT_EXT: case VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY: case VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE:
+        return 1u << L_VI;
+    case VK_DYNAMIC_STATE_VIEWPORT: case VK_DYNAMIC_STATE_SCISSOR: case VK_DYNAMIC_STATE_LINE_WIDTH: case VK_DYNAMIC_STATE_DEPTH_BIAS:
+    case VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE: case VK_DYNAMIC_STATE_CULL_MODE: case VK_DYNAMIC_STATE_FRONT_FACE:
+    case VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE: case VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT:
+    case VK_DYNAMIC_STATE_POLYGON_MODE_EXT: case VK_DYNAMIC_STATE_PATCH_CONTROL_POINTS_EXT:
+        return 1u << L_PRE;
+    case VK_DYNAMIC_STATE_RASTERIZATION_SAMPLES_EXT: case VK_DYNAMIC_STATE_SAMPLE_MASK_EXT: case VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT:
+        return (1u << L_FS) | (1u << L_FO);
+    case VK_DYNAMIC_STATE_BLEND_CONSTANTS: case VK_DYNAMIC_STATE_ATTACHMENT_FEEDBACK_LOOP_ENABLE_EXT:
+    case VK_DYNAMIC_STATE_LOGIC_OP_ENABLE_EXT: case VK_DYNAMIC_STATE_LOGIC_OP_EXT:
+    case VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT: case VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT: case VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT:
+        return 1u << L_FO;
+    default: return 1u << L_FS;   // depth and stencil tests, depth bounds
     }
 }
 static void dyn_of(const pstate *P, int part, VkDynamicState *out, VkPipelineDynamicStateCreateInfo *dy) {
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) { int d = dyn_part(P->dyn[i]); if (d == part || (part == L_PREFS && (d == L_PRE || d == L_FS))) out[n++] = P->dyn[i]; }
+    uint32_t n = 0, want = part == L_PREFS ? ((1u << L_PRE) | (1u << L_FS)) : (1u << part);
+    for (uint32_t i = 0; i < P->dy.dynamicStateCount; i++) if (dyn_part_mask(P->dyn[i]) & want) out[n++] = P->dyn[i];
     *dy = (VkPipelineDynamicStateCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = n, .pDynamicStates = out};
 }
 // One try of the probe: the library made (and destroyed), its result
@@ -773,7 +805,7 @@ static unsigned pre_probe(const VkGraphicsPipelineCreateInfo *ci0, const pstate 
     VkResult r_comb = VK_ERROR_UNKNOWN;
     {   // Pre-rasterization and the fragment shader in one library
         VkPipelineShaderStageCreateInfo both[5]; uint32_t nb = 0; for (uint32_t i = 0; i < npre; i++) both[nb++] = pre[i]; if (fs) both[nb++] = *fs;
-        VkDynamicState dl[24]; VkPipelineDynamicStateCreateInfo dy; dyn_of(P, L_PREFS, dl, &dy);
+        VkDynamicState dl[40]; VkPipelineDynamicStateCreateInfo dy; dyn_of(P, L_PREFS, dl, &dy);
         c = *ci0; c.stageCount = nb; c.pStages = both; c.pMultisampleState = &P->ms; c.pDepthStencilState = &P->ds; c.pDynamicState = &dy;
         r_comb = try_lib(c, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, g_pc, 0); NOTE("with the fragment shader", r_comb);
         c.pDynamicState = NULL; c.pViewportState = &vps;
@@ -796,7 +828,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
     const vka_shader *pre0 = P->mesh ? P->sh[7] : P->sh[0];
     uint64_t vs_key = pre0 ? pre0->key : 0;
     uint64_t fs_key = P->sh[1] ? P->sh[1]->key : 0;
-    VkDynamicState dl[NLIB][24]; VkPipelineDynamicStateCreateInfo dy[NLIB];
+    VkDynamicState dl[NLIB][40]; VkPipelineDynamicStateCreateInfo dy[NLIB];
     for (int i = 0; i < NLIB; i++) dyn_of(P, i, dl[i], &dy[i]);
     VkPipeline part[4]; uint32_t nparts = 0;
     {   vikey key; memset(&key, 0, sizeof key); key.topo = k->topo; key.vin_static = k->vin_static;
@@ -1172,7 +1204,7 @@ static void pw_explain(int kind, vka_shader *const sh[5], const vka_gkey *k, uin
     else VLOG("pipeline made%s (%.1f ms%s), not in the prewarm list: %d records with these shaders, the nearest differs in %s", where,
               ms, linked ? ", linked" : "", same_sh, d[0] ? d : "nothing: the same key (the prewarm threads had not reached it yet)");
 }
-static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int *made);
+static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k_rt, const vka_gkey *k_canon, int prewarm, int *made);
 static VkPipeline cs_obtain(vka_shader *cs, const vka_layout *lay, int prewarm, int *made, uint64_t umask, uint64_t smask, int frame);
 // MemAvailable in MiB (/proc/meminfo; 0 = not known)
 static uint64_t mem_avail_mb(void) {
@@ -1261,12 +1293,13 @@ static void *pw_main(void *a) {
             cs_obtain(sh[5], &lay, 1, &made, m[0], m[1], 0);
         }
         else {
-            vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
+            vka_gkey k, k_rt; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
             if (k.vin_static != (uint32_t)!V.vin_dyn) { atomic_fetch_add(&g_pw_bad, 1); }   // a list from a device with the other vertex input (not this one's keys)
             else {
-                gkey_full fk; memset(&fk, 0, sizeof fk); memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay.layout; fk.k = k;
-                size_t len = k.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
-                gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, &lay, &k, 1, &made);
+                runtime_gkey(sh, &k, &k_rt);
+                gkey_full fk; memset(&fk, 0, sizeof fk); memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay.layout; fk.k = k_rt;
+                size_t len = k_rt.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
+                gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, &lay, &k_rt, &k, 1, &made);
             }
         }
         if (!bad) spec_end(key);
@@ -1316,7 +1349,7 @@ static void busy_wait(gval *g) {
 // shaders do. A skipped draw is missing from that frame only, except where the game keeps what it drew (a texture drawn once and reused): that stays wrong until redrawn.
 // Mesh pipelines are still made on the frame path; compute pipelines go through the same queue (DM_VK_CS_ASYNC, cs_obtain). Open: the cause, slow library compiles on
 // Turnip, is not addressed. cs: a compute job (sh[5] its shader, g an entry of g_cs; len, k unused)
-typedef struct as_job { struct as_job *next; gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k; uint64_t t0, cost; int cs; uint64_t umask, smask; } as_job;   // umask, smask: a compute job's retyped images (cs_obtain)
+typedef struct as_job { struct as_job *next; gval *g; size_t len; vka_shader *sh[VKA_NSTAGE]; vka_layout lay; vka_gkey k, k_canon; uint64_t t0, cost; int cs; uint64_t umask, smask; } as_job;   // umask, smask: a compute job's retyped images (cs_obtain)
 static as_job *g_as_head, **g_as_tail = &g_as_head; static pthread_mutex_t g_as_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_as_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic uint64_t g_as_queued, g_as_made, g_as_skips, g_as_ns, g_as_lat_max_ns; static _Atomic int g_as_depth, g_as_depth_max;
 // The queue's order (vka_psogate.h vkpg_take_oldest): the job of least predicted cost first, the oldest in its turn. DM_VK_PSO_ORDER=0 (restart): arrival order, as
@@ -1334,7 +1367,7 @@ static uint64_t as_cost(vka_shader *const sh[VKA_NSTAGE]) {
     }
     return c;
 }
-static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int async, uint64_t t_make);
+static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k_rt, const vka_gkey *k_canon, int prewarm, int async, uint64_t t_make);
 static void cs_build(gval *g, vka_shader *cs, const vka_layout *lay, VkShaderModule csm, uint64_t umask, uint64_t smask, int prewarm, int async);
 static void *as_main(void *a) {
     (void)a; pthread_setname_np(pthread_self(), "vk-psoasync"); vka_fp_host("vk-psoasync");
@@ -1358,7 +1391,7 @@ static void *as_main(void *a) {
         gate_hold(tok, key);
         uint64_t t0 = now_ns();
         if (j->cs) cs_build(j->g, j->sh[5], &j->lay, j->umask | j->smask ? vka_shader_img_module(j->sh[5], j->umask, j->smask) : vka_shader_cs_module(j->sh[5]), j->umask, j->smask, 0, 1);
-        else gfx_build(j->g, j->len, j->sh, &j->lay, &j->k, 0, 1, j->t0);
+        else gfx_build(j->g, j->len, j->sh, &j->lay, &j->k, &j->k_canon, 0, 1, j->t0);
         gate_leave(tok);
         uint64_t t1 = now_ns(), lat = t1 - j->t0, cur = atomic_load(&g_as_lat_max_ns);
         while (lat > cur && !atomic_compare_exchange_weak(&g_as_lat_max_ns, &cur, lat)) {}
@@ -1379,10 +1412,10 @@ static void as_start(void) {
     if (v) VLOG("asynchronous pipelines: %d of %d background threads (DM_VK_PSO_ASYNC): a pipeline the cache lacks is made off the frame path and its draws are skipped until then", g_as_n, v);
 }
 static int as_threads(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, as_start); return g_as_n; }
-static void as_queue(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, uint64_t t0) {
+static void as_queue(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k_rt, const vka_gkey *k_canon, uint64_t t0) {
     as_job *j = malloc(sizeof *j);
-    if (!j) { gfx_build(g, len, sh, lay, k, 0, 0, t0); return; }
-    j->next = NULL; j->g = g; j->len = len; memcpy(j->sh, sh, sizeof j->sh); j->lay = *lay; j->k = *k; j->t0 = t0; j->cost = as_cost(sh); j->cs = 0;
+    if (!j) { gfx_build(g, len, sh, lay, k_rt, k_canon, 0, 0, t0); return; }
+    j->next = NULL; j->g = g; j->len = len; memcpy(j->sh, sh, sizeof j->sh); j->lay = *lay; j->k = *k_rt; j->k_canon = *k_canon; j->t0 = t0; j->cost = as_cost(sh); j->cs = 0;
     int d = atomic_fetch_add(&g_as_depth, 1) + 1, m = atomic_load(&g_as_depth_max);
     while (d > m && !atomic_compare_exchange_weak(&g_as_depth_max, &m, d)) {}
     atomic_fetch_add(&g_as_queued, 1);
@@ -1404,7 +1437,7 @@ void vka_pso_async_line(char *out, size_t n) {
              g_as_order ? "least cost first, the oldest in turn (DM_VK_PSO_ORDER)" : "in arrival order (DM_VK_PSO_ORDER=0)",
              (unsigned long long)cn, cl, (unsigned long long)on, ol);
 }
-static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int *made) {
+static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k_rt, const vka_gkey *k_canon, int prewarm, int *made) {
     *made = 0;
     int async = !prewarm && !sh[7] && as_threads() > 0;
     pthread_mutex_lock(&g_mu);
@@ -1422,7 +1455,7 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
         pc_open();
         VkPipeline p = VK_NULL_HANDLE;
         pstate *P = malloc(sizeof *P);
-        if (P && gpl_on() && pstate_fill(P, sh, lay, k)) {   // (the cache-only try needs pipelineCreationCacheControl, which GPL is on with)
+        if (P && gpl_on() && pstate_fill(P, sh, lay, k_rt)) {   // (the cache-only try needs pipelineCreationCacheControl, which GPL is on with)
             P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
             uint64_t t0 = now_ns();
             VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
@@ -1435,28 +1468,28 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
         }
         free(P);
         if (p) {
-            pw_note(VKA_PW_GFX, sh, k, (uint32_t)(len - offsetof(gkey_full, k))); pw_explain(VKA_PW_GFX, sh, k, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, 0, " on the frame path");
+            pw_note(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k))); pw_explain(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, 0, " on the frame path");
             pthread_mutex_lock(&g_mu); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE); pthread_cond_broadcast(&g_busy_cv); pthread_mutex_unlock(&g_mu);
             *made = 1;
             return g;
         }
-        as_queue(g, len, sh, lay, k, t_make);
+        as_queue(g, len, sh, lay, k_rt, k_canon, t_make);
         *made = 1;
         return g;
     }
-    gfx_build(g, len, sh, lay, k, prewarm, 0, t_make);
+    gfx_build(g, len, sh, lay, k_rt, k_canon, prewarm, 0, t_make);
     *made = 1;
     return g;
 }
 // A new entry g (busy) made and published. async: a frame-path miss made on a background thread (as_main): linked from parts like the frame path, its time not the frame's
-static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k, int prewarm, int async, uint64_t t_make) {
+static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k_rt, const vka_gkey *k_canon, int prewarm, int async, uint64_t t_make) {
     pc_open();
     VkPipeline p = VK_NULL_HANDLE; int linked = 0;
     pstate *P = malloc(sizeof *P);
-    if (P && pstate_fill(P, sh, lay, k)) {   // (else logged by vka_shader_module)
+    if (P && pstate_fill(P, sh, lay, k_rt)) {   // (else logged by vka_shader_module)
         if (async && gpl_on() && !P->mesh) {
             uint64_t t1 = now_ns();
-            p = gpl_link(P, k);
+            p = gpl_link(P, k_rt);
             if (p) { linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_create_ms += (now_ns() - t1) / 1e6; pthread_mutex_unlock(&g_mu); }
         }
         else if (!prewarm && !async && gpl_on() && !P->mesh) {   // (a mesh pipeline is made whole: the libraries here are cut for vertex input pipelines)
@@ -1474,7 +1507,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
                 pthread_mutex_lock(&g_mu); g_probe_miss++; g_probe_miss_ns += dns; g_create_ns += dns; pthread_mutex_unlock(&g_mu);
                 p = VK_NULL_HANDLE;
                 uint64_t t1 = now_ns();
-                p = gpl_link(P, k);
+                p = gpl_link(P, k_rt);
                 if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
                 else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }   // the refused parts' time is the frame's too
             }
@@ -1482,13 +1515,13 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
         if (!p && !linked) p = full_pipeline(P, sh, prewarm ? " (prewarm)" : async ? " in the background (asynchronous)" : NULL);
     }
     free(P);
-    if (!prewarm) { int kind; vka_shader *s5[5]; pw_slots(sh, s5, &kind); pw_note(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k)));
-                    pw_explain(kind, s5, k, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, async ? " in the background" : " on the frame path"); }
+    if (!prewarm) { int kind; vka_shader *s5[5]; pw_slots(sh, s5, &kind); pw_note(kind, s5, k_canon, (uint32_t)(len - offsetof(gkey_full, k)));
+                    pw_explain(kind, s5, k_canon, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, async ? " in the background" : " on the frame path"); }
     pthread_mutex_lock(&g_mu);
     __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE);
     pthread_cond_broadcast(&g_busy_cv);
     pthread_mutex_unlock(&g_mu);
-    if (linked) opt_queue(g, sh, lay, k);
+    if (linked) opt_queue(g, sh, lay, k_rt);
 }
 _Thread_local int vka_pso_wait;   // set by the pipeline calls of a draw or dispatch: the NULL they return is a pipeline still being made on the asynchronous threads (not a refusal), vka.h
 static inline VkPipeline gval_use(gval *g) {
@@ -1501,14 +1534,18 @@ static inline VkPipeline gval_use(gval *g) {
 }
 VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k) {
     static gkey_full fk, last; static gval *last_g;
+    // Canonical -> runtime key: fields handled dynamically by active EDS2/EDS3 bits are masked to zero for pipeline lookup and creation,
+    // while the canonical key k is preserved for on-disk prewarm lists (pw_note).
+    vka_gkey k_rt;
+    runtime_gkey(sh, k, &k_rt);
     // With vertex input dynamic state the key's static vertex input (va, vb: two thirds of it) stays zero: only what comes before it is hashed and compared with the
     // previous draw's key (draws in a row often share their pipeline). The entry's pipeline is read at each draw: the optimized one replaces a linked one in place
-    size_t len = k->vin_static ? sizeof fk : offsetof(gkey_full, k.va);
+    size_t len = k_rt.vin_static ? sizeof fk : offsetof(gkey_full, k.va);
     memset(&fk, 0, len);   // (the rest stays zero: vin_static is the device's, the same for every key)
-    memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay->layout; memcpy(&fk.k, k, len - offsetof(gkey_full, k));
+    memcpy(fk.sh, sh, sizeof fk.sh); fk.layout = lay->layout; memcpy(&fk.k, &k_rt, len - offsetof(gkey_full, k));
     if (last_g && !memcmp(&fk, &last, len)) return gval_use(last_g);
     int made;
-    gval *g = gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, lay, k, 0, &made);
+    gval *g = gfx_obtain(&fk, fnv(&fk, len, 1469598103934665603ull), len, sh, lay, &k_rt, k, 0, &made);
     memcpy(&last, &fk, len); last_g = g;
     return gval_use(g);
 }

@@ -504,7 +504,9 @@ DM_VK_DRV_MEMO	developer	Memory			text			both
 DM_VK_DRV_STAMP	developer	Graphics			text			both							
 DM_VK_DS_FIRST_HERE	developer	Graphics			text			both							
 DM_VK_DYN_FILTER	developer	Diagnostics			text			both							
+DM_VK_DYNAMIC_STATE	developer	Graphics			text		On where the device has it	both							
 DM_VK_EAGER_TEX	developer	Diagnostics			text			both							
+DM_VK_EDS3	developer	Graphics			text		On on Turnip where the device has it; off on other drivers	both							
 DM_VK_ENC	developer	Graphics			text			both							
 DM_VK_ENC_BATCH	developer	Graphics			text			both							
 DM_VK_ENC_SPIN	developer	Performance			text			both							

@@ -312,6 +312,14 @@ VkShaderModule vka_shader_pfb_pick(VkShaderModule m, int a2c, int alpha_func) {
     pthread_mutex_unlock(&g_twmu);
     return r;
 }
+int vka_shader_pfb_has_twin(VkShaderModule m) {
+    if (!m || !atomic_load_explicit(&g_pfb_early, memory_order_relaxed)) return 0;
+    int has = 0;
+    pthread_mutex_lock(&g_twmu);
+    for (size_t i = 0; i < g_ntw; i++) if (g_tw[i].early == m) { has = 1; break; }
+    pthread_mutex_unlock(&g_twmu);
+    return has;
+}
 
 // ---------- Shaders by key ----------
 // By key and library; a shader of the run-time layer by key and entry hash under g_ly_tag instead: it keeps its own copy of the entry (vka_shlib_extract), so a new layer

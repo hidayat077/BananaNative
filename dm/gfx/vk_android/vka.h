@@ -12,6 +12,7 @@
 #include "../../host/dm.h"
 #include "vka_fmtlist.h"
 #include "vka_soft.h"
+#include "vka_eds.h"
 
 #define VLOG(...) LOG("[vk] " __VA_ARGS__)
 #define VRED(...) LOG("[RED] vk: " __VA_ARGS__)
@@ -49,6 +50,9 @@
     X(vkCmdSetAttachmentFeedbackLoopEnableEXT) \
     X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdSetDepthBiasEnable) \
     X(vkCmdSetRasterizerDiscardEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetBlendConstants) X(vkCmdSetLineWidth) \
+    X(vkCmdSetLogicOpEXT) X(vkCmdSetPatchControlPointsEXT) \
+    X(vkCmdSetDepthClampEnableEXT) X(vkCmdSetPolygonModeEXT) X(vkCmdSetRasterizationSamplesEXT) X(vkCmdSetSampleMaskEXT) \
+    X(vkCmdSetAlphaToCoverageEnableEXT) X(vkCmdSetLogicOpEnableEXT) X(vkCmdSetColorBlendEnableEXT) X(vkCmdSetColorBlendEquationEXT) X(vkCmdSetColorWriteMaskEXT) \
     X(vkCmdPushDescriptorSetKHR) X(vkCmdSetVertexInputEXT) X(vkCmdPushConstants) X(vkCmdDrawMeshTasksEXT) X(vkCmdDrawMeshTasksIndirectEXT) \
     X(vkCmdDrawIndirectCount) X(vkCmdDrawIndexedIndirectCount)
 #define VKA_DECL(f) PFN_##f f;
@@ -119,6 +123,8 @@ typedef struct {
     int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (default off; DM_VK_FB_LOOP=1 turns them on): a draw sampling its own attachment says so (vka_draw.c)
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
+    int dyn_state_on;                               // DM_VK_DYNAMIC_STATE (default 1; 0 disables optional EDS2/EDS3 and defaults vin_dyn off)
+    uint32_t eds_mask;                              // VKA_EDS_* bitmask of active optional EDS2/EDS3 dynamic states (vka_eds.h)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
     uint32_t subgroup_req_stages;                   // VkShaderStageFlags a pipeline may pin the subgroup size in (requiredSubgroupSizeStages; 0 without subgroupSizeControl)
     int subgroup_quad;                              // VK_SUBGROUP_FEATURE_QUAD_BIT (quad operations; in the fragment stage wherever it has subgroup operations)
@@ -515,6 +521,7 @@ VkShaderModule vka_shader_module(vka_shader *s, int variant);
 vka_shader *vka_shader_remap(vka_shader *s, uint64_t map);   // a pixel shader with its inputs moved / made constant for another mesh module (vka_spv_input_remap), NULL = refused
 void vka_shader_pfb_hook(void);               // vka_dev.c, once the device's functions are loaded: modules made from then on report their pool reads (vka_tex_pfb_flags)
 VkShaderModule vka_shader_pfb_pick(VkShaderModule m, int a2c, int alpha_func);   // a pixel module given early tests, or its twin without them for a pipeline that needs late ones
+int vka_shader_pfb_has_twin(VkShaderModule m);   // 1 if m has a late-test twin (for keep_a2c in vka_eds_runtime_key)
 uint32_t vka_shader_sg_pin(int stage);              // DMSH_VK_STAGE_*: the subgroup size its subgroup shaders' pipelines require (vka_shader.c sg_plan), 0 = none
 VkShaderModule vka_shader_cs_module(vka_shader *s);  // a compute shader's module: its DMSH_VK_MOD_SHUFFLE_LDS one where the device takes it (vka_shader.c shuffle_plan) and the shader does not run as one-invocation subgroups, else the base
 VkShaderModule vka_shader_spec_module(vka_shader *s, int gl);   // a task / mesh module with its specialization constants folded (GL depth = gl), VK_NULL_HANDLE = not needed

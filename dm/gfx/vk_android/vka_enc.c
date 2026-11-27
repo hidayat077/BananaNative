@@ -33,6 +33,9 @@ int nxhost_adpf_state(void);
     X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
     X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdSetDepthBiasEnable) \
     X(vkCmdSetRasterizerDiscardEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetBlendConstants) X(vkCmdSetLineWidth) \
+    X(vkCmdSetLogicOpEXT) X(vkCmdSetPatchControlPointsEXT) \
+    X(vkCmdSetDepthClampEnableEXT) X(vkCmdSetPolygonModeEXT) X(vkCmdSetRasterizationSamplesEXT) X(vkCmdSetSampleMaskEXT) \
+    X(vkCmdSetAlphaToCoverageEnableEXT) X(vkCmdSetLogicOpEnableEXT) X(vkCmdSetColorBlendEnableEXT) X(vkCmdSetColorBlendEquationEXT) X(vkCmdSetColorWriteMaskEXT) \
     X(vkCmdPushDescriptorSetKHR) X(vkCmdSetVertexInputEXT) X(vkCmdPushConstants) X(vkCmdDrawMeshTasksEXT) X(vkCmdDrawMeshTasksIndirectEXT) \
     X(vkCmdDrawIndirectCount) X(vkCmdDrawIndexedIndirectCount) X(vkCmdSetAttachmentFeedbackLoopEnableEXT)
 #define ENC_ID(f) E_##f,
@@ -146,6 +149,7 @@ typedef struct { CB_FIELD VkBuffer b; VkDeviceSize o; uint32_t n, st; } r_ind;
 typedef struct { CB_FIELD VkBuffer b, cb2; VkDeviceSize o, o2; uint32_t n, st; } r_indc;   // an indirect-count draw: the records, the count, at most n records st bytes apart
 typedef struct { CB_FIELD uint32_t first, n; const void *p; } r_vps;   // viewports or scissors
 typedef struct { CB_FIELD uint32_t v[5]; float f[4]; } r_val;               // the one-value states
+typedef struct { CB_FIELD uint32_t first, n; const void *p; } r_eds3_arr;    // EDS3 array states (colorBlendEnable, colorBlendEquation, colorWriteMask, sampleMask)
 typedef struct { CB_FIELD VkPipelineBindPoint bp; VkPipelineLayout l; uint32_t set, n; const VkWriteDescriptorSet *w; } r_push;
 typedef struct { CB_FIELD uint32_t nb, na; const VkVertexInputBindingDescription2EXT *b; const VkVertexInputAttributeDescription2EXT *a; } r_vin;
 typedef struct { CB_FIELD VkPipelineLayout l; VkShaderStageFlags st; uint32_t o, n; const void *p; } r_pc;
@@ -303,6 +307,26 @@ ONE(vkCmdSetCullMode, VkCullModeFlags) ONE(vkCmdSetFrontFace, VkFrontFace) ONE(v
 ONE(vkCmdSetDepthTestEnable, VkBool32) ONE(vkCmdSetDepthWriteEnable, VkBool32) ONE(vkCmdSetDepthCompareOp, VkCompareOp) ONE(vkCmdSetDepthBoundsTestEnable, VkBool32)
 ONE(vkCmdSetStencilTestEnable, VkBool32) ONE(vkCmdSetDepthBiasEnable, VkBool32) ONE(vkCmdSetRasterizerDiscardEnable, VkBool32) ONE(vkCmdSetPrimitiveRestartEnable, VkBool32)
 ONE(vkCmdSetAttachmentFeedbackLoopEnableEXT, VkImageAspectFlags)
+ONE(vkCmdSetLogicOpEXT, VkLogicOp) ONE(vkCmdSetPatchControlPointsEXT, uint32_t)
+ONE(vkCmdSetDepthClampEnableEXT, VkBool32) ONE(vkCmdSetPolygonModeEXT, VkPolygonMode) ONE(vkCmdSetRasterizationSamplesEXT, VkSampleCountFlagBits)
+ONE(vkCmdSetAlphaToCoverageEnableEXT, VkBool32) ONE(vkCmdSetLogicOpEnableEXT, VkBool32)
+static void VKAPI_CALL e_vkCmdSetSampleMaskEXT(VkCommandBuffer cb, VkSampleCountFlagBits samples, const VkSampleMask *p) {
+    DIRECT(vkCmdSetSampleMaskEXT, cb, samples, p);
+    uint32_t nw = ((uint32_t)samples + 31u) / 32u; if (!nw) nw = 1;
+    BEGIN(r_eds3_arr, E_vkCmdSetSampleMaskEXT, A8(nw * sizeof *p)); r->first = (uint32_t)samples; r->n = nw; r->p = cpy(&at, p, nw * sizeof *p); END();
+}
+static void VKAPI_CALL e_vkCmdSetColorBlendEnableEXT(VkCommandBuffer cb, uint32_t first, uint32_t n, const VkBool32 *p) {
+    DIRECT(vkCmdSetColorBlendEnableEXT, cb, first, n, p);
+    BEGIN(r_eds3_arr, E_vkCmdSetColorBlendEnableEXT, A8(n * sizeof *p)); r->first = first; r->n = n; r->p = cpy(&at, p, n * sizeof *p); END();
+}
+static void VKAPI_CALL e_vkCmdSetColorBlendEquationEXT(VkCommandBuffer cb, uint32_t first, uint32_t n, const VkColorBlendEquationEXT *p) {
+    DIRECT(vkCmdSetColorBlendEquationEXT, cb, first, n, p);
+    BEGIN(r_eds3_arr, E_vkCmdSetColorBlendEquationEXT, A8(n * sizeof *p)); r->first = first; r->n = n; r->p = cpy(&at, p, n * sizeof *p); END();
+}
+static void VKAPI_CALL e_vkCmdSetColorWriteMaskEXT(VkCommandBuffer cb, uint32_t first, uint32_t n, const VkColorComponentFlags *p) {
+    DIRECT(vkCmdSetColorWriteMaskEXT, cb, first, n, p);
+    BEGIN(r_eds3_arr, E_vkCmdSetColorWriteMaskEXT, A8(n * sizeof *p)); r->first = first; r->n = n; r->p = cpy(&at, p, n * sizeof *p); END();
+}
 static void VKAPI_CALL e_vkCmdSetStencilOp(VkCommandBuffer cb, VkStencilFaceFlags fc, VkStencilOp a, VkStencilOp b, VkStencilOp c, VkCompareOp d) {
     DIRECT(vkCmdSetStencilOp, cb, fc, a, b, c, d); BEGIN(r_val, E_vkCmdSetStencilOp, 0); r->v[0] = fc; r->v[1] = a; r->v[2] = b; r->v[3] = c; r->v[4] = d; END();
 }
@@ -413,6 +437,17 @@ static void run(const hdr *h) {
     case E_vkCmdSetVertexInputEXT: { C(r_vin); R.vkCmdSetVertexInputEXT(r->cb, r->nb, r->b, r->na, r->a); break; }
     case E_vkCmdPushConstants: { C(r_pc); R.vkCmdPushConstants(r->cb, r->l, r->st, r->o, r->n, r->p); break; }
     case E_vkCmdSetAttachmentFeedbackLoopEnableEXT: { C(r_val); R.vkCmdSetAttachmentFeedbackLoopEnableEXT(r->cb, r->v[0]); break; }
+    case E_vkCmdSetLogicOpEXT: { C(r_val); R.vkCmdSetLogicOpEXT(r->cb, (VkLogicOp)r->v[0]); break; }
+    case E_vkCmdSetPatchControlPointsEXT: { C(r_val); R.vkCmdSetPatchControlPointsEXT(r->cb, r->v[0]); break; }
+    case E_vkCmdSetDepthClampEnableEXT: { C(r_val); R.vkCmdSetDepthClampEnableEXT(r->cb, r->v[0]); break; }
+    case E_vkCmdSetPolygonModeEXT: { C(r_val); R.vkCmdSetPolygonModeEXT(r->cb, (VkPolygonMode)r->v[0]); break; }
+    case E_vkCmdSetRasterizationSamplesEXT: { C(r_val); R.vkCmdSetRasterizationSamplesEXT(r->cb, (VkSampleCountFlagBits)r->v[0]); break; }
+    case E_vkCmdSetSampleMaskEXT: { C(r_eds3_arr); R.vkCmdSetSampleMaskEXT(r->cb, (VkSampleCountFlagBits)r->first, r->p); break; }
+    case E_vkCmdSetAlphaToCoverageEnableEXT: { C(r_val); R.vkCmdSetAlphaToCoverageEnableEXT(r->cb, r->v[0]); break; }
+    case E_vkCmdSetLogicOpEnableEXT: { C(r_val); R.vkCmdSetLogicOpEnableEXT(r->cb, r->v[0]); break; }
+    case E_vkCmdSetColorBlendEnableEXT: { C(r_eds3_arr); R.vkCmdSetColorBlendEnableEXT(r->cb, r->first, r->n, r->p); break; }
+    case E_vkCmdSetColorBlendEquationEXT: { C(r_eds3_arr); R.vkCmdSetColorBlendEquationEXT(r->cb, r->first, r->n, r->p); break; }
+    case E_vkCmdSetColorWriteMaskEXT: { C(r_eds3_arr); R.vkCmdSetColorWriteMaskEXT(r->cb, r->first, r->n, r->p); break; }
     case E_CALL: { C(r_call); r->fn((const uint8_t *)r + A8(sizeof *r)); break; }
     default: break;
     }

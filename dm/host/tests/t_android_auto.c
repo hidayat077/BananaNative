@@ -17,7 +17,7 @@ int main(void) {
     const char *v;
 
     // Turnip: the Turnip rules only
-    n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_TURNIP, .mesh_ext = 1, .vin_dyn_ext = 1, .prof_one_lane = 1, .prof_prepass_cut = 1, .prof_oq_split = 1}, r, 16);
+    n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_TURNIP, .mesh_ext = 1, .vin_dyn_ext = 1, .prof_one_lane = 1, .prof_prepass_cut = 1, .prof_oq_split = 1, .eds3_ext = 1}, r, 16);
     CHECK((v = val(r, n, "DM_VK_PSO_SLOTS")) && !strcmp(v, "1"), "Turnip: one compile slot");
     CHECK((v = val(r, n, "DM_VK_PRESENT_GATE_WAIT")) && !strcmp(v, "30"), "Turnip: 30 ms present gate wait");
     CHECK((v = val(r, n, "DM_VK_ZSHARE_MAX_MB")) && !strcmp(v, "0"), "Turnip: no color zero-share limit");
@@ -26,18 +26,21 @@ int main(void) {
     CHECK((v = val(r, n, "DM_VK_SHUFFLE_LDS")) && !strcmp(v, "1"), "Turnip: shuffles through workgroup memory");
     CHECK((v = val(r, n, "DM_VK_UBWC")) && !strcmp(v, "0"), "Turnip: no colour UBWC format lists");
     CHECK((v = val(r, n, "DM_VK_QUAD_SHFL")) && !strcmp(v, "1"), "Turnip: quad shuffles as quad operations");
+    CHECK((v = val(r, n, "DM_VK_EDS3")) && !strcmp(v, "1"), "Turnip with EDS3 extension: EDS3 on");
     CHECK(!val(r, n, "DM_VK_MESH") && !val(r, n, "DM_VK_GS_FILL") && !val(r, n, "DM_VK_ONE_LANE") && !val(r, n, "DM_VK_OQ_SPLIT_PASS") && !val(r, n, "DM_VK_PREWARM"),
           "Turnip: no Qualcomm rule");
-    CHECK(n == 8, "Turnip: 8 rules, got %d", n);
+    CHECK(n == 9, "Turnip: 9 rules, got %d", n);
+    n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_TURNIP}, r, 16);
+    CHECK(!val(r, n, "DM_VK_EDS3") && n == 8, "Turnip without EDS3 extension: 8 rules, got %d", n);
 
     // Qualcomm's driver (512.800 or later), mesh draws through compute, profile with every key
-    n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .memu = 1, .vin_dyn_ext = 1, .prof_one_lane = 2, .prof_prepass_cut = 3, .prof_oq_split = 1}, r, 16);
+    n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .memu = 1, .vin_dyn_ext = 1, .prof_one_lane = 2, .prof_prepass_cut = 3, .prof_oq_split = 1, .eds3_ext = 1}, r, 16);
     CHECK((v = val(r, n, "DM_VK_MESH")) && !strcmp(v, "0"), "Qualcomm: mesh extension off");
     CHECK((v = val(r, n, "DM_VK_GS_FILL")) && !strcmp(v, "1"), "Qualcomm: GS fill");
     CHECK((v = val(r, n, "DM_VK_ONE_LANE")) && !strcmp(v, "1"), "Qualcomm: profile's one-lane shaders");
     CHECK((v = val(r, n, "DM_VK_OQ_SPLIT_PASS")) && !strcmp(v, "1"), "Qualcomm: profile's occlusion split pass");
     CHECK(!val(r, n, "DM_VK_MESH_PREPASS_SKIP"), "Qualcomm through compute: the prepass cut does not apply");
-    CHECK(!val(r, n, "DM_VK_PREWARM") && !val(r, n, "DM_VK_VIN_DYN") && !val(r, n, "DM_VK_PSO_SLOTS") && !val(r, n, "DM_VK_QUAD_SHFL"), "Qualcomm 512.800+: no old-driver or Turnip rule");
+    CHECK(!val(r, n, "DM_VK_PREWARM") && !val(r, n, "DM_VK_VIN_DYN") && !val(r, n, "DM_VK_PSO_SLOTS") && !val(r, n, "DM_VK_QUAD_SHFL") && !val(r, n, "DM_VK_EDS3"), "Qualcomm 512.800+: no old-driver or Turnip rule");
     // ... with its mesh shaders (DM_VK_MESH=1): the prepass cut is on
     n = vka_auto_rules(&(vka_auto_in){.driver_id = VKA_DRV_QCOM, .mesh_ext = 1, .prof_prepass_cut = 3}, r, 16);
     CHECK((v = val(r, n, "DM_VK_MESH_PREPASS_SKIP")) && !strcmp(v, "1"), "Qualcomm with mesh shaders: prepass cut");
