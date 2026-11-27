@@ -24,7 +24,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.zip.CRC32;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -172,6 +172,16 @@ final class ShaderCacheUi {
         return true;
     }
 
+    private static OutputStream openOut(ContentResolver cr, Uri doc) throws IOException {
+        try {
+            OutputStream os = cr.openOutputStream(doc, "wt");
+            if (os != null) return os;
+        } catch (IllegalArgumentException | UnsupportedOperationException ignored) {}
+        OutputStream os = cr.openOutputStream(doc);
+        if (os == null) throw new IOException("cannot open destination");
+        return os;
+    }
+
     private static void runExport(MainActivity a, Game g, Uri doc) {
         ProgressDialog pd = new ProgressDialog(a);
         pd.setMessage(Tx.s(R.string.game_export_compiled_shaders));
@@ -182,30 +192,22 @@ final class ShaderCacheUi {
         new Thread(() -> {
             String err = null;
             int count = 0;
-            try (OutputStream os = cr.openOutputStream(doc);
-                 ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(os))) {
-                if (os == null) throw new IOException("cannot open destination");
-                zos.setMethod(ZipOutputStream.STORED);
+            try (OutputStream os = openOut(cr, doc)) {
+                ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(os));
+                zos.setLevel(Deflater.NO_COMPRESSION);
                 byte[] buf = new byte[65536];
                 for (File f : files) {
-                    long len = f.length();
-                    CRC32 crc = new CRC32();
-                    try (InputStream fis = new BufferedInputStream(new FileInputStream(f))) {
-                        for (int n; (n = fis.read(buf)) > 0; ) crc.update(buf, 0, n);
-                    }
-                    ZipEntry ze = new ZipEntry(f.getName());
-                    ze.setSize(len);
-                    ze.setCompressedSize(len);
-                    ze.setCrc(crc.getValue());
-                    zos.putNextEntry(ze);
+                    zos.putNextEntry(new ZipEntry(f.getName()));
                     try (InputStream fis = new BufferedInputStream(new FileInputStream(f))) {
                         for (int n; (n = fis.read(buf)) > 0; ) zos.write(buf, 0, n);
                     }
                     zos.closeEntry();
                     count++;
                 }
+                zos.finish();
+                zos.flush();
             } catch (IOException | RuntimeException e) {
-                err = e.getMessage();
+                err = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             }
             String finalErr = err;
             int finalCount = count;
