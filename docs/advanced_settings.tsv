@@ -475,6 +475,7 @@ DM_VK_BC_RT	developer	Graphics			text			both
 DM_VK_BIGIMG_MB	developer	Diagnostics			text			both							
 DM_VK_BIND_LOG	developer	Diagnostics			text			both							
 DM_VK_BISECT	developer	Diagnostics			text			both							
+DM_VK_BOOT_PRECOMPILE	developer	Graphics			text		On on Turnip where GPL independent sets are active; off on other drivers	both							
 DM_VK_CAPTURE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_VK_CHUNK	developer	Graphics			text			both							
 DM_VK_CHUNK_PASS	developer	Graphics			text			both							

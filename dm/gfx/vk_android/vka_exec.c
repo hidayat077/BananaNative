@@ -148,7 +148,7 @@ void mtl_set_frame(uint64_t f) {
 uint64_t vka_frame(void) { return g_frame; }
 void vka_exec_counts(uint64_t *ops, uint64_t *subs, uint64_t *rec_ns) { *ops = g_stat_ops; *subs = g_n_sub; *rec_ns = g_rec_ns; }
 void mtl_stats(uint64_t *passes, uint64_t *draws) { if (passes) *passes = g_stat_ops; if (draws) *draws = g_stat_draws; }
-void mtl_prepare(void) { vka_init(); }
+void mtl_prepare(void) { if (vka_init()) vka_pso_prepare(); }
 void mtl_sub_index(const uint64_t *h, int n) { (void)h; (void)n; }
 void mtl_exec_rest(const uint64_t *handles, int n) { (void)handles; (void)n; }
 
@@ -931,6 +931,7 @@ void mtl_finish(void) { vka_wait_done(vka_fence_last(), UINT64_MAX); }
 void mtl_present_flush(void);
 void vka_pso_pause(int on);
 void mtl_drain(void) { vka_pso_pause(1); vka_pso_save(1); mtl_present_flush(); mtl_finish(); if (vka_ok()) vka_queue_idle(); }
+void mtl_resume(void) { vka_pso_pause(0); }
 
 // ---------- Buffers ----------
 static void buf_copy(uint64_t src, uint64_t dst, uint64_t n) {

@@ -17,7 +17,7 @@ _Static_assert(VKA_DRV_QCOM == VK_DRIVER_ID_QUALCOMM_PROPRIETARY && VKA_DRV_TURN
 // One "[auto] KEY=value because driver_id=N (name)" line for each automatic default by driver this device takes (vka_auto.h), once per run at device creation; a switch
 // that is set (env.txt, the launcher, live control before this point) prints nothing: its value is the player's
 static void auto_log(const vka_auto_in *in, const char *name) {
-    vka_auto_rule r[16]; int n = vka_auto_rules(in, r, 16);
+    vka_auto_rule r[24]; int n = vka_auto_rules(in, r, 24);
     for (int i = 0; i < n; i++) {
         char v[64], b[256];
         if (vka_env_str(r[i].key, v, sizeof v)) continue;
@@ -378,9 +378,13 @@ static int init_once(void) {
       const char *pe = getenv("DM_VK_GPL_PRECOMPILE");
       int gpl_pre_want = pe && *pe ? atoi(pe) != 0 : (V.driver_id == VK_DRIVER_ID_MESA_TURNIP);
       V.gpl_indep = V.gpl && gpl_pre_want && V.props.limits.maxBoundDescriptorSets >= 4;
+      const char *bpe = getenv("DM_VK_BOOT_PRECOMPILE");
+      int boot_pre_want = bpe && *bpe ? atoi(bpe) != 0 : (V.driver_id == VK_DRIVER_ID_MESA_TURNIP);
+      V.boot_precompile = V.gpl_indep && boot_pre_want;
       V.topo_unrestricted = x_eds3 && peds3.dynamicPrimitiveTopologyUnrestricted;
-      VLOG("GPL independent-sets layout: %s (LTO retain %s, dynamicPrimitiveTopologyUnrestricted %d; maxBoundDescriptorSets %u)",
+      VLOG("GPL independent-sets layout: %s (boot precompile %s, LTO retain %s, dynamicPrimitiveTopologyUnrestricted %d; maxBoundDescriptorSets %u)",
            V.gpl_indep ? "on (4-set VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT; DM_VK_GPL_PRECOMPILE=0 off)" : "off",
+           V.boot_precompile ? "on (DM_VK_BOOT_PRECOMPILE=0 off)" : "off",
            V.gpl_lto ? "on (DM_VK_GPL_LTO=1)" : "off (DM_VK_GPL_LTO=0)", V.topo_unrestricted, V.props.limits.maxBoundDescriptorSets); }
     V.placed_align = pmp.minPlacedMemoryMapAlignment ? pmp.minPlacedMemoryMapAlignment : 4096; V.max_alloc = pm3.maxMemoryAllocationSize;
     V.max_push = V.push_desc ? ppd.maxPushDescriptors : 0;

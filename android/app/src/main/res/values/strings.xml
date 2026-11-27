@@ -1435,4 +1435,7 @@
     <string name="game_info">Game Info</string>
     <string name="game_settings">Game Settings</string>
     <string name="game_misc">Misc</string>
+    <string name="game_compiling_shaders">Compiling shaders: %1$d / %2$d</string>
+    <string name="game_compiling_shaders_detail">First-time setup (%1$d%% · %2$ds)</string>
+    <string name="game_compiling_shaders_skip">Skip / Play Now</string>
 </resources>

@@ -41,7 +41,7 @@
     X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) \
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) \
     X(vkGetRefreshCycleDurationGOOGLE) X(vkGetPastPresentationTimingGOOGLE) \
-    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyPipeline) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) \
+    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyPipeline) X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkMergePipelineCaches) X(vkGetPipelineCacheData) \
     X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkResetDescriptorPool) X(vkCreateBufferView) X(vkDestroyBufferView) \
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers2) X(vkCmdBindIndexBuffer) \
     X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDispatchBase) \
@@ -124,6 +124,7 @@ typedef struct {
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
     int gpl_indep;                                  // DM_VK_GPL_PRECOMPILE: 4-set VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT (Set 0 pre-raster, Set 1 FS, Set 2 pool, Set 3 pool-fb)
+    int boot_precompile;                            // DM_VK_BOOT_PRECOMPILE: Boot #1 pre-compile of all dmsh_vk.lib GPL parts + Compute + persistent cache
     int gpl_lto;                                    // DM_VK_GPL_LTO (default 0): retain link-time optimization info in GPL parts & queue optimized full pipeline
     int topo_unrestricted;                          // VkPhysicalDeviceExtendedDynamicState3PropertiesEXT.dynamicPrimitiveTopologyUnrestricted
     int dyn_state_on;                               // DM_VK_DYNAMIC_STATE (default 1; 0 disables optional EDS2/EDS3 and defaults vin_dyn off)
@@ -543,6 +544,17 @@ int vka_shader_fout_retyped(vka_shader *s, uint32_t umask, uint32_t smask);   //
 #define VKA_FS_RETYPE 4                  // vka_gkey.fs_variant beyond the library's pixel DMSH_VK_MOD_* (4 is DMSH_VK_MOD_SHUFFLE_LDS of compute modules, never a pixel variant): the base pixel module with its float outputs at integer attachments retyped (vka_pso.c fout_masks)
 VkShaderModule vka_shader_vin_module(vka_shader *s, uint32_t umask, uint32_t smask);   // the base module with those float inputs as uvec4 / ivec4 (vka_spv_vin_retype), made once per masks   // the module of that variant (DMSH_VK_MOD_*), made on first use; VK_NULL_HANDLE = the entry has none   // the shader of key in library L (the game's, or the selftest's own); NULL = not there or refused
 int vka_shlib_check_all(const vka_shlib *L);   // every module and compute pipeline of L made (DM_VK_SHLIB_CHECK=1): the failures
+const vka_shlib *vka_shader_lib(void);         // loads the game's library if needed and returns it (NULL if empty/missing)
+typedef struct {
+    const dmsh_vk_entry *e;
+    const dmsh_vk_bind *b;
+    VkShaderModule mods[6];
+    VkShaderModule pfb_late;
+    int tf_fx;
+    int gs_fx;
+} vka_precomp_sh;
+int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
+void vka_shader_precomp_destroy(vka_precomp_sh *sh);
 int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out);   // host-visible memory for the process's life (c1 bytes, the support and zero buffers)
 
 // ---------- Pipelines (vka_pso.c) ----------
@@ -567,6 +579,8 @@ VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay);
 VkPipeline vka_cs_pipeline_frame(vka_shader *cs, const vka_layout *lay);   // a dispatch's: VK_NULL_HANDLE while the asynchronous threads make it (DM_VK_CS_ASYNC), the dispatch then skipped
 VkPipeline vka_cs_pipeline_img(vka_shader *cs, const vka_layout *lay, uint64_t umask, uint64_t smask);   // with vka_shader_img_module's module; VK_NULL_HANDLE = none (then the base one)
 void vka_pso_save(int force);         // the VkPipelineCache and the prewarm list to the app's files (DM_TEMP): due DM_VK_PCACHE_SAVE_S after the last save, on the saver thread; force 1 = now, on the caller's; 2 = after a slow pipeline (due DM_VK_PCACHE_SAVE_SLOW_S)
+void vka_pso_prepare(void);
+void vka_pso_pause(int on);
 void vka_pso_waits(uint64_t *save_ns, uint64_t *pw_wait_ns);   // cumulative: time saving the cache (saver thread), the frame path's waits for a prewarm thread making the same pipeline
 double vka_gpu_span_ms(uint64_t f);   // frame f's submissions from first part's start to last part's end (vka_exec.c); -1 = not in yet
 

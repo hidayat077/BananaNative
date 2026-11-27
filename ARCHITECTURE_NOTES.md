@@ -88,3 +88,19 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
    - [dm/gfx/vk_android/vka_shader.c](dm/gfx/vk_android/vka_shader.c) (`csm_pfb()`, `vka_shader_pfb_pick()`): when `a2c != 0` or `alpha_func != 0`, switches from the `EarlyFragmentTests` module to its late-test twin.
 5. **Geometry Shader Claim / Link & Specialization Constants:**
    - [dm/gfx/vk_android/vka_pso.c](dm/gfx/vk_android/vka_pso.c) (`pstate_fill()`): `vka_shader_gs_module()`, `vka_shader_gs_link_module()`, `DMSH_VK_SPEC_GL_DEPTH` (`SpecId 0`), and `DMSH_VK_SPEC_ALPHA_FUNC` (`SpecId 1`).
+
+---
+
+## 6. Milestone 4: Boot #1 Pre-Compile & Persistent GPL Cache (`DM_VK_BOOT_PRECOMPILE`)
+
+- **Gate & Defaults:** `DM_VK_BOOT_PRECOMPILE` (restart-only) defaults to `1` on Mesa Turnip when `V.gpl_indep` is active, and `0` on other drivers (`vka_auto.h`, `vka_dev.c`). Fallback paths (`DM_VK_BOOT_PRECOMPILE=0`, classic render passes, non-Turnip drivers) remain untouched.
+- **Container Format ([vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h)):**
+  - Filename: `vk_gpl_cache_<TitleID>_<dmsh_hash>_<driver_uuid>.bin` in `$DM_TEMP` (stale files for the same title are pruned automatically on mismatch/driver swap).
+  - 80-byte `vka_gpl_cache_hdr` (`GPLC` magic, `schema_version=1`, `vendor_id`, `device_id`, `driver_version`, `flags` with `COMPLETE` and `GL_DEPTH`, `pipeline_cache_uuid[16]`, `dmsh_vk_lib_hash`, `total_entries`, `compiled_entries`, `bitset_bytes`, `vk_cache_bytes`, `vk_cache_fnv`, `header_crc`) + resume bitset + raw `VkPipelineCache` blob.
+  - Atomic checkpoint writes (`open(.tmp)` → `write` → `fsync` → `close` → `rename`) every 250 shaders or 10 s, plus on user skip/early stop.
+- **Worker Pool & 8 GB RAM + ZRAM Hygiene (`vka_pso.c` `vka_boot_precompile_run`):**
+  - Runs on `mtl_prepare()` before the first 3D frame (never on the Android UI thread).
+  - `min(4, big_and_mid_cores)` workers, each with its own local `VkPipelineCache` merged periodically into master `g_pc` via `vkMergePipelineCaches` every `<= 100` shaders, destroying temporary `VkPipeline` and `VkShaderModule` handles immediately after merge.
+  - `vka_precompile_target_workers()` steps down to 2 workers after 45 s (thermal) and throttles/stops cleanly if `MemAvailable < 600 MiB` or `/proc/self/maps >= 75%` of `vm.max_map_count`.
+  - In-game cache saves are debounced (`>= 50` new entries and `>= 30 s` via `vka_precompile_debounce_due()`), with forced flush on `mtl_drain()`.
+- **Non-Blocking Progress UI:** `nxhost_precompile_status()` / `nxhost_precompile_skip()` (`vk_android.h` → `nxlaunch.c` → `Native.java`) drive a 200 ms polled overlay in `GameActivity.java` with an optional **Skip / Play Now** button.

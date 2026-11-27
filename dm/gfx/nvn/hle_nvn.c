@@ -1753,6 +1753,7 @@ static void gfx_leave(void) { dm_host_work--; pthread_mutex_lock(&g_susp_mu); g_
 void dm_gfx_enter(void) { gfx_enter(); }   // the same gate for the Vulkan layer's submits and presents (dm/gfx/vk)
 void dm_gfx_leave(void) { gfx_leave(); }
 __attribute__((weak)) void dm_keys_stop(void) {}   // hle_hid.c: drop the remaining DM_KEYS steps (DM_MARK_KEYS_STOP; the graphics unit tests have no scripted input)
+__attribute__((weak)) void mtl_resume(void) {}     // dm/gfx/vk_android/vka_exec.c: resume Boot #1 precompile workers on return from background
 __attribute__((weak)) void dm_vk_drain(void) {}   // dm/gfx/vk/hle_vk.m: wait for the Vulkan layer's queue (the graphics unit tests do not link it)
 __attribute__((weak)) void dm_gl_drain(void) {}   // dm/gfx/gl/hle_gl.m: the same for the GL layer
 void dm_gfx_suspend(int on) {
@@ -1761,7 +1762,7 @@ void dm_gfx_suspend(int on) {
     if (on) while (g_inflight_api) pthread_cond_wait(&g_susp_cv, &g_susp_mu);
     else pthread_cond_broadcast(&g_susp_cv);
     pthread_mutex_unlock(&g_susp_mu);
-    if (on) { dm_vk_drain(); dm_gl_drain(); mtl_drain(); LOG("[nvn] graphics suspended: in-flight GPU work drained"); } else LOG("[nvn] graphics resumed");   // the Vulkan and GL queues first: presents on the NVN queue wait for their frames
+    if (on) { dm_vk_drain(); dm_gl_drain(); mtl_drain(); LOG("[nvn] graphics suspended: in-flight GPU work drained"); } else { mtl_resume(); LOG("[nvn] graphics resumed"); }   // the Vulkan and GL queues first: presents on the NVN queue wait for their frames
 }
 // One submission at a time: the Metal replay keeps one command buffer and one upload batch for the submission in progress (nvn_mtl.m g_cb). Fire Emblem: Three Houses initializes two queues and
 // submits on both from two threads; the second submission arrived while the first was replaying and the host stopped with "submit re-entered" at the ninth frame. NVN orders work on different queues only

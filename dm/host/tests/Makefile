@@ -111,6 +111,7 @@ run: $(B)/t_language $(B)/t_motion $(B)/t_heap_size $(B)/t_touch $(B)/t_gesture 
 	$(B)/t_android_hangparts
 	$(B)/t_android_auto
 	$(B)/t_android_eds
+	$(B)/t_android_gpl_cache
 	$(B)/t_android_aff
 	$(B)/t_nvn_dpool
 	$(B)/t_android_t2tpath
@@ -474,7 +475,7 @@ coverage:
 	LLVM_PROFILE_FILE="$(call cov_profile,$(B)/cov)" $(MAKE) -i B=$(B)/cov SAN="$(COV_FLAGS)" run
 	@$(call cov_export,$(B)/cov)
 # The Android host's pure parts (dm/host/android): resampler, channel map, SPS size, MediaCodec picture layouts; gamepad / touch / sensor mapping
-run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_famshare $(B)/t_android_texlimit $(B)/t_android_texcontent $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_eds $(B)/t_android_aff $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail
+run: $(B)/t_android_av $(B)/t_android_input $(B)/t_android_shlib $(B)/t_android_spvpatch $(B)/t_android_imgmem $(B)/t_android_zshare $(B)/t_android_famshare $(B)/t_android_texlimit $(B)/t_android_texcontent $(B)/t_android_tstick $(B)/t_android_lowram $(B)/t_android_livemap $(B)/t_android_smap $(B)/t_android_mapbudget $(B)/t_android_rsslog $(B)/t_android_psogate $(B)/t_android_hangparts $(B)/t_android_wbfollow $(B)/t_android_pckeep $(B)/t_android_pwlist $(B)/t_android_fmtlist $(B)/t_android_place $(B)/t_android_ovl $(B)/t_android_pace $(B)/t_lse_unaligned $(B)/t_android_skipwarn $(B)/t_android_gmem $(B)/t_android_fpenv $(B)/t_android_soft $(B)/t_android_qsched $(B)/t_android_poolslot $(B)/t_android_prepass $(B)/t_android_tlsig $(B)/t_android_texown $(B)/t_android_gbar $(B)/t_android_memu $(B)/t_android_auto $(B)/t_android_eds $(B)/t_android_gpl_cache $(B)/t_android_aff $(B)/t_android_layerreq $(B)/t_android_driverpath $(B)/t_android_placefail
 $(B)/t_android_av: t_android_av.c ../android/av_android.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. $(WEAK_HOST) -o $@ t_android_av.c
 $(B)/t_android_input: t_android_input.c ../android/input_map.c ../android/input_map.h ../../gfx/vk_android/vka_present_fit.h ../motion_fusion.h ../dm_input.h | $(B)
@@ -555,6 +556,8 @@ $(B)/t_android_auto: t_android_auto.c $(VKA)/vka_auto.h $(VKA)/vka_psogate.h | $
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_auto.c
 $(B)/t_android_eds: t_android_eds.c $(VKA)/vka_eds.h $(VKA)/vka_gkey.h $(VKA)/vka_pwlist.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_eds.c
+$(B)/t_android_gpl_cache: t_android_gpl_cache.c $(VKA)/vka_gpl_cache.h | $(B)
+	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_gpl_cache.c
 # CPU topology and auto-affinity mask computation (vka_aff.h; vka_worker.c, vka_enc.c)
 $(B)/t_android_aff: t_android_aff.c $(VKA)/vka_aff.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_aff.c

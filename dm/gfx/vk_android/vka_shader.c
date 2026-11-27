@@ -772,7 +772,7 @@ VkShaderModule vka_shader_img_module(vka_shader *s, uint64_t umask, uint64_t sma
     if (w) prep_words(s->e, s->key, &w, &nb);
     size_t on = 0; uint32_t *o = w ? vka_spv_img_retype(w, nb / 4, 0, umask, smask, &on, err, sizeof err) : NULL;   // (compute: stage 0's binding range)
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = create_stage_module(gs->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
+             VkResult r = create_stage_module(s->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
     free(w); free(o);
     { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) {
         if (mod) VLOG("compute shader %016llx: images and textures at bindings %#llx (uint) / %#llx (int) retyped for the integer textures bound there (their bits read and written as they are)",
@@ -1002,6 +1002,79 @@ int vka_shlib_check_all(const vka_shlib *L) {
          n, made, refused, nolayout, cs, csfail, (now_ns() - t0) / 1e9);
     vka_pso_save(1);
     return (int)(nolayout + csfail);
+}
+
+const vka_shlib *vka_shader_lib(void) {
+    if (!lib_ready()) return NULL;
+    // Initialize static one-lane / shuffle plan state before Boot #1 worker threads spawn.
+    (void)one_lane_forced(0);
+    (void)one_lane_base();
+    if (g_shuffle_lds < 0) shuffle_plan();
+    return (!g_lib_empty && g_lib.h && g_lib.h->entry_count) ? &g_lib : NULL;
+}
+
+int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof *out);
+    if (!L || !L->h || idx >= L->h->entry_count) return 0;
+    const dmsh_vk_entry *e = &L->ent[idx];
+    if (e->stage != DMSH_VK_STAGE_VS && e->stage != DMSH_VK_STAGE_FS && e->stage != DMSH_VK_STAGE_CS) return 0;
+    if (refusal(L, e)) return 0;
+    if (e->stage == DMSH_VK_STAGE_FS && (e->flags & DMSH_VK_F_MESH_PRIM) && !V.mesh) return 0;
+    if (e->stage == DMSH_VK_STAGE_CS) {
+        if (VKA_ENV("DM_VK_SKIP_NDVE", 1) && vka_is_ndve_key(e->key)) return 0;
+        uint32_t smax = V.props.limits.maxComputeSharedMemorySize;
+        if (smax && e->shared > smax && !VKA_ENV("DM_VK_CS_SHARED_OVER", 0)) return 0;
+    }
+    const dmsh_vk_bind *b = vka_shlib_binds(L, e);
+    const tp_ent *tp = tabpool_of(L, e);
+    if (tp) b = tp->b;
+    out->e = e;
+    out->b = b;
+
+    const char *why = NULL; char err[256] = "";
+    if (e->stage == DMSH_VK_STAGE_VS) {
+        const dmsh_vk_module *m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+        if (m) out->mods[DMSH_VK_MOD_BASE] = spv_module_(L, e, m, e->key, &why, err, sizeof err, NULL);
+        if ((e->flags & DMSH_VK_F_TF) && e->shared && vka_shlib_module(L, e, DMSH_VK_MOD_TF) && VKA_ENV("DM_VK_TF", 1)) {
+            out->tf_fx = 1;
+            const dmsh_vk_module *mtf = vka_shlib_module(L, e, DMSH_VK_MOD_TF);
+            if (mtf) out->mods[DMSH_VK_MOD_TF] = spv_module_(L, e, mtf, e->key, &why, err, sizeof err, NULL);
+        }
+    } else if (e->stage == DMSH_VK_STAGE_FS) {
+        static const int fs_vars[] = {DMSH_VK_MOD_BASE, DMSH_VK_MOD_UINT, DMSH_VK_MOD_UINT_MIXED, DMSH_VK_MOD_DUAL};
+        for (size_t i = 0; i < sizeof fs_vars / sizeof *fs_vars; i++) {
+            int v = fs_vars[i];
+            const dmsh_vk_module *m = vka_shlib_module(L, e, v);
+            if (m) out->mods[v] = spv_module_(L, e, m, e->key, &why, err, sizeof err, NULL);
+        }
+        if (out->mods[DMSH_VK_MOD_BASE] && vka_shader_pfb_has_twin(out->mods[DMSH_VK_MOD_BASE])) {
+            VkShaderModule late = vka_shader_pfb_pick(out->mods[DMSH_VK_MOD_BASE], 1, 0);
+            if (late != out->mods[DMSH_VK_MOD_BASE]) out->pfb_late = late;
+        }
+    } else if (e->stage == DMSH_VK_STAGE_CS) {
+        int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
+        if (want_shfl) {
+            const dmsh_vk_module *ms = vka_shlib_module(L, e, DMSH_VK_MOD_SHUFFLE_LDS);
+            if (ms) out->mods[DMSH_VK_MOD_SHUFFLE_LDS] = spv_module_(L, e, ms, e->key, &why, err, sizeof err, NULL);
+        }
+        if (!out->mods[DMSH_VK_MOD_SHUFFLE_LDS]) {
+            const dmsh_vk_module *mb = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+            if (mb) out->mods[DMSH_VK_MOD_BASE] = spv_module_(L, e, mb, e->key, &why, err, sizeof err, NULL);
+        }
+    }
+    for (int i = 0; i < 6; i++) if (out->mods[i]) return 1;
+    vka_shader_precomp_destroy(out);
+    return 0;
+}
+
+void vka_shader_precomp_destroy(vka_precomp_sh *sh) {
+    if (!sh) return;
+    for (int i = 0; i < 6; i++) {
+        // dsm_pfb destroys pfb_late when mods[0] is destroyed; never destroy pfb_late separately.
+        if (sh->mods[i]) vk.vkDestroyShaderModule(V.dev, sh->mods[i], NULL);
+    }
+    memset(sh, 0, sizeof *sh);
 }
 
 // ---------- Programs ----------
