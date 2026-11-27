@@ -396,6 +396,7 @@ void vka_tex_uploads(VkCommandBuffer cb);
 VkDescriptorSet vka_bindless_set(void);
 uint32_t vka_bindless_tex_slots(void);   // the sampled-image pool table's length, 0 without the pool set (vka_tex.c; vka_shader.c tabpool clamps IDs to it)
 VkDescriptorSetLayout vka_bindless_layout(void);
+void vka_bindless_init(void);
 void vka_barrier_at(VkCommandBuffer cb, const char *file, int line);   // a full memory barrier (the replay orders every transfer op after the previous one)
 void vka_xp_ts(VkCommandBuffer cb, int site);   // DM_VK_XP_TS experiment (vka_tex.c)
 #define vka_barrier(cb) vka_barrier_at(cb, __FILE_NAME__, __LINE__)   // the site names the step that ends there in DM_VK_GPUPROF's report (vka_gprof.c)
@@ -555,6 +556,7 @@ typedef struct {
 } vka_precomp_sh;
 int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
 void vka_shader_precomp_destroy(vka_precomp_sh *sh);
+const dmsh_vk_bind *vka_shader_precomp_binds(const vka_shlib *L, const dmsh_vk_entry *e);
 VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
 VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
 VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask);

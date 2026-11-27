@@ -319,10 +319,10 @@ static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
             if (!e) continue;
             VkShaderModule mod = vka_shader_precomp_cs_img(L, e, m[0], m[1]);
             if (!mod) continue;
-            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
             vka_shader *sh[VKA_NSTAGE] = {0}; sh[5] = &tmp;
             vka_layout lay;
-            if (vka_layout_of(sh, 1, &lay)) {
+            if (layout_slow(sh, 1, &lay)) {
                 uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_CS) : 0;
                 VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
                 int spill = 0; for (unsigned i = 0; i < e->bind_count; i++) if (tmp.b[i].kind == DMSH_VK_KIND_SHARED_SPILL) spill = 1;
@@ -350,7 +350,7 @@ static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
                             seen[h] = (vseen){r.key[1], fu, fsm, 1, 1}; n_seen++;
                             VkShaderModule mod = vka_shader_precomp_fout(L, e, fu, fsm);
                             if (mod) {
-                                vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+                                vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
                                 vka_layout lay;
                                 if (vka_layout_fs_of(&tmp, &lay)) {
                                     uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_FS) : 0;
@@ -413,7 +413,7 @@ static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
                         seen[h] = (vseen){r.key[0], k.vin_u, k.vin_s, 3, 1}; n_seen++;
                         VkShaderModule mod = vka_shader_precomp_vin(L, e, k.vin_u, k.vin_s);
                         if (mod) {
-                            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+                            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
                             vka_shader *sh[VKA_NSTAGE] = {0}; sh[0] = &tmp;
                             vka_layout lay;
                             if (vka_layout_pre_of(sh, &lay)) {
@@ -474,6 +474,7 @@ static void pc_open_once(void) {
     const char *e = getenv("DM_VK_PCACHE"), *t = getenv("DM_TEMP"), *home = getenv("HOME");
     init_pw_paths(e, t, home);
     if (V.boot_precompile && !vka_classic_rp() && !vka_fp_guest() && !(e && !strcmp(e, "0"))) {
+        vka_bindless_init();
         const vka_shlib *L = vka_shader_lib();
         const char *dir = (t && *t) ? t : (home && *home) ? home : NULL;
         if (L && dir && V.vin_dyn) {
@@ -607,7 +608,7 @@ static void pc_open_once(void) {
     pw_start();
 }
 static void pc_open(void) { static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, pc_open_once); }   // (the prewarm threads it starts call it too: they wait for it)
-void vka_pso_prepare(void) { pc_open(); }
+void vka_pso_prepare(void) { vka_bindless_init(); pc_open(); }
 // len bytes of data to path through tmp, whole or not at all: 1 when path holds them. The stream is closed exactly once (fclose ends it even when it fails, so a second
 // fclose on the failure path was undefined), and tmp is removed on any failure; the file path held before stays
 static int pc_write_atomic(const char *path, const char *tmp, const void *data, size_t len) {
@@ -1295,7 +1296,7 @@ static void precomp_compile_entry(const vka_shlib *L, uint32_t idx, VkPipelineCa
     } else if (ps.e->stage == DMSH_VK_STAGE_CS) {
         vka_shader *sh[VKA_NSTAGE] = {0}; sh[5] = &tmp;
         vka_layout lay;
-        if (!vka_layout_of(sh, 1, &lay)) { (*c_fail)++; goto done; }
+        if (!layout_slow(sh, 1, &lay)) { (*c_fail)++; goto done; }
         VkShaderModule csm = ps.mods[DMSH_VK_MOD_SHUFFLE_LDS] ? ps.mods[DMSH_VK_MOD_SHUFFLE_LDS] : ps.mods[DMSH_VK_MOD_BASE];
         if (!csm) { (*c_fail)++; goto done; }
         uint32_t pin = (ps.e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_CS) : 0;

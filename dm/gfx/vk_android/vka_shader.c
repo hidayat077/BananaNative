@@ -494,8 +494,10 @@ static int tabpool_plan(const vka_shlib *L, const dmsh_vk_entry *e, vka_tabpool 
     return n;
 }
 static const tp_ent *tabpool_of(const vka_shlib *L, const dmsh_vk_entry *e) {
-    static int env = -1; if (env < 0) { const char *q = getenv("DM_VK_TABLE_POOL"); env = !(q && q[0] == '0'); }
-    if (!env || !e) return NULL;
+    static _Atomic int env = -1;
+    int on = atomic_load_explicit(&env, memory_order_relaxed);
+    if (on < 0) { const char *q = getenv("DM_VK_TABLE_POOL"); on = !(q && q[0] == '0'); atomic_store_explicit(&env, on, memory_order_relaxed); }
+    if (!on || !e) return NULL;
     pthread_mutex_lock(&g_tpmu);
     for (size_t i = 0; i < g_ntp; i++) if (g_tp[i].e == e) { const tp_ent *r = g_tp[i].b ? &g_tp[i] : NULL; pthread_mutex_unlock(&g_tpmu); return r; }   // (a linear scan of the entries with such arrays; a map if a game has tens of thousands)
     pthread_mutex_unlock(&g_tpmu);
@@ -1082,6 +1084,12 @@ void vka_shader_precomp_destroy(vka_precomp_sh *sh) {
         if (sh->mods[i]) vk.vkDestroyShaderModule(V.dev, sh->mods[i], NULL);
     }
     memset(sh, 0, sizeof *sh);
+}
+
+const dmsh_vk_bind *vka_shader_precomp_binds(const vka_shlib *L, const dmsh_vk_entry *e) {
+    if (!L || !e) return NULL;
+    const tp_ent *tp = tabpool_of(L, e);
+    return tp ? tp->b : vka_shlib_binds(L, e);
 }
 
 VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask) {

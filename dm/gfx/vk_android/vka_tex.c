@@ -3134,8 +3134,7 @@ static void pfb_consume_locked(void) {
     }
 }
 
-static void bindless_init(void) {
-    static int done; if (done) return; done = 1;
+static void bindless_init_once(void) {
     if (!V.uab) { VRED("no update-after-bind descriptor indexing: the texture and sampler pools have no tables"); return; }
     VkPhysicalDeviceVulkan12Properties p12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
     VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p12}; vk.vkGetPhysicalDeviceProperties2(V.pd, &p2);
@@ -3171,6 +3170,10 @@ static void bindless_init(void) {
         VRED("bindless set (%u textures, %u samplers, %u images): %d", g_ntex_slots, g_nsamp_slots, g_nimg_slots, r); g_set = VK_NULL_HANDLE; return;
     }
     VLOG("bindless tables: %u textures, %u samplers, %u images (update after bind)%s", g_ntex_slots, g_nsamp_slots, g_nimg_slots, pfb ? "; the pool reads' bitmap in a set of its own" : "");
+}
+void vka_bindless_init(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, bindless_init_once);
 }
 VkDescriptorSet vka_bindless_set(void) { return g_set; }
 uint32_t vka_bindless_tex_slots(void) { return g_set ? g_ntex_slots : 0; }   // the sampled table's length (vka_shader.c tabpool clamps the IDs a module loads to it)
@@ -3891,7 +3894,7 @@ VkSampler vka_samp_default(void) {
 }
 
 void vka_tex_prepare(VkCommandBuffer cb) {
-    bindless_init();
+    vka_bindless_init();
     if (atomic_load_explicit(&g_bl_busy, memory_order_relaxed)) vka_tex_blwb_done(vka_done());
     nvn_pool_use(1);   // the re-uploads below read guest storage: no pool is finalized (and unmapped) under them. Taken before g_tmu, as write_tex does
     pthread_mutex_lock(&g_tmu);
