@@ -124,10 +124,12 @@ static void test_m5_retype_suppression_and_telemetry(void) {
     vka_fout_retype_masks(4, ckind, 0x0f, (2u << 2) /* target 1 already uint */, chmask, fcomp, &fu, &fsm);
     CHECK(fu == 0 && fsm == (1u << 2), "already-uint skipped, active sint flagged (fu=%#x fsm=%#x)", fu, fsm);
 
-    // Feedback classification: valid driver feedback + fallback heuristic
-    CHECK(vka_classify_compile_feedback(1, 1, 0, 0, 1, 20000000ull) == 1, "valid cache hit -> rehydrate");
+    // Feedback classification: valid driver feedback + stage miss override + >=20ms heuristic + fallback
+    CHECK(vka_classify_compile_feedback(1, 1, 0, 0, 1, 400000ull) == 1, "valid cache hit (<20ms) -> rehydrate");
+    CHECK(vka_classify_compile_feedback(1, 1, 1, 0, 1, 400000ull) == 0, "stage miss overrides fb_all hit -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(1, 1, 1, 1, 1, 50000000ull) == 0, ">=20ms compile overrides hit -> ir3 miss");
     CHECK(vka_classify_compile_feedback(1, 0, 1, 1, 1, 100000ull) == 0, "valid cache miss -> ir3 miss");
-    CHECK(vka_classify_compile_feedback(0, 0, 1, 1, 1, 20000000ull) == 1, "all stages hit -> rehydrate");
+    CHECK(vka_classify_compile_feedback(0, 0, 1, 1, 1, 400000ull) == 1, "all stages hit (<20ms) -> rehydrate");
     CHECK(vka_classify_compile_feedback(0, 0, 1, 0, 1, 100000ull) == 0, "stage miss -> ir3 miss");
     CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 400000ull) == 1, "fast cached fallback (<5ms) -> rehydrate");
     CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 20000000ull) == 0, "slow cached fallback (>=5ms) -> ir3 miss");

@@ -1136,14 +1136,20 @@ static int gpl_on(void) { return V.gpl && !atomic_load(&g_gpl_off); }
 #define LIB_REFUSED ((void *)(uintptr_t)1)
 #define LIB_BUSY ((void *)(uintptr_t)2)
 static pthread_cond_t g_lib_cv = PTHREAD_COND_INITIALIZER;
-static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPipelineCreateInfo *ci, VkGraphicsPipelineLibraryFlagsEXT part, int *refused, uint64_t vs, uint64_t fs) {
+static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPipelineCreateInfo *ci, VkGraphicsPipelineLibraryFlagsEXT part, int *refused, uint64_t vs, uint64_t fs, int cache_only) {
     uint64_t h = fnv(key, klen, 1469598103934665603ull);
     pthread_mutex_lock(&g_mu);
     void *hit;
-    while ((hit = km_get(&g_lib[kind], key, h)) == LIB_BUSY) pthread_cond_wait(&g_lib_cv, &g_mu);   // (looked up again: an adaptation may have emptied the map meanwhile)
-    if (!hit) km_put(&g_lib[kind], key, h, LIB_BUSY);
-    pthread_mutex_unlock(&g_mu);
-    if (hit) return hit == LIB_REFUSED ? VK_NULL_HANDLE : (VkPipeline)hit;
+    if (cache_only) {
+        hit = km_get(&g_lib[kind], key, h);
+        pthread_mutex_unlock(&g_mu);
+        if (hit) return (hit == LIB_REFUSED || hit == LIB_BUSY) ? VK_NULL_HANDLE : (VkPipeline)hit;
+    } else {
+        while ((hit = km_get(&g_lib[kind], key, h)) == LIB_BUSY) pthread_cond_wait(&g_lib_cv, &g_mu);   // (looked up again: an adaptation may have emptied the map meanwhile)
+        if (!hit) km_put(&g_lib[kind], key, h, LIB_BUSY);
+        pthread_mutex_unlock(&g_mu);
+        if (hit) return hit == LIB_REFUSED ? VK_NULL_HANDLE : (VkPipeline)hit;
+    }
     int shp = kind == L_PRE || kind == L_PREFS;
     VkPipelineCreationFeedback fb_all = {0}, fb_st[5]; memset(fb_st, 0, sizeof fb_st);
     uint32_t nst = (kind == L_PRE || kind == L_FS || kind == L_PREFS) && ci->stageCount <= 5 ? ci->stageCount : 0;
@@ -1151,17 +1157,32 @@ static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPip
         .pNext = shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext, .pPipelineCreationFeedback = &fb_all,
         .pipelineStageCreationFeedbackCount = nst, .pPipelineStageCreationFeedbacks = fb_st};
     const void *orig_next = ci->pNext;
+    VkPipelineCreateFlags orig_flags = ci->flags;
     VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
         .pNext = nst ? &fbi : (shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext), .flags = part};
-    ci->pNext = &li; ci->flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (((g_pre_adapt & A_RETAIN) || V.gpl_lto) ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0);
+    ci->pNext = &li;
+    ci->flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (((g_pre_adapt & A_RETAIN) || V.gpl_lto) ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0);
+    if (cache_only && (kind == L_PRE || kind == L_FS || kind == L_PREFS)) ci->flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
     uint64_t t0 = now_ns();
     int bs = build_begin(g_lib_name[kind], vs, fs);
     int use_cache = !(shp && (g_pre_adapt & A_NOCACHE));
     VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, use_cache ? g_pc : VK_NULL_HANDLE, 1, ci, NULL, &p);
     build_end(bs);
     ci->pNext = orig_next;
+    ci->flags = orig_flags;
     uint64_t dns = now_ns() - t0;
     double ms_ = dns / 1e6;
+    if (cache_only) {
+        if (r != VK_SUCCESS || !p) return VK_NULL_HANDLE;
+        if (nst) atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed);
+        pthread_mutex_lock(&g_mu);
+        void *cur = km_get(&g_lib[kind], key, h);
+        if (!cur) { km_put(&g_lib[kind], key, h, (void *)p); g_nlib[kind]++; g_lib_ms += ms_; }
+        else if (cur != LIB_BUSY && cur != LIB_REFUSED) { vk.vkDestroyPipeline(V.dev, p, NULL); p = (VkPipeline)cur; }
+        else { vk.vkDestroyPipeline(V.dev, p, NULL); p = VK_NULL_HANDLE; }
+        pthread_mutex_unlock(&g_mu);
+        return p;
+    }
     if (!r && p && nst) record_compile_outcome(&fb_all, fb_st, nst, use_cache && g_pc != VK_NULL_HANDLE, dns, g_lib_name[kind], vs, fs);
     pthread_mutex_lock(&g_mu);
     if (r) p = VK_NULL_HANDLE; else g_nlib[kind]++;
@@ -1386,7 +1407,8 @@ static void *precomp_worker(void *arg_) {
         if (atomic_load_explicit(&g_pre_skip, memory_order_acquire) || atomic_load_explicit(&g_pre_stop, memory_order_acquire)) break;
         while (atomic_load_explicit(&g_pso_paused, memory_order_relaxed) &&
                !atomic_load_explicit(&g_pre_skip, memory_order_acquire) &&
-               !atomic_load_explicit(&g_pre_stop, memory_order_acquire)) {
+               !atomic_load_explicit(&g_pre_stop, memory_order_acquire) &&
+               atomic_load_explicit(&ctx->next, memory_order_acquire) < ctx->work_n) {
             usleep(100000);
         }
         uint64_t now = now_ns();
@@ -1406,10 +1428,12 @@ static void *precomp_worker(void *arg_) {
         }
         while (wid >= atomic_load_explicit(&g_pre_active_workers, memory_order_acquire) &&
                !atomic_load_explicit(&g_pre_skip, memory_order_acquire) &&
-               !atomic_load_explicit(&g_pre_stop, memory_order_acquire)) {
+               !atomic_load_explicit(&g_pre_stop, memory_order_acquire) &&
+               atomic_load_explicit(&ctx->next, memory_order_acquire) < ctx->work_n) {
             usleep(100000);
         }
-        if (atomic_load_explicit(&g_pre_skip, memory_order_acquire) || atomic_load_explicit(&g_pre_stop, memory_order_acquire)) break;
+        if (atomic_load_explicit(&g_pre_skip, memory_order_acquire) || atomic_load_explicit(&g_pre_stop, memory_order_acquire) ||
+            atomic_load_explicit(&ctx->next, memory_order_acquire) >= ctx->work_n) break;
 
         uint32_t pos = atomic_fetch_add_explicit(&ctx->next, 1, memory_order_relaxed);
         if (pos >= ctx->work_n) break;
@@ -1513,9 +1537,9 @@ static void vka_boot_precompile_run(const vka_shlib *L) {
 
     int skipped_by_user = atomic_load_explicit(&g_pre_skip, memory_order_relaxed);
     int stopped_early = atomic_load_explicit(&g_pre_stop, memory_order_relaxed);
-    if (!skipped_by_user && !stopped_early) precomp_pw_variants(L, !vka_depth_zero());
     uint32_t done_now = vka_gpl_cache_bit_count(g_gpl_bitset, total);
-    int complete = !skipped_by_user && !stopped_early && (done_now == total);
+    if (done_now == total && !stopped_early) precomp_pw_variants(L, !vka_depth_zero());
+    int complete = (done_now == total);
 
     pthread_mutex_lock(&g_save_mu);
     size_t saved_bytes = gpl_cache_write_locked(complete);
@@ -1589,8 +1613,8 @@ static unsigned pre_probe(const VkGraphicsPipelineCreateInfo *ci0, const pstate 
          : a == A_NORI ? "adopted: no VkPipelineRenderingCreateInfo" : a == A_COMBINED ? "adopted: one library for pre-rasterization and the fragment shader" : "nothing adoptable");
     return a;
 }
-// The parts of P, each made once; then the link. VK_NULL_HANDLE = a part failed (the caller makes the whole pipeline)
-static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
+// The parts of P, each made once; then the link. VK_NULL_HANDLE = a part failed (or missed the cache when cache_only != 0)
+static VkPipeline gpl_link(pstate *P, const vka_gkey *k, int cache_only) {
     const vka_shader *pre0 = P->mesh ? P->sh[7] : P->sh[0];
     uint64_t vs_key = pre0 ? pre0->key : 0;
     uint64_t fs_key = P->sh[1] ? P->sh[1]->key : 0;
@@ -1600,7 +1624,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
     {   vikey key; memset(&key, 0, sizeof key); key.topo = ((active_eds_mask(P->mesh) & VKA_EDS_TOPO_UNRESTRICTED) && !P->tess) ? 0 : k->topo; key.vin_static = k->vin_static;
         if (k->vin_static) { memcpy(key.va, k->va, sizeof key.va); memcpy(key.vb, k->vb, sizeof key.vb); }
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pVertexInputState = &P->vi, .pInputAssemblyState = &P->ia, .pDynamicState = &dy[L_VI]};
-        if (!(part[nparts++] = lib_make(L_VI, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT, NULL, 0, 0))) return VK_NULL_HANDLE; }
+        if (!(part[nparts++] = lib_make(L_VI, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT, NULL, 0, 0, cache_only))) return VK_NULL_HANDLE; }
     VkPipelineShaderStageCreateInfo pre[4], *fs = NULL; uint32_t npre = 0;
     for (uint32_t i = 0; i < P->ns; i++) { if (P->ss[i].stage == VK_SHADER_STAGE_FRAGMENT_BIT) fs = &P->ss[i]; else if (npre < 4) pre[npre++] = P->ss[i]; }
     VkPipelineRenderingCreateInfo ri0 = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};   // the shader parts take only the view mask (0); the formats are the output's
@@ -1620,14 +1644,14 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = nb, .pStages = both, .pTessellationState = P->tess ? &P->ts : NULL,
                                            .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pMultisampleState = &P->ms, .pDepthStencilState = &P->ds, .pDynamicState = &dy[L_PREFS], .layout = P->ci.layout,
                                            .renderPass = rp};
-        if (!(part[nparts++] = lib_make(L_PREFS, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, vs_key, fs_key))) return VK_NULL_HANDLE;
+        if (!(part[nparts++] = lib_make(L_PREFS, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, vs_key, fs_key, cache_only))) return VK_NULL_HANDLE;
     } else {
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = npre, .pStages = pre, .pTessellationState = P->tess ? &P->ts : NULL,
                                            .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pDynamicState = &dy[L_PRE], .layout = pre_lay, .renderPass = rp};
         int refused = 0;
         VkGraphicsPipelineCreateInfo ci_probe = ci;   // (lib_make chains its own structure onto ci and restores it)
-        if (!(part[nparts++] = lib_make(L_PRE, &pk, sizeof pk, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, &refused, vs_key, 0))) {
-            if (refused && !__atomic_load_n(&g_nlib[L_PRE], __ATOMIC_RELAXED)) {
+        if (!(part[nparts++] = lib_make(L_PRE, &pk, sizeof pk, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, &refused, vs_key, 0, cache_only))) {
+            if (!cache_only && refused && !__atomic_load_n(&g_nlib[L_PRE], __ATOMIC_RELAXED)) {
                 int first = 0;
                 pthread_mutex_lock(&g_mu); int nref = ++g_pre_refused; if (!g_pre_probed) { g_pre_probed = 1; first = 1; } pthread_mutex_unlock(&g_mu);
                 // DM_VK_GPL_PROBE=1 (default 0 since 2026-11-03): the probe makes ~11-13 libraries synchronously on the replay thread, a 1-6 s hitch in the middle of a frame at
@@ -1644,14 +1668,14 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
         }
         VkGraphicsPipelineCreateInfo cf = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = fs ? 1 : 0, .pStages = fs, .pMultisampleState = &P->ms,
                                            .pDepthStencilState = &P->ds, .pDynamicState = &dy[L_FS], .layout = fs_lay, .renderPass = rp};
-        if (!(part[nparts++] = lib_make(L_FS, &fk, sizeof fk, &cf, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, 0, fs_key))) return VK_NULL_HANDLE;
+        if (!(part[nparts++] = lib_make(L_FS, &fk, sizeof fk, &cf, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, 0, fs_key, cache_only))) return VK_NULL_HANDLE;
     }
     {   fokey key; memset(&key, 0, sizeof key);
         memcpy(key.cfmt, k->cfmt, sizeof key.cfmt); key.dfmt = k->dfmt; key.sfmt = k->sfmt; key.ncolor = k->ncolor; key.samples = (uint8_t)P->ms.rasterizationSamples; key.a2c = k->a2c;
         key.logic_en = k->logic_en; key.logic_op = k->logic_op; key.vin_static = (uint8_t)k->vin_static; memcpy(key.att, k->att, sizeof key.att);
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &P->ri, .pMultisampleState = &P->ms, .pColorBlendState = &P->bs, .pDynamicState = &dy[L_FO],
                                            .renderPass = rp};   // (with a render pass the formats come from it; P->ri is then ignored)
-        if (!(part[nparts++] = lib_make(L_FO, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT, NULL, 0, 0))) return VK_NULL_HANDLE; }
+        if (!(part[nparts++] = lib_make(L_FO, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT, NULL, 0, 0, cache_only))) return VK_NULL_HANDLE; }
     VkPipelineLibraryCreateInfoKHR libs = {VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, .libraryCount = nparts, .pLibraries = part};
     VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &libs, .layout = P->ci.layout, .renderPass = rp};   // no LINK_TIME_OPTIMIZATION: the fast link
     uint64_t t0 = now_ns();
@@ -2244,22 +2268,35 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
     if (async) {
         pc_open();
         VkPipeline p = VK_NULL_HANDLE;
+        int linked = 0;
         pstate *P = malloc(sizeof *P);
         if (P && gpl_on() && pstate_fill(P, sh, lay, k_rt)) {   // (the cache-only try needs pipelineCreationCacheControl, which GPL is on with)
-            P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
-            uint64_t t0 = now_ns();
-            VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
-            uint64_t dns = now_ns() - t0;
-            if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
-            pthread_mutex_lock(&g_mu);
-            if (p) { g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed); } else { g_probe_miss++; g_probe_miss_ns += dns; }
-            g_create_ns += dns;
-            pthread_mutex_unlock(&g_mu);
+            if (V.gpl_indep && !V.gpl_lto && V.cache_ctl && !P->mesh) {
+                uint64_t t0 = now_ns();
+                p = gpl_link(P, k_rt, 1);
+                uint64_t dns = now_ns() - t0;
+                if (p) {
+                    linked = 1;
+                    pthread_mutex_lock(&g_mu);
+                    g_ngfx++; g_frame_made++; g_create_ms += dns / 1e6; g_create_ns += dns;
+                    pthread_mutex_unlock(&g_mu);
+                }
+            } else {
+                P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                uint64_t t0 = now_ns();
+                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+                uint64_t dns = now_ns() - t0;
+                if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
+                pthread_mutex_lock(&g_mu);
+                if (p) { g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed); } else { g_probe_miss++; g_probe_miss_ns += dns; }
+                g_create_ns += dns;
+                pthread_mutex_unlock(&g_mu);
+            }
         }
         free(P);
         if (p) {
-            pw_note(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k))); pw_explain(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, 0, " on the frame path");
-            pthread_mutex_lock(&g_mu); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE); pthread_cond_broadcast(&g_busy_cv); pthread_mutex_unlock(&g_mu);
+            pw_note(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k))); pw_explain(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, " on the frame path");
+            pthread_mutex_lock(&g_mu); __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE); pthread_cond_broadcast(&g_busy_cv); pthread_mutex_unlock(&g_mu);
             *made = 1;
             return g;
         }
@@ -2279,13 +2316,13 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
     if (P && pstate_fill(P, sh, lay, k_rt)) {   // (else logged by vka_shader_module)
         if (async && gpl_on() && !P->mesh) {
             uint64_t t1 = now_ns();
-            p = gpl_link(P, k_rt);
+            p = gpl_link(P, k_rt, 0);
             if (p) { linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_create_ms += (now_ns() - t1) / 1e6; pthread_mutex_unlock(&g_mu); }
         }
         else if (!prewarm && !async && gpl_on() && !P->mesh) {   // (a mesh pipeline is made whole: the libraries here are cut for vertex input pipelines)
             if (V.gpl_indep && !V.gpl_lto) {
                 uint64_t t1 = now_ns();
-                p = gpl_link(P, k_rt);
+                p = gpl_link(P, k_rt, 0);
                 if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
                 else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
             } else {
@@ -2303,7 +2340,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
                     pthread_mutex_lock(&g_mu); g_probe_miss++; g_probe_miss_ns += dns; g_create_ns += dns; pthread_mutex_unlock(&g_mu);
                     p = VK_NULL_HANDLE;
                     uint64_t t1 = now_ns();
-                    p = gpl_link(P, k_rt);
+                    p = gpl_link(P, k_rt, 0);
                     if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
                     else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }   // the refused parts' time is the frame's too
                 }

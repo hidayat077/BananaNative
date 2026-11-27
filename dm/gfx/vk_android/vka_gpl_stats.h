@@ -56,6 +56,8 @@ static inline void vka_gpl_lat_summary(const vka_gpl_lat *s, double *avg_us, dou
 // vs true ir3 compiler miss (0 = compiled SPIR-V -> ISA). Uses VkPipelineCreationFeedback when valid, falling
 // back to a conservative duration heuristic (< 5 ms with a pipeline cache) when the driver omits feedback flags.
 static inline int vka_classify_compile_feedback(int valid, int cache_hit, int all_stages_valid, int all_stages_hit, int has_cache, uint64_t dur_ns) {
+    if (all_stages_valid && !all_stages_hit) return 0;   // stage missed VkPipelineCache -> real ir3 compile
+    if (dur_ns >= 20000000ull) return 0;                 // >= 20 ms is a real compile, not RAM rehydrate
     if (valid) return cache_hit != 0;
     if (all_stages_valid) return all_stages_hit != 0;
     return has_cache && dur_ns < 5000000ull;
