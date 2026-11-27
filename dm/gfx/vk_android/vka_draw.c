@@ -1833,6 +1833,13 @@ void vka_drv_memo_stats(char *b, size_t n) {
     g_pd_delta_w = g_pd_delta_all = 0;
 }
 static VkWriteDescriptorSet g_dw[512]; static uint32_t g_dwn;   // the writes that changed (push_same returns 2)
+static void write_sig(const VkWriteDescriptorSet *w, uint64_t *h, uint64_t *x0, uint64_t *x1, uint64_t *x2) {
+    *h = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
+    if (w->pBufferInfo) { *x0 = (uint64_t)w->pBufferInfo->buffer; *x1 = w->pBufferInfo->offset; *x2 = w->pBufferInfo->range; }
+    else if (w->pImageInfo) { *x0 = (uint64_t)w->pImageInfo->sampler; *x1 = (uint64_t)w->pImageInfo->imageView; *x2 = w->pImageInfo->imageLayout; }
+    else if (w->pTexelBufferView) { *x0 = (uint64_t)*w->pTexelBufferView; *x1 = 0; *x2 = 0; }
+    else { *x0 = 1; *x1 = 1; *x2 = 1; }
+}
 static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout, const VkWriteDescriptorSet *ws, uint32_t nw) {
     int c = bp == VK_PIPELINE_BIND_POINT_COMPUTE;
     if (!g_push_dedup && !g_push_delta) { g_pd[c].n = 0; g_pd_push++; g_pd_push_all++; return 0; }
@@ -1847,12 +1854,8 @@ static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout, const VkWr
     for (uint32_t i = 0; i < nw; i++) {
         const VkWriteDescriptorSet *w = &ws[i];
         if (w->descriptorCount != 1) return (g_pd[c].n = 0), 0;   // (the walk writes one descriptor per write)
-        uint64_t h = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
-        uint64_t x0, x1, x2;
-        if (w->pBufferInfo) { x0 = (uint64_t)w->pBufferInfo->buffer; x1 = w->pBufferInfo->offset; x2 = w->pBufferInfo->range; }
-        else if (w->pImageInfo) { x0 = (uint64_t)w->pImageInfo->sampler; x1 = (uint64_t)w->pImageInfo->imageView; x2 = w->pImageInfo->imageLayout; }
-        else if (w->pTexelBufferView) { x0 = (uint64_t)*w->pTexelBufferView; x1 = 0; x2 = 0; }
-        else { x0 = 1; x1 = 1; x2 = 1; }
+        uint64_t h, x0, x1, x2;
+        write_sig(w, &h, &x0, &x1, &x2);
         uint64_t *p = g_pd[c].w + 2 + 4 * (size_t)i;
         if (!match) { p[0] = h; p[1] = x0; p[2] = x1; p[3] = x2; }
         else if (p[0] != h) { changed = 1; delta_ok = 0; g_dwn = 0; p[0] = h; p[1] = x0; p[2] = x1; p[3] = x2; }
@@ -1864,6 +1867,40 @@ static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout, const VkWr
     // DM_VK_PUSH_DELTA=1 (live): only changed writes in the same layout/order are pushed; Vulkan keeps the rest until the set is disturbed
     if (delta_ok && g_dwn) { g_pd_delta_w += g_dwn; g_pd_delta_all += nw; return 2; }
     return 0;
+}
+static struct {
+    int valid;
+    VkDescriptorSetLayout dsl1, bound_set0;
+    VkDescriptorSet set;
+    uint64_t *w;
+    size_t cap, n;
+} g_s1;
+static struct {
+    int valid, indep;
+    VkDescriptorSetLayout s0, s1;
+    VkDescriptorSet ps0, ps1;
+} g_pool_bound[2];
+static int set1_reuse_check(VkDescriptorSetLayout dsl1, const VkWriteDescriptorSet *ws, uint32_t nw) {
+    if (!g_push_dedup) { g_s1.valid = 0; return 0; }
+    size_t need = (size_t)nw * 4;
+    if (need > g_s1.cap) {
+        size_t cap = need ? need * 2 : 64;
+        uint64_t *buf = realloc(g_s1.w, cap * sizeof *buf);
+        if (!buf) { free(g_s1.w); g_s1.w = NULL; g_s1.cap = g_s1.n = 0; g_s1.valid = 0; return 0; }
+        g_s1.w = buf; g_s1.cap = cap;
+    }
+    int same = g_s1.valid && g_s1.dsl1 == dsl1 && g_s1.n == need;
+    for (uint32_t i = 0; i < nw; i++) {
+        if (ws[i].descriptorCount != 1) { g_s1.valid = 0; return 0; }
+        uint64_t h, x0, x1, x2;
+        write_sig(&ws[i], &h, &x0, &x1, &x2);
+        uint64_t *p = g_s1.w + 4 * (size_t)i;
+        if (!same || p[0] != h || p[1] != x0 || p[2] != x1 || p[3] != x2) {
+            same = 0; p[0] = h; p[1] = x0; p[2] = x1; p[3] = x2;
+        }
+    }
+    g_s1.n = need;
+    return same;
 }
 static int g_sets_dry, g_dry_pool;   // DM_VK_INSTANCE: bind_sets only builds the writes (g_w) when g_sets_dry is set, and sets_push binds them later
 // A set written with vkUpdateDescriptorSets (a layout with more descriptors than maxPushDescriptors) gets no null descriptor: an unbound image takes a placeholder (the
@@ -1901,48 +1938,81 @@ static int sets_push(const vka_layout *lay, VkPipelineBindPoint bp, int any_pool
             if (vka_binding_is_fs(g_w.w[i].dstBinding)) w1[n1++] = g_w.w[i];
             else w0[n0++] = g_w.w[i];
         }
+        int c = (bp == VK_PIPELINE_BIND_POINT_COMPUTE);
+        int set0_compat = g_s1.valid && g_s1.bound_set0 == lay->set0;
         if (lay->push) {
-            int ps = n0 ? push_same(bp, lay->layout, w0, n0) : 1;
+            int ps = n0 ? push_same(bp, (VkPipelineLayout)(uintptr_t)lay->set0, w0, n0) : 1;
             if (ps == 0) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, n0, w0);
             else if (ps == 2) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, g_dwn, g_dw);
         } else {
-            g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0;
+            g_pd[c].n = 0;
             VkDescriptorSet set0 = set_alloc(lay->set0); if (!set0) return 0;
             for (uint32_t i = 0; i < n0; i++) w0[i].dstSet = set0;
             if (n0) vk.vkUpdateDescriptorSets(V.dev, n0, w0, 0, NULL);
             vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, 1, &set0, 0, NULL);
         }
         if (lay->set1 != VK_NULL_HANDLE) {
-            VkDescriptorSet set1 = set_alloc(lay->set1); if (!set1) return 0;
-            for (uint32_t i = 0; i < n1; i++) w1[i].dstSet = set1;
-            if (n1) vk.vkUpdateDescriptorSets(V.dev, n1, w1, 0, NULL);
-            vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_FS, 1, &set1, 0, NULL);
+            int same_w1 = set1_reuse_check(lay->set1, w1, n1);
+            if (same_w1 && g_s1.set != VK_NULL_HANDLE) {
+                if (!set0_compat) {
+                    vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_FS, 1, &g_s1.set, 0, NULL);
+                    g_s1.bound_set0 = lay->set0;
+                    g_pool_bound[c].valid = 0;
+                }
+            } else {
+                VkDescriptorSet set1 = set_alloc(lay->set1); if (!set1) { g_s1.valid = 0; return 0; }
+                for (uint32_t i = 0; i < n1; i++) w1[i].dstSet = set1;
+                if (n1) vk.vkUpdateDescriptorSets(V.dev, n1, w1, 0, NULL);
+                vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_FS, 1, &set1, 0, NULL);
+                g_s1.valid = 1; g_s1.dsl1 = lay->set1; g_s1.bound_set0 = lay->set0; g_s1.set = set1;
+                g_pool_bound[c].valid = 0;
+            }
         }
         if (g_prof) g_ps[2] += cntvct() - t2_;
         if (any_pool) vka_tex_pfb_draw();
         if (any_pool) {
             VkDescriptorSet ps[2] = {vka_bindless_set(), vka_pfb_set()};
-            if (ps[0]) vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_POOL, ps[1] ? 2 : 1, ps, 0, NULL);
+            if (ps[0]) {
+                if (!g_push_dedup || !g_pool_bound[c].valid || !g_pool_bound[c].indep ||
+                    g_pool_bound[c].s0 != lay->set0 || g_pool_bound[c].s1 != lay->set1 ||
+                    g_pool_bound[c].ps0 != ps[0] || g_pool_bound[c].ps1 != ps[1]) {
+                    vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_POOL, ps[1] ? 2 : 1, ps, 0, NULL);
+                    g_pool_bound[c].valid = 1; g_pool_bound[c].indep = 1;
+                    g_pool_bound[c].s0 = lay->set0; g_pool_bound[c].s1 = lay->set1;
+                    g_pool_bound[c].ps0 = ps[0]; g_pool_bound[c].ps1 = ps[1];
+                }
+            }
             else VRED_ONCE("a shader reads the texture pool and there is no pool set");
         }
         return 1;
     }
+    int c = (bp == VK_PIPELINE_BIND_POINT_COMPUTE);
+    if (!c) g_s1.valid = 0;
     if (lay->push) { int ps = g_w.n ? push_same(bp, lay->layout, g_w.w, g_w.n) : 1;
                      if (ps == 0) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_w.n, g_w.w);
                      else if (ps == 2) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_dwn, g_dw); }
     else {
-        g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0;   // set 0 bound as a set: the last push is no longer what the draws see
+        g_pd[c].n = 0;   // set 0 bound as a set: the last push is no longer what the draws see
         VkDescriptorSet set = set_alloc(lay->set0); if (!set) return 0;
         for (uint32_t i = 0; i < g_w.n; i++) g_w.w[i].dstSet = set;
         set_no_nulls(1, 1);
         if (g_w.n) vk.vkUpdateDescriptorSets(V.dev, g_w.n, g_w.w, 0, NULL);
         vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, 0, 1, &set, 0, NULL);
+        g_pool_bound[c].valid = 0;
     }
     if (g_prof) g_ps[2] += cntvct() - t2_;
     if (any_pool) vka_tex_pfb_draw();   // (its pool reads are reported: this submission copies the bitmap out, vka_tex.c "Texture pool reads")
     if (any_pool) {   // set 1 the pool, and in the same call set 2 the pool reads' bitmap when they are reported (vka_tex.c "Texture pool reads")
         VkDescriptorSet ps[2] = {vka_bindless_set(), vka_pfb_set()};
-        if (ps[0]) vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, 1, ps[1] ? 2 : 1, ps, 0, NULL); else VRED_ONCE("a shader reads the texture pool and there is no pool set");
+        if (ps[0]) {
+            if (!g_push_dedup || !g_pool_bound[c].valid || g_pool_bound[c].indep ||
+                g_pool_bound[c].s0 != lay->set0 || g_pool_bound[c].ps0 != ps[0] || g_pool_bound[c].ps1 != ps[1]) {
+                vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, 1, ps[1] ? 2 : 1, ps, 0, NULL);
+                g_pool_bound[c].valid = 1; g_pool_bound[c].indep = 0;
+                g_pool_bound[c].s0 = lay->set0; g_pool_bound[c].s1 = VK_NULL_HANDLE;
+                g_pool_bound[c].ps0 = ps[0]; g_pool_bound[c].ps1 = ps[1];
+            }
+        } else VRED_ONCE("a shader reads the texture pool and there is no pool set");
     }
     return 1;
 }
@@ -2263,7 +2333,7 @@ static void ib_bind(VkBuffer b, VkDeviceSize o, VkIndexType t) {
 }
 static void inst_reset(void);
 static void fbl_pass_begin(void) { DY.fbl = ~0u; DY.dirty |= VKA_DYN_FBL; }
-void vka_dyn_invalidate(void) { DY.valid = 0; vka_dyn_dirty_all(&DY.dirty); DY.nc_ben = DY.nc_beq = DY.nc_cwm = 0; VB.valid = 0; VBC.valid = 0; IB.valid = 0; g_pd[0].n = g_pd[1].n = 0; inst_reset(); }
+void vka_dyn_invalidate(void) { DY.valid = 0; vka_dyn_dirty_all(&DY.dirty); DY.nc_ben = DY.nc_beq = DY.nc_cwm = 0; VB.valid = 0; VBC.valid = 0; IB.valid = 0; g_pd[0].n = g_pd[1].n = 0; g_s1.valid = 0; g_pool_bound[0].valid = g_pool_bound[1].valid = 0; inst_reset(); }
 #define PT(i) do { if (g_prof) { uint64_t t_ = cntvct(); if ((i) > 0 && g_pt_ph == (i) - 1) g_pt[(i) > 0 ? (i) - 1 : 0] += t_ - g_pt_last; g_pt_last = t_; g_pt_ph = (i); } } while (0)
 // ---------- Instanced runs (DM_VK_INSTANCE) ----------
 // Donkey Kong Bananza draws many objects as runs of draws that repeat one mesh (the same pipeline, index range, base vertex and vertex streams) and differ only in where one
@@ -3162,29 +3232,41 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         }
         if (eds & VKA_EDS_ALPHA_TO_COV) DY_SET1(VKA_DYN_A2C, a2c, k.a2c ? 1u : 0u, vk.vkCmdSetAlphaToCoverageEnableEXT(g_cb, DY.a2c));
         if (eds & VKA_EDS_LOGIC_OP_ENABLE) DY_SET1(VKA_DYN_LOGEN, logen, k.logic_en ? 1u : 0u, vk.vkCmdSetLogicOpEnableEXT(g_cb, DY.logen));
-        if (eds & VKA_EDS_LOGIC_OP) DY_SET1(VKA_DYN_LOGOP, logop, (uint32_t)k.logic_op, vk.vkCmdSetLogicOpEXT(g_cb, (VkLogicOp)DY.logop));
+        if (eds & VKA_EDS_LOGIC_OP) {
+            if (k.logic_en || !DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_LOGOP))
+                DY_SET1(VKA_DYN_LOGOP, logop, (uint32_t)k.logic_op, vk.vkCmdSetLogicOpEXT(g_cb, (VkLogicOp)DY.logop));
+        }
         if (k.ncolor > 0) {
             if (eds & VKA_EDS_COLOR_BLEND_ENABLE) {
                 VkBool32 en[8]; for (uint32_t i = 0; i < k.ncolor; i++) en[i] = k.att[i].en ? VK_TRUE : VK_FALSE;
                 if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_BLEND_EN) || !g_dyn_filter || DY.nc_ben < k.ncolor || memcmp(DY.ben, en, k.ncolor * sizeof *en)) {
-                    memcpy(DY.ben, en, k.ncolor * sizeof *en); DY.nc_ben = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EN);
+                    memcpy(DY.ben, en, k.ncolor * sizeof *en);
+                    if (k.ncolor > DY.nc_ben) DY.nc_ben = k.ncolor;
+                    vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EN);
                     vk.vkCmdSetColorBlendEnableEXT(g_cb, 0, k.ncolor, en);
                 }
             }
             if (eds & VKA_EDS_COLOR_BLEND_EQ) {
                 VkColorBlendEquationEXT eq[8];
-                for (uint32_t i = 0; i < k.ncolor; i++)
-                    eq[i] = (VkColorBlendEquationEXT){(VkBlendFactor)k.att[i].src, (VkBlendFactor)k.att[i].dst, (VkBlendOp)k.att[i].op,
-                                                      (VkBlendFactor)k.att[i].srca, (VkBlendFactor)k.att[i].dsta, (VkBlendOp)k.att[i].opa};
-                if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_BLEND_EQ) || !g_dyn_filter || DY.nc_beq < k.ncolor || memcmp(DY.beq, eq, k.ncolor * sizeof *eq)) {
-                    memcpy(DY.beq, eq, k.ncolor * sizeof *eq); DY.nc_beq = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EQ);
+                int beq_ready = DY.valid && !vka_dyn_is_dirty(DY.dirty, VKA_DYN_BLEND_EQ);
+                for (uint32_t i = 0; i < k.ncolor; i++) {
+                    if (!k.att[i].en && beq_ready && i < DY.nc_beq) eq[i] = DY.beq[i];
+                    else eq[i] = (VkColorBlendEquationEXT){(VkBlendFactor)k.att[i].src, (VkBlendFactor)k.att[i].dst, (VkBlendOp)k.att[i].op,
+                                                           (VkBlendFactor)k.att[i].srca, (VkBlendFactor)k.att[i].dsta, (VkBlendOp)k.att[i].opa};
+                }
+                if (!beq_ready || !g_dyn_filter || DY.nc_beq < k.ncolor || memcmp(DY.beq, eq, k.ncolor * sizeof *eq)) {
+                    memcpy(DY.beq, eq, k.ncolor * sizeof *eq);
+                    if (k.ncolor > DY.nc_beq) DY.nc_beq = k.ncolor;
+                    vka_dyn_clear(&DY.dirty, VKA_DYN_BLEND_EQ);
                     vk.vkCmdSetColorBlendEquationEXT(g_cb, 0, k.ncolor, eq);
                 }
             }
             if (eds & VKA_EDS_COLOR_WRITE_MASK) {
                 VkColorComponentFlags wm[8]; for (uint32_t i = 0; i < k.ncolor; i++) wm[i] = (VkColorComponentFlags)k.att[i].mask;
                 if (!DY.valid || vka_dyn_is_dirty(DY.dirty, VKA_DYN_WRITE_MASK) || !g_dyn_filter || DY.nc_cwm < k.ncolor || memcmp(DY.cwm, wm, k.ncolor * sizeof *wm)) {
-                    memcpy(DY.cwm, wm, k.ncolor * sizeof *wm); DY.nc_cwm = k.ncolor; vka_dyn_clear(&DY.dirty, VKA_DYN_WRITE_MASK);
+                    memcpy(DY.cwm, wm, k.ncolor * sizeof *wm);
+                    if (k.ncolor > DY.nc_cwm) DY.nc_cwm = k.ncolor;
+                    vka_dyn_clear(&DY.dirty, VKA_DYN_WRITE_MASK);
                     vk.vkCmdSetColorWriteMaskEXT(g_cb, 0, k.ncolor, wm);
                 }
             }

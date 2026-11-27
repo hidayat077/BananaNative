@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -272,26 +273,55 @@ static VkPipelineCache g_pc; static char g_pc_path[1024], g_pw_path[1100], g_pw_
 static uint64_t g_ngfx, g_ncs, g_nfail, g_ncs_over, g_create_ns, g_frame_made;   // all pipelines made (frame path, background and prewarm); g_frame_made / g_create_ns: on the frame path only
 static uint64_t g_probe_hit, g_probe_miss, g_probe_miss_ns;          // GPL: the cache-only try before a link (VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT)
 static _Atomic uint64_t g_save_ns_total, g_hy_draws, g_pw_wait_ns;
-static void pw_load(void); static void pw_start(void); static int pw_save(void); static int pw_dirty(void); static void unf_load(void);
+static void pw_load(void); static void pw_start(void); static int pw_save(void); static int pw_dirty(void); static void unf_load(void); static void heavy_load(void);
 static void *saver_main(void *a);
 static pthread_mutex_t g_save_mu = PTHREAD_MUTEX_INITIALIZER;   // one save at a time (the saver thread, a forced save)
 static pthread_mutex_t g_sv_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_sv_cv = PTHREAD_COND_INITIALIZER; static int g_sv_want, g_sv_up;
 
-// ---------- Boot #1 GPL + Compute pre-compile & persistent binary cache (vka_gpl_cache.h) ----------
+// ---------- Boot #1 GPL + Compute pre-compile & sharded binary cache (vka_gpl_cache.h) ----------
 static int g_gpl_cache_on;
 static char g_gpl_cache_path[1100];
 static vka_gpl_cache_hdr g_gpl_hdr;
-static uint8_t *g_gpl_bitset;
-static uint32_t g_gpl_bitset_len;
 static pthread_mutex_t g_merge_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int g_pre_active, g_pre_compiled, g_pre_total, g_pre_skip, g_pre_stop, g_pre_checkpoint_want, g_pre_active_workers;
 static _Atomic uint64_t g_pre_t0_ns;
+
+enum { SHARD_LRU_CAP = 16 };
+typedef struct {
+    int shard_id;
+    VkPipelineCache pc;
+    uint32_t size;
+    int ref;
+    int loading;
+    uint64_t tick;
+} shard_lru_slot;
+static struct {
+    void *map_base;
+    size_t map_size;
+    const vka_gpl_shard_ent *table;
+    uint32_t shard_count;
+} g_shard_store;
+static shard_lru_slot g_shard_lru[SHARD_LRU_CAP];
+static size_t g_shard_open_bytes;
+static uint64_t g_shard_tick;
+static pthread_mutex_t g_shard_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_shard_cv = PTHREAD_COND_INITIALIZER;
+
 static VkPipelineCache g_pc_retype;
 static char g_retype_cache_path[1100];
 static vka_gpl_cache_hdr g_retype_hdr;
 static int g_retype_cache_loaded;
 static _Atomic int g_retype_dirty;
 static _Atomic uint64_t g_retype_cache_bytes;
+
+static uint64_t g_nlib[5], g_nlinked, g_nopt; static double g_lib_ms, g_link_ms;
+static VkPipelineCache g_pc_mono;
+static char g_mono_cache_path[1100];
+static vka_gpl_cache_hdr g_mono_hdr;
+static int g_mono_cache_loaded;
+static _Atomic int g_mono_dirty;
+static _Atomic uint64_t g_mono_cache_bytes;
+
 static char g_svar_path[1100];
 static vka_svar_set g_svar;
 static pthread_mutex_t g_svar_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -299,24 +329,116 @@ static _Atomic int g_svar_dirty;
 static _Atomic uint64_t g_svar_loaded_n, g_svar_precompiled_n, g_svar_saved_n;
 static uint8_t *g_pw_load; static size_t g_pw_load_len; static uint32_t g_pw_load_n;   // the loaded records, read by Boot #1 / prewarm threads (not changed after pw_load)
 enum { L_VI, L_PRE, L_FS, L_FO, L_PREFS, NLIB };
-static void vka_boot_precompile_run(const vka_shlib *L);
+static void vka_boot_precompile_run(const vka_shlib *L, int rw_fd, vka_gpl_shard_ent *table, uint32_t shard_count, uint64_t append_off);
 static void vka_retype_variants_startup(const vka_shlib *L, const char *dir, uint64_t lib_hash, int gl_depth);
+static void mono_cache_startup(const char *dir, uint64_t lib_hash, int gl_depth);
+static void svar_record(const vka_svar_rec *rec);
 static int vkf_int_class(uint32_t f);
 static void precomp_fill_dyn(VkDynamicState *out_dyn, VkPipelineDynamicStateCreateInfo *out_dy, int part);
-static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
-    if (!g_pw_load || !g_pw_load_len || !g_pc) return;
-    enum { SEEN_CAP = 8192 };   // power of two >= 2x max deduplicated variants
-    typedef struct { uint64_t key, m1, m2; uint8_t kind, used; } vseen;
-    vseen *seen = calloc(SEEN_CAP, sizeof *seen);
-    if (!seen) return;
-    uint32_t n_seen = 0, n_built = 0;
-    VkDynamicState dl_pre[40], dl_fs[40];
-    VkPipelineDynamicStateCreateInfo dy_pre, dy_fs;
-    precomp_fill_dyn(dl_pre, &dy_pre, L_PRE);
-    precomp_fill_dyn(dl_fs, &dy_fs, L_FS);
-    VkPipelineCreateFlags lto_flag = V.gpl_lto ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0;
-    VkPipelineRenderingCreateInfo ri0 = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+static VkPipelineCache shard_pc_acquire(uint64_t shader_key, int *out_slot) {
+    if (out_slot) *out_slot = -1;
+    if (!g_gpl_cache_on || !g_shard_store.map_base || !g_shard_store.table || !g_shard_store.shard_count || !shader_key)
+        return VK_NULL_HANDLE;
+    uint32_t sid = vka_gpl_shard_of(shader_key, g_shard_store.shard_count);
+    vka_gpl_shard_ent ent = g_shard_store.table[sid];
+    if (!(ent.entries & VKA_GPL_SHARD_DONE) || !ent.size) return VK_NULL_HANDLE;
 
+    int mb = VKA_ENV("DM_VK_GPL_SHARD_BUDGET_MB", VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 ? 16 : 32);
+    if (mb < 8) mb = 8;
+    size_t budget = (size_t)mb << 20;
+    VkPipelineCache dead[SHARD_LRU_CAP];
+    int ndead = 0;
+
+    pthread_mutex_lock(&g_shard_mu);
+    for (;;) {
+        int found = -1, free_slot = -1;
+        for (int i = 0; i < SHARD_LRU_CAP; i++) {
+            if (g_shard_lru[i].shard_id == (int)sid) { found = i; break; }
+            if (g_shard_lru[i].shard_id < 0 && free_slot < 0) free_slot = i;
+        }
+        if (found >= 0) {
+            if (g_shard_lru[found].loading) {
+                pthread_cond_wait(&g_shard_cv, &g_shard_mu);
+                continue;
+            }
+            if (g_shard_lru[found].pc != VK_NULL_HANDLE) {
+                g_shard_lru[found].ref++;
+                g_shard_lru[found].tick = ++g_shard_tick;
+                VkPipelineCache ret = g_shard_lru[found].pc;
+                pthread_mutex_unlock(&g_shard_mu);
+                if (out_slot) *out_slot = found;
+                return ret;
+            }
+            free_slot = found;
+        }
+        // Evict unreferenced LRU shards while over budget or when all LRU slots are occupied.
+        while (free_slot < 0 || (g_shard_open_bytes + ent.size > budget)) {
+            int victim = -1;
+            uint64_t best_tick = UINT64_MAX;
+            for (int i = 0; i < SHARD_LRU_CAP; i++) {
+                if (g_shard_lru[i].shard_id >= 0 && !g_shard_lru[i].loading && g_shard_lru[i].ref == 0 && g_shard_lru[i].tick < best_tick) {
+                    best_tick = g_shard_lru[i].tick;
+                    victim = i;
+                }
+            }
+            if (victim < 0) break;
+            if (g_shard_lru[victim].pc != VK_NULL_HANDLE && ndead < SHARD_LRU_CAP)
+                dead[ndead++] = g_shard_lru[victim].pc;
+            if (g_shard_open_bytes >= g_shard_lru[victim].size) g_shard_open_bytes -= g_shard_lru[victim].size;
+            else g_shard_open_bytes = 0;
+            g_shard_lru[victim].shard_id = -1;
+            g_shard_lru[victim].pc = VK_NULL_HANDLE;
+            g_shard_lru[victim].size = 0;
+            if (free_slot < 0) free_slot = victim;
+        }
+        if (free_slot < 0) {
+            pthread_cond_wait(&g_shard_cv, &g_shard_mu);
+            continue;
+        }
+        g_shard_lru[free_slot].shard_id = (int)sid;
+        g_shard_lru[free_slot].loading = 1;
+        g_shard_lru[free_slot].ref = 1;
+        g_shard_lru[free_slot].size = ent.size;
+        g_shard_lru[free_slot].tick = ++g_shard_tick;
+        g_shard_lru[free_slot].pc = VK_NULL_HANDLE;
+        pthread_mutex_unlock(&g_shard_mu);
+
+        for (int i = 0; i < ndead; i++) vk.vkDestroyPipelineCache(V.dev, dead[i], NULL);
+        const uint8_t *blob = (const uint8_t *)g_shard_store.map_base + ent.offset;
+        VkPipelineCache pc = VK_NULL_HANDLE;
+        VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = ent.size, .pInitialData = blob};
+        if (vk.vkCreatePipelineCache(V.dev, &ci, NULL, &pc) != VK_SUCCESS) pc = VK_NULL_HANDLE;
+        // Release page tables for the read-only mmap region immediately after driver ingest.
+        uintptr_t p0 = ((uintptr_t)blob + 4095u) & ~(uintptr_t)4095u;
+        uintptr_t p1 = ((uintptr_t)blob + ent.size) & ~(uintptr_t)4095u;
+        if (p1 > p0) madvise((void *)p0, (size_t)(p1 - p0), MADV_DONTNEED);
+
+        pthread_mutex_lock(&g_shard_mu);
+        g_shard_lru[free_slot].loading = 0;
+        if (pc) {
+            g_shard_lru[free_slot].pc = pc;
+            g_shard_open_bytes += ent.size;
+        } else {
+            g_shard_lru[free_slot].shard_id = -1;
+            g_shard_lru[free_slot].ref = 0;
+            g_shard_lru[free_slot].size = 0;
+        }
+        pthread_cond_broadcast(&g_shard_cv);
+        pthread_mutex_unlock(&g_shard_mu);
+        if (pc && out_slot) *out_slot = free_slot;
+        return pc;
+    }
+}
+static void shard_pc_release(int slot) {
+    if (slot < 0 || slot >= SHARD_LRU_CAP) return;
+    pthread_mutex_lock(&g_shard_mu);
+    if (g_shard_lru[slot].ref > 0) g_shard_lru[slot].ref--;
+    pthread_cond_broadcast(&g_shard_cv);
+    pthread_mutex_unlock(&g_shard_mu);
+}
+static void precomp_pw_variants(const vka_shlib *L) {
+    if (!g_pw_load || !g_pw_load_len) return;
+    uint32_t added = 0;
     for (size_t o = 0; o + sizeof(pwrec) <= g_pw_load_len;) {
         pwrec r; memcpy(&r, g_pw_load + o, sizeof r);
         const uint8_t *kb = g_pw_load + o + sizeof r;
@@ -324,136 +446,60 @@ static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
         if (r.kind == VKA_PW_CS && r.klen == VKA_PW_CS_MASKS && r.key[0]) {
             uint64_t m[2]; memcpy(m, kb, sizeof m);
             if (!(m[0] | m[1])) continue;
-            uint64_t h = (r.key[0] ^ m[0] * 0x9E3779B97F4A7C15ull ^ m[1] * 0xBF58476D1CE4E5B9ull) & (SEEN_CAP - 1u);
-            while (seen[h].used && !(seen[h].kind == 4 && seen[h].key == r.key[0] && seen[h].m1 == m[0] && seen[h].m2 == m[1])) h = (h + 1u) & (SEEN_CAP - 1u);
-            if (seen[h].used || n_seen >= 4096) continue;
-            seen[h] = (vseen){r.key[0], m[0], m[1], 4, 1}; n_seen++;
             const dmsh_vk_entry *e = vka_shlib_find(L, r.key[0]);
             if (!e) continue;
-            VkShaderModule mod = vka_shader_precomp_cs_img(L, e, m[0], m[1]);
-            if (!mod) continue;
-            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
-            vka_shader *sh[VKA_NSTAGE] = {0}; sh[5] = &tmp;
-            vka_layout lay;
-            if (layout_slow(sh, 1, &lay)) {
-                uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_CS) : 0;
-                VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
-                int spill = 0; for (unsigned i = 0; i < e->bind_count; i++) if (tmp.b[i].kind == DMSH_VK_KIND_SHARED_SPILL) spill = 1;
-                VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .flags = spill ? VK_PIPELINE_CREATE_DISPATCH_BASE_BIT : 0, .layout = lay.layout,
-                    .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = mod, .pName = "main"}};
-                VkPipeline p = VK_NULL_HANDLE;
-                if (vk.vkCreateComputePipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
-            }
-            vk.vkDestroyShaderModule(V.dev, mod, NULL);
+            vka_svar_rec vr = {0};
+            vr.shader_hash = e->key;
+            vr.stage = DMSH_VK_STAGE_CS;
+            vr.tex_u = m[0]; vr.tex_s = m[1];
+            svar_record(&vr); added++;
         } else if (r.kind == VKA_PW_GFX) {
             vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
             if (k.vin_static != (uint32_t)!V.vin_dyn) continue;
-            if (k.fs_variant == VKA_FS_RETYPE && r.key[1]) {
+            if (r.key[1]) {
                 const dmsh_vk_entry *e = vka_shlib_find(L, r.key[1]);
                 if (e && e->stage == DMSH_VK_STAGE_FS) {
                     uint32_t fu = 0, fsm = 0;
-                    for (uint32_t i = 0; i < k.ncolor && i < 8; i++) {
-                        int c = vkf_int_class(k.cfmt[i]);
-                        if (c && (e->fout_mask >> i & 1) && (e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (c == 1) fu |= 1u << i; else fsm |= 1u << i; }
-                    }
-                    if (fu | fsm) {
-                        uint64_t h = (r.key[1] ^ ((uint64_t)fu << 32 | fsm) * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
-                        while (seen[h].used && !(seen[h].kind == 1 && seen[h].key == r.key[1] && seen[h].m1 == fu && seen[h].m2 == fsm)) h = (h + 1u) & (SEEN_CAP - 1u);
-                        if (!seen[h].used && n_seen < 4096) {
-                            seen[h] = (vseen){r.key[1], fu, fsm, 1, 1}; n_seen++;
-                            VkShaderModule mod = vka_shader_precomp_fout(L, e, fu, fsm);
-                            if (mod) {
-                                vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
-                                vka_layout lay;
-                                if (vka_layout_fs_of(&tmp, &lay)) {
-                                    uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_FS) : 0;
-                                    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
-                                    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT};
-                                    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
-                                    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, .maxDepthBounds = 1.0f};
-                                    VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = mod, .pName = "main"};
-                                    VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
-                                        .stageCount = 1, .pStages = &st, .pMultisampleState = &ms, .pDepthStencilState = &ds, .pDynamicState = &dy_fs, .layout = lay.fs_layout};
-                                    VkPipeline p = VK_NULL_HANDLE;
-                                    if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
-                                }
-                                vk.vkDestroyShaderModule(V.dev, mod, NULL);
+                    if (k.fs_variant == VKA_FS_RETYPE) {
+                        for (uint32_t i = 0; i < k.ncolor && i < 8; i++) {
+                            int c = vkf_int_class(k.cfmt[i]);
+                            if (c && (e->fout_mask >> i & 1) && (e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) {
+                                if (c == 1) fu |= 1u << i; else fsm |= 1u << i;
                             }
                         }
                     }
-                }
-            }
-            if (k.alpha_func != 0 && r.key[1]) {
-                const dmsh_vk_entry *e = vka_shlib_find(L, r.key[1]);
-                if (e && e->stage == DMSH_VK_STAGE_FS && (e->flags & DMSH_VK_F_ALPHA_TEST)) {
-                    uint64_t h = (r.key[1] ^ (uint64_t)k.alpha_func * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
-                    while (seen[h].used && !(seen[h].kind == 2 && seen[h].key == r.key[1] && seen[h].m1 == k.alpha_func)) h = (h + 1u) & (SEEN_CAP - 1u);
-                    if (!seen[h].used && n_seen < 4096) {
-                        seen[h] = (vseen){r.key[1], k.alpha_func, 0, 2, 1}; n_seen++;
-                        vka_precomp_sh ps;
-                        if (vka_shader_precomp_open(L, (uint32_t)(e - L->ent), &ps)) {
-                            VkShaderModule mod = ps.pfb_late ? ps.pfb_late : ps.mods[DMSH_VK_MOD_BASE];
-                            if (mod) {
-                                vka_shader tmp = {.key = e->key, .e = e, .b = ps.b, .lib = L};
-                                vka_layout lay;
-                                if (vka_layout_fs_of(&tmp, &lay)) {
-                                    uint32_t afunc = k.alpha_func;
-                                    VkSpecializationMapEntry ae = {DMSH_VK_SPEC_ALPHA_FUNC, 0, sizeof afunc};
-                                    VkSpecializationInfo aspec = {1, &ae, sizeof afunc, &afunc};
-                                    uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_FS) : 0;
-                                    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
-                                    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT};
-                                    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT, .alphaToCoverageEnable = ps.pfb_late ? VK_TRUE : VK_FALSE};
-                                    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, .maxDepthBounds = 1.0f};
-                                    VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = mod, .pName = "main", .pSpecializationInfo = &aspec};
-                                    VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
-                                        .stageCount = 1, .pStages = &st, .pMultisampleState = &ms, .pDepthStencilState = &ds, .pDynamicState = &dy_fs, .layout = lay.fs_layout};
-                                    VkPipeline p = VK_NULL_HANDLE;
-                                    if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
-                                }
-                            }
-                            vka_shader_precomp_destroy(&ps);
-                        }
+                    uint8_t afunc = (k.alpha_func != 0 && (e->flags & DMSH_VK_F_ALPHA_TEST)) ? k.alpha_func : 0;
+                    uint64_t tu = k.tex_u[DMSH_VK_STAGE_FS], ts = k.tex_s[DMSH_VK_STAGE_FS];
+                    if (fu || fsm || afunc || tu || ts) {
+                        vka_svar_rec vr = {0};
+                        vr.shader_hash = e->key;
+                        vr.stage = DMSH_VK_STAGE_FS;
+                        vr.lib_variant = (uint8_t)(k.fs_variant == VKA_FS_RETYPE ? DMSH_VK_MOD_BASE : k.fs_variant);
+                        vr.fout_u = fu; vr.fout_s = fsm;
+                        vr.tex_u = tu; vr.tex_s = ts;
+                        vr.alpha_func = afunc;
+                        vr.samples = k.samples ? k.samples : 1;
+                        if (k.a2c) vr.flags |= VKA_SVAR_F_A2C;
+                        svar_record(&vr); added++;
                     }
                 }
             }
             if ((k.vin_u | k.vin_s) && r.key[0]) {
                 const dmsh_vk_entry *e = vka_shlib_find(L, r.key[0]);
                 if (e && e->stage == DMSH_VK_STAGE_VS) {
-                    uint64_t h = (r.key[0] ^ ((uint64_t)k.vin_u << 32 | k.vin_s) * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
-                    while (seen[h].used && !(seen[h].kind == 3 && seen[h].key == r.key[0] && seen[h].m1 == k.vin_u && seen[h].m2 == k.vin_s)) h = (h + 1u) & (SEEN_CAP - 1u);
-                    if (!seen[h].used && n_seen < 4096) {
-                        seen[h] = (vseen){r.key[0], k.vin_u, k.vin_s, 3, 1}; n_seen++;
-                        VkShaderModule mod = vka_shader_precomp_vin(L, e, k.vin_u, k.vin_s);
-                        if (mod) {
-                            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shader_precomp_binds(L, e), .lib = L};
-                            vka_shader *sh[VKA_NSTAGE] = {0}; sh[0] = &tmp;
-                            vka_layout lay;
-                            if (vka_layout_pre_of(sh, &lay)) {
-                                VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1};
-                                VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .lineWidth = 1.0f};
-                                VkBool32 gl_true = VK_TRUE;
-                                VkSpecializationMapEntry me = {DMSH_VK_SPEC_GL_DEPTH, 0, sizeof gl_true};
-                                VkSpecializationInfo spec = {1, &me, sizeof gl_true, &gl_true};
-                                int use_gl = gl_depth && (e->flags & DMSH_VK_F_GL_DEPTH);
-                                uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_VS) : 0;
-                                VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
-                                VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT};
-                                VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = mod, .pName = "main", .pSpecializationInfo = use_gl ? &spec : NULL};
-                                VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
-                                    .stageCount = 1, .pStages = &st, .pViewportState = &vp, .pRasterizationState = &rs, .pDynamicState = &dy_pre, .layout = lay.pre_layout};
-                                VkPipeline p = VK_NULL_HANDLE;
-                                if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
-                            }
-                            vk.vkDestroyShaderModule(V.dev, mod, NULL);
-                        }
-                    }
+                    vka_svar_rec vr = {0};
+                    vr.shader_hash = e->key;
+                    vr.stage = DMSH_VK_STAGE_VS;
+                    vr.lib_variant = k.gs_fx == 2 && (e->flags & DMSH_VK_F_TF) ? DMSH_VK_MOD_TF : DMSH_VK_MOD_BASE;
+                    vr.vin_u = k.vin_u; vr.vin_s = k.vin_s;
+                    vr.tex_u = k.tex_u[DMSH_VK_STAGE_VS]; vr.tex_s = k.tex_s[DMSH_VK_STAGE_VS];
+                    if (!vka_depth_zero() && (e->flags & DMSH_VK_F_GL_DEPTH)) vr.flags |= VKA_SVAR_F_GL_DEPTH;
+                    svar_record(&vr); added++;
                 }
             }
         }
     }
-    free(seen);
-    if (n_built > 0) VLOG("boot precompile: pre-compiled %u retyped/specialized variant(s) from prewarm seed", n_built);
+    if (added > 0) VLOG("boot precompile: queued %u seeded variant record(s) into variant manifest", added);
 }
 
 __attribute__((visibility("default"))) int nxhost_precompile_status(int *compiled, int *total, uint64_t *elapsed_ms) {
@@ -486,6 +532,7 @@ static void init_pw_paths(const char *e, const char *t, const char *home) {
 static void pc_open_once(void) {
     const char *e = getenv("DM_VK_PCACHE"), *t = getenv("DM_TEMP"), *home = getenv("HOME");
     init_pw_paths(e, t, home);
+    for (int i = 0; i < SHARD_LRU_CAP; i++) g_shard_lru[i].shard_id = -1;
     if (V.boot_precompile && !vka_classic_rp() && !vka_fp_guest() && !(e && !strcmp(e, "0"))) {
         vka_bindless_init();
         const vka_shlib *L = vka_shader_lib();
@@ -493,67 +540,85 @@ static void pc_open_once(void) {
         if (L && dir && V.vin_dyn) {
             uint64_t lib_hash = vka_shader_lib_id();
             int gl_depth = !vka_depth_zero();
+            uint32_t total = L->h->entry_count;
+            uint32_t shard_count = vka_gpl_shard_count(total);
             if (vka_gpl_cache_filename(g_gpl_cache_path, sizeof g_gpl_cache_path, dir, DM_GAME_ID, lib_hash, V.props.pipelineCacheUUID) < (int)sizeof g_gpl_cache_path) {
                 const char *bn = strrchr(g_gpl_cache_path, '/');
                 int pruned = vka_gpl_cache_prune_stale(dir, DM_GAME_ID, bn ? bn + 1 : g_gpl_cache_path);
                 if (pruned > 0) VLOG("gpl cache: pruned %d stale cache file(s) for %s", pruned, DM_GAME_ID);
-                vka_gpl_cache_hdr hdr; uint8_t *bs = NULL; void *blob = NULL; const char *why = NULL;
-                int loaded = vka_gpl_cache_load(g_gpl_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
-                                                V.props.pipelineCacheUUID, lib_hash, L->h->entry_count, gl_depth, &hdr, &bs, &blob, &why);
-                if (loaded) {
-                    VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = hdr.vk_cache_bytes, .pInitialData = blob};
-                    VkResult r = vk.vkCreatePipelineCache(V.dev, &ci, NULL, &g_pc);
-                    free(blob);
-                    if (r == VK_SUCCESS && g_pc) {
+                vka_gpl_cache_hdr hdr;
+                const vka_gpl_shard_ent *ro_tab = NULL; void *ro_map = NULL; size_t ro_sz = 0; const char *why = NULL;
+                int loaded_ro = vka_gpl_sharded_open_ro(g_gpl_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
+                                                        V.props.pipelineCacheUUID, lib_hash, total, shard_count, gl_depth,
+                                                        &hdr, &ro_tab, &ro_map, &ro_sz, &why);
+                if (loaded_ro && (hdr.flags & VKA_GPL_CACHE_F_COMPLETE)) {
+                    g_gpl_cache_on = 1;
+                    g_gpl_hdr = hdr;
+                    g_shard_store.map_base = ro_map;
+                    g_shard_store.map_size = ro_sz;
+                    g_shard_store.table = ro_tab;
+                    g_shard_store.shard_count = shard_count;
+                    VLOG("gpl cache %s: loaded complete Boot #2+ sharded cache (%u / %u shaders across %u shards, %.1f MB mmap)",
+                         g_gpl_cache_path, hdr.compiled_entries, hdr.total_entries, shard_count, ro_sz / (1024.0 * 1024.0));
+                } else {
+                    if (loaded_ro) munmap(ro_map, ro_sz);
+                    vka_gpl_shard_ent *tab = calloc(shard_count, sizeof *tab);
+                    uint64_t append_off = 0;
+                    int rw_fd = -1;
+                    if (tab) {
+                        rw_fd = vka_gpl_sharded_open_rw(g_gpl_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
+                                                        V.props.pipelineCacheUUID, lib_hash, total, shard_count, gl_depth,
+                                                        &hdr, tab, &append_off, &why);
+                        if (rw_fd >= 0) {
+                            VLOG("gpl cache %s: resuming partial Boot #1 sharded checkpoint (%u / %u shaders across %u shards)",
+                                 g_gpl_cache_path, hdr.compiled_entries, hdr.total_entries, shard_count);
+                        } else {
+                            if (why && strcmp(why, "missing") != 0) {
+                                unlink(g_gpl_cache_path);
+                                VLOG("gpl cache %s: discarded (%s), starting fresh Boot #1 sharded compile", g_gpl_cache_path, why);
+                            }
+                            memset(&hdr, 0, sizeof hdr);
+                            hdr.vendor_id = V.props.vendorID;
+                            hdr.device_id = V.props.deviceID;
+                            hdr.driver_version = V.props.driverVersion;
+                            hdr.flags = gl_depth ? VKA_GPL_CACHE_F_GL_DEPTH : 0;
+                            memcpy(hdr.pipeline_cache_uuid, V.props.pipelineCacheUUID, VK_UUID_SIZE);
+                            hdr.dmsh_vk_lib_hash = lib_hash;
+                            hdr.total_entries = total;
+                            rw_fd = vka_gpl_sharded_create(g_gpl_cache_path, &hdr, shard_count, tab, &append_off);
+                        }
+                    }
+                    if (rw_fd >= 0 && tab) {
                         g_gpl_cache_on = 1;
                         g_gpl_hdr = hdr;
-                        g_gpl_bitset = bs;
-                        g_gpl_bitset_len = hdr.bitset_bytes;
-                        if (hdr.flags & VKA_GPL_CACHE_F_COMPLETE) {
-                            VLOG("gpl cache %s: loaded complete Boot #2+ binary cache (%u / %u shaders, %u bytes)",
-                                 g_gpl_cache_path, hdr.compiled_entries, hdr.total_entries, hdr.vk_cache_bytes);
-                            vka_retype_variants_startup(L, dir, lib_hash, gl_depth);
-                            pthread_t th;
-                            if (!pthread_create(&th, NULL, saver_main, NULL)) { pthread_detach(th); g_sv_up = 1; }
-                            return;
-                        }
-                        VLOG("gpl cache %s: resuming partial Boot #1 checkpoint (%u / %u shaders, %u bytes)",
-                             g_gpl_cache_path, hdr.compiled_entries, hdr.total_entries, hdr.vk_cache_bytes);
                         pw_load();
-                        vka_boot_precompile_run(L);
-                        vka_retype_variants_startup(L, dir, lib_hash, gl_depth);
-                        pthread_t th;
-                        if (!pthread_create(&th, NULL, saver_main, NULL)) { pthread_detach(th); g_sv_up = 1; }
-                        return;
+                        vka_boot_precompile_run(L, rw_fd, tab, shard_count, append_off);
+                        loaded_ro = vka_gpl_sharded_open_ro(g_gpl_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
+                                                            V.props.pipelineCacheUUID, lib_hash, total, shard_count, gl_depth,
+                                                            &hdr, &ro_tab, &ro_map, &ro_sz, &why);
+                        if (loaded_ro) {
+                            g_gpl_hdr = hdr;
+                            g_shard_store.map_base = ro_map;
+                            g_shard_store.map_size = ro_sz;
+                            g_shard_store.table = ro_tab;
+                            g_shard_store.shard_count = shard_count;
+                        }
+                    } else {
+                        g_gpl_cache_path[0] = 0;
                     }
-                    free(bs);
-                    g_pc = VK_NULL_HANDLE;
-                    VLOG("gpl cache %s: vkCreatePipelineCache failed (%d), starting fresh Boot #1 compile", g_gpl_cache_path, (int)r);
-                } else if (why && strcmp(why, "missing") != 0) {
-                    unlink(g_gpl_cache_path);
-                    VLOG("gpl cache %s: discarded (%s), starting fresh Boot #1 compile", g_gpl_cache_path, why);
+                    free(tab);
                 }
-                VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-                if (vk.vkCreatePipelineCache(V.dev, &ci, NULL, &g_pc) == VK_SUCCESS && g_pc) {
-                    g_gpl_cache_on = 1;
-                    memset(&g_gpl_hdr, 0, sizeof g_gpl_hdr);
-                    g_gpl_hdr.vendor_id = V.props.vendorID;
-                    g_gpl_hdr.device_id = V.props.deviceID;
-                    g_gpl_hdr.driver_version = V.props.driverVersion;
-                    g_gpl_hdr.flags = gl_depth ? VKA_GPL_CACHE_F_GL_DEPTH : 0;
-                    memcpy(g_gpl_hdr.pipeline_cache_uuid, V.props.pipelineCacheUUID, VK_UUID_SIZE);
-                    g_gpl_hdr.dmsh_vk_lib_hash = lib_hash;
-                    g_gpl_hdr.total_entries = L->h->entry_count;
-                    g_gpl_bitset_len = vka_gpl_cache_bitset_bytes(L->h->entry_count);
-                    g_gpl_bitset = calloc(g_gpl_bitset_len ? g_gpl_bitset_len : 1u, 1);
-                    pw_load();
-                    vka_boot_precompile_run(L);
+                if (g_gpl_cache_on) {
                     vka_retype_variants_startup(L, dir, lib_hash, gl_depth);
+                    mono_cache_startup(dir, lib_hash, gl_depth);
+                    unf_load();
+                    heavy_load();
+                    pw_load();
                     pthread_t th;
                     if (!pthread_create(&th, NULL, saver_main, NULL)) { pthread_detach(th); g_sv_up = 1; }
+                    pw_start();
                     return;
                 }
-                g_gpl_cache_path[0] = 0;
             }
         }
     }
@@ -639,40 +704,6 @@ static int pc_write_atomic(const char *path, const char *tmp, const void *data, 
     unlink(tmp);
     return 0;
 }
-static size_t gpl_cache_write_locked(int mark_complete) {
-    if (!g_pc || !g_gpl_cache_on || !g_gpl_cache_path[0]) return 0;
-    size_t n = 0; void *d = NULL;
-    VkResult gr = VK_INCOMPLETE;
-    for (int tr = 0; tr < 3 && gr == VK_INCOMPLETE; tr++) {
-        size_t q = 0; if (vk.vkGetPipelineCacheData(V.dev, g_pc, &q, NULL) || !q) { gr = VK_ERROR_UNKNOWN; break; }
-        n = q + q / 4; free(d); d = malloc(n); if (!d) { gr = VK_ERROR_OUT_OF_HOST_MEMORY; break; }
-        gr = vk.vkGetPipelineCacheData(V.dev, g_pc, &n, d);
-    }
-    if (gr != VK_SUCCESS || !d || !n) { free(d); return 0; }
-    vka_gpl_cache_hdr h = g_gpl_hdr;
-    if (mark_complete) h.flags |= VKA_GPL_CACHE_F_COMPLETE;
-    h.compiled_entries = g_gpl_bitset ? vka_gpl_cache_bit_count(g_gpl_bitset, h.total_entries) : h.total_entries;
-    int ok = vka_gpl_cache_save_atomic(g_gpl_cache_path, &h, g_gpl_bitset, g_gpl_bitset_len, d, (uint32_t)n);
-    free(d);
-    if (!ok) {
-        static _Atomic int k;
-        if (atomic_fetch_add(&k, 1) < 4) VRED("gpl cache not written to %s", g_gpl_cache_path);
-        return 0;
-    }
-    g_gpl_hdr = h;
-    g_saved_at = __atomic_load_n(&g_made, __ATOMIC_RELAXED);
-    return n;
-}
-static void svar_record(const vka_svar_rec *rec) {
-    if (!rec || !rec->shader_hash) return;
-    pthread_mutex_lock(&g_svar_mu);
-    int added = vka_svar_set_add(&g_svar, rec);
-    pthread_mutex_unlock(&g_svar_mu);
-    if (added) {
-        atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
-        atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
-    }
-}
 static size_t svar_and_retype_save_locked(void) {
     int want_svar = atomic_exchange_explicit(&g_svar_dirty, 0, memory_order_acq_rel);
     int want_retype = atomic_exchange_explicit(&g_retype_dirty, 0, memory_order_acq_rel);
@@ -688,19 +719,12 @@ static size_t svar_and_retype_save_locked(void) {
     }
     pthread_mutex_unlock(&g_svar_mu);
 
-    if (want_svar && g_svar_path[0] && g_gpl_hdr.dmsh_vk_lib_hash && (!count || snap)) {
-        if (vka_svar_manifest_save_atomic(g_svar_path, g_gpl_hdr.dmsh_vk_lib_hash, snap, count)) {
-            atomic_store_explicit(&g_svar_saved_n, count, memory_order_relaxed);
-        } else {
-            atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
-        }
-    } else if (want_svar) {
-        atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
-    }
-    free(snap);
-
+    // Always flush the delta retype VkPipelineCache BEFORE committing the manifest so any
+    // manifest entry on disk already has its compiled binary in vk_gpl_retype_cache_*.bin.
     size_t ret_bytes = 0;
+    int retype_ok = 1;
     if (want_retype && g_pc_retype && g_retype_cache_path[0]) {
+        retype_ok = 0;
         size_t n = 0; void *d = NULL;
         VkResult gr = VK_INCOMPLETE;
         for (int tr = 0; tr < 3 && gr == VK_INCOMPLETE; tr++) {
@@ -716,15 +740,58 @@ static size_t svar_and_retype_save_locked(void) {
                 g_retype_hdr = h;
                 atomic_store_explicit(&g_retype_cache_bytes, n, memory_order_relaxed);
                 ret_bytes = n;
+                retype_ok = 1;
             } else {
                 atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
             }
-        } else if (gr == VK_INCOMPLETE) {
+        } else if (gr == VK_INCOMPLETE || gr == VK_ERROR_OUT_OF_HOST_MEMORY) {
             atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
+        } else {
+            retype_ok = 1;
         }
         free(d);
     }
+
+    if (want_svar && retype_ok && g_svar_path[0] && g_gpl_hdr.dmsh_vk_lib_hash && (!count || snap)) {
+        if (vka_svar_manifest_save_atomic(g_svar_path, g_gpl_hdr.dmsh_vk_lib_hash, snap, count)) {
+            atomic_store_explicit(&g_svar_saved_n, count, memory_order_relaxed);
+        } else {
+            atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
+        }
+    } else if (want_svar) {
+        atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
+    }
+    free(snap);
+
     return ret_bytes;
+}
+static size_t mono_cache_save_locked(void) {
+    if (!g_gpl_cache_on || !g_pc_mono || !g_mono_cache_path[0]) return 0;
+    if (!atomic_exchange_explicit(&g_mono_dirty, 0, memory_order_acq_rel)) return 0;
+    size_t n = 0; void *d = NULL;
+    VkResult gr = VK_INCOMPLETE;
+    for (int tr = 0; tr < 3 && gr == VK_INCOMPLETE; tr++) {
+        size_t q = 0; if (vk.vkGetPipelineCacheData(V.dev, g_pc_mono, &q, NULL) || !q) { gr = VK_ERROR_UNKNOWN; break; }
+        n = q + q / 4; free(d); d = malloc(n); if (!d) { gr = VK_ERROR_OUT_OF_HOST_MEMORY; break; }
+        gr = vk.vkGetPipelineCacheData(V.dev, g_pc_mono, &n, d);
+    }
+    size_t saved = 0;
+    if (gr == VK_SUCCESS && d && n) {
+        vka_gpl_cache_hdr h = g_mono_hdr;
+        h.total_entries = (uint32_t)g_nopt;
+        h.compiled_entries = (uint32_t)g_nopt;
+        if (vka_gpl_mono_cache_save_atomic(g_mono_cache_path, &h, d, (uint32_t)n)) {
+            g_mono_hdr = h;
+            atomic_store_explicit(&g_mono_cache_bytes, n, memory_order_relaxed);
+            saved = n;
+        } else {
+            atomic_store_explicit(&g_mono_dirty, 1, memory_order_relaxed);
+        }
+    } else if (gr == VK_INCOMPLETE) {
+        atomic_store_explicit(&g_mono_dirty, 1, memory_order_relaxed);
+    }
+    free(d);
+    return saved;
 }
 // The cache and the prewarm list to their files. vkGetPipelineCacheData runs without g_mu (the cache is internally synchronized): holding it there kept the replay thread's
 // pipeline lookups waiting for a 17 MB copy once a minute
@@ -733,9 +800,11 @@ static void save_now(void) {
     uint64_t made = __atomic_load_n(&g_made, __ATOMIC_RELAXED);
     size_t n = 0; void *d = NULL;
     if (g_gpl_cache_on) {
-        // Keep Boot #1 base vk_gpl_cache_*.bin strictly read-only in-game; persist only the lightweight
-        // variant manifest + delta retype VkPipelineCache.
-        n = svar_and_retype_save_locked();
+        // Keep Boot #1 sharded vk_gpl_cache_*.bin strictly read-only in-game; persist only the lightweight
+        // variant manifest + delta retype VkPipelineCache + monolithic optimization cache.
+        size_t ret_n = svar_and_retype_save_locked();
+        size_t mono_n = mono_cache_save_locked();
+        n = ret_n + mono_n;
     } else if (g_pc && g_pc_path[0] && made != g_saved_at) {
         // The cache grows between the size query and the copy while prewarm and optimizer threads add pipelines: the copy then answers VK_INCOMPLETE with a partial
         // blob. Tried up to 3 times with a quarter more room; only a complete copy (VK_SUCCESS) is written
@@ -764,9 +833,19 @@ static void save_now(void) {
     int keys = pw_save();
     uint64_t dt = now_ns() - t; atomic_fetch_add(&g_save_ns_total, dt);
     if (d || keys > 0 || (g_gpl_cache_on && n)) VLOG("pipeline cache: %zu bytes written to %s (%llu pipelines made this run), prewarm list %d keys, %.0f ms (on the saver thread)", n,
-                                                    g_gpl_cache_on ? g_retype_cache_path : g_pc_path[0] ? g_pc_path : "(none)",
+                                                    g_gpl_cache_on ? (g_mono_cache_path[0] ? g_mono_cache_path : g_retype_cache_path) : g_pc_path[0] ? g_pc_path : "(none)",
                                                     (unsigned long long)made, keys, dt / 1e6);
     free(d);
+}
+static void svar_record(const vka_svar_rec *rec) {
+    if (!rec || !rec->shader_hash) return;
+    pthread_mutex_lock(&g_svar_mu);
+    int added = vka_svar_set_add(&g_svar, rec);
+    pthread_mutex_unlock(&g_svar_mu);
+    if (added) {
+        atomic_store_explicit(&g_svar_dirty, 1, memory_order_relaxed);
+        atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
+    }
 }
 static void *saver_main(void *a) {
     (void)a; pthread_setname_np(pthread_self(), "vk-pcache"); vka_fp_host("vk-pcache");
@@ -783,7 +862,7 @@ static void *saver_main(void *a) {
 // 20 s of a run was lost when the process was stopped or killed, and the next run made it again on the frame path: Ocarina of Time's compute pipeline 3d0d6d61bb9076e7,
 // 3.1 s in run p-sys1 five seconds after its last save, 2.3 s again in the warm run after it (2026-11-08)
 void vka_pso_save(int force) {
-    if (!g_pc) return;
+    if (!g_pc && !g_gpl_cache_on) return;
     if (atomic_load_explicit(&g_pre_active, memory_order_relaxed)) {
         if (force == 1) atomic_store_explicit(&g_pre_checkpoint_want, 1, memory_order_release);
         return;
@@ -792,6 +871,7 @@ void vka_pso_save(int force) {
     if (g_gpl_cache_on) {
         int dirty = atomic_load_explicit(&g_svar_dirty, memory_order_relaxed) ||
                     atomic_load_explicit(&g_retype_dirty, memory_order_relaxed) ||
+                    atomic_load_explicit(&g_mono_dirty, memory_order_relaxed) ||
                     pw_dirty();
         if (!dirty && force != 1) return;
         if (force != 1) {
@@ -1026,7 +1106,7 @@ static void heavy_add(uint64_t k, int save) {
     int n = atomic_load(&g_heavy_n);
     if (k && n < NHEAVY && !heavy_has(k)) {
         g_heavy[n] = k; atomic_store(&g_heavy_n, n + 1);
-        const char *base = g_pc_path[0] ? g_pc_path : g_retype_cache_path;
+        const char *base = g_pc_path[0] ? g_pc_path : g_mono_cache_path[0] ? g_mono_cache_path : g_retype_cache_path;
         if (!g_heavy_path[0] && base[0]) snprintf(g_heavy_path, sizeof g_heavy_path, "%s.heavy", base);
         FILE *f = save && g_heavy_path[0] ? fopen(g_heavy_path, "a") : NULL;
         if (f) { fprintf(f, "%016llx\n", (unsigned long long)k); fclose(f); }
@@ -1034,8 +1114,11 @@ static void heavy_add(uint64_t k, int save) {
     pthread_mutex_unlock(&g_heavy_mu);
 }
 static void heavy_load(void) {
-    const char *base = g_pc_path[0] ? g_pc_path : g_retype_cache_path;
+    static int done;
+    if (done) return;
+    const char *base = g_pc_path[0] ? g_pc_path : g_mono_cache_path[0] ? g_mono_cache_path : g_retype_cache_path;
     if (!base[0]) return;
+    done = 1;
     pthread_mutex_lock(&g_heavy_mu); snprintf(g_heavy_path, sizeof g_heavy_path, "%s.heavy", base); pthread_mutex_unlock(&g_heavy_mu);
     FILE *f = fopen(g_heavy_path, "r"); if (!f) return;
     char ln[64]; while (fgets(ln, sizeof ln, f)) { uint64_t k = strtoull(ln, NULL, 16); if (k) heavy_add(k, 0); }
@@ -1063,9 +1146,12 @@ static int unf_read(const char *path, vkpb_set *s) {
 }
 static int unf_has(uint64_t k) { if (!k || !atomic_load(&g_unf_n)) return 0; pthread_mutex_lock(&g_unf_mu); int r = vkpb_has(&g_unf, k); pthread_mutex_unlock(&g_unf_mu); return r; }
 static void unf_load(void) {   // once, at the pipeline cache's opening (pc_open_once), before the prewarm threads start
-    if (!g_pc_path[0]) return;
+    static int done;
+    const char *base = g_pc_path[0] ? g_pc_path : g_mono_cache_path[0] ? g_mono_cache_path : NULL;
+    if (done || !base || !*base) return;
+    done = 1;
     pthread_mutex_lock(&g_unf_mu);
-    snprintf(g_busy_path, sizeof g_busy_path, "%s.busy", g_pc_path); snprintf(g_unf_path, sizeof g_unf_path, "%s.unfinished", g_pc_path);
+    snprintf(g_busy_path, sizeof g_busy_path, "%s.busy", base); snprintf(g_unf_path, sizeof g_unf_path, "%s.unfinished", base);
     unf_read(g_unf_path, &g_unf);
     vkpb_set busy; memset(&busy, 0, sizeof busy); unf_read(g_busy_path, &busy);
     int added = vkpb_carry(&g_unf, &busy);
@@ -1138,11 +1224,17 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     VkPipeline p = VK_NULL_HANDLE;
     const vka_shader *pre0 = P->mesh ? sh[7] : sh[0];
     int bslot = build_begin("whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
-    VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+    VkPipelineCache pc_use = g_gpl_cache_on ? g_pc_mono : g_pc;
+    VkResult r = vk.vkCreateGraphicsPipelines(V.dev, pc_use, 1, &P->ci, NULL, &p);
     build_end(bslot);
     P->ci.pNext = fbi.pNext;
     uint64_t dns = now_ns() - t0; double ms_ = dns / 1e6;
-    if (!how && !r && p) record_compile_outcome(&fb_all, fb_st, P->ns, g_pc != VK_NULL_HANDLE, dns, "whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
+    if (!how && !r && p) record_compile_outcome(&fb_all, fb_st, P->ns, pc_use != VK_NULL_HANDLE, dns, "whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
+    if (g_gpl_cache_on && g_pc_mono && !r && p) {
+        int valid = (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) != 0;
+        int hit = (fb_all.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) != 0;
+        if (!valid || !hit) atomic_store_explicit(&g_mono_dirty, 1, memory_order_relaxed);
+    }
     pthread_mutex_lock(&g_mu);
     if (r) { p = VK_NULL_HANDLE; g_nfail++; } else { g_ngfx++; g_made++; if (!how) g_frame_made++; }
     g_create_ms += ms_; if (!how) g_create_ns += dns;   // made in the background or by prewarm: not the frame's time
@@ -1196,7 +1288,6 @@ typedef struct { VkShaderModule mod; uint32_t pin, afunc; VkPipelineLayout layou
 typedef struct { uint32_t cfmt[8], dfmt, sfmt; uint8_t ncolor, samples, a2c, logic_en, logic_op, vin_static, att[8][8]; } fokey;
 typedef struct { prekey pre; fskey fs; } prefskey;
 static kmap g_lib[NLIB] = {{.klen = sizeof(vikey)}, {.klen = sizeof(prekey)}, {.klen = sizeof(fskey)}, {.klen = sizeof(fokey)}, {.klen = sizeof(prefskey)}};
-static uint64_t g_nlib[NLIB], g_nlinked, g_nopt; static double g_lib_ms, g_link_ms;
 static vka_gpl_lat g_link_lat;
 static _Atomic uint64_t g_ir3_miss, g_ram_rehydrate;
 
@@ -1263,8 +1354,14 @@ static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPip
     uint64_t t0 = now_ns();
     int bs = build_begin(g_lib_name[kind], vs, fs);
     int use_cache = !(shp && (g_pre_adapt & A_NOCACHE));
-    VkPipelineCache pc_use = use_cache ? (pc_override ? pc_override : g_pc) : VK_NULL_HANDLE;
+    int shard_slot = -1;
+    uint64_t shard_key = (kind == L_FS) ? fs : (vs ? vs : fs);
+    VkPipelineCache pc_use = !use_cache ? VK_NULL_HANDLE
+                           : pc_override ? pc_override
+                           : (g_gpl_cache_on && (kind == L_PRE || kind == L_FS || kind == L_PREFS)) ? shard_pc_acquire(shard_key, &shard_slot)
+                           : g_pc;
     VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, pc_use, 1, ci, NULL, &p);
+    shard_pc_release(shard_slot);
     build_end(bs);
     ci->pNext = orig_next;
     ci->flags = orig_flags;
@@ -1439,52 +1536,32 @@ done:
 }
 
 typedef struct {
+    uint32_t start;
+    uint32_t count;
+} precomp_shard_slice;
+
+typedef struct {
     const vka_shlib *L;
-    const uint32_t *order;
-    uint32_t work_n;
+    const precomp_shard_slice *slices;
+    const uint32_t *shard_indices;
+    const uint32_t *shard_order;
+    uint32_t rem_shards;
+    uint32_t shard_count;
+    vka_gpl_shard_ent *table;
+    int rw_fd;
+    uint64_t append_off;
+    uint32_t shards_saved;
     int max_workers;
     int gl_depth;
-    _Atomic uint32_t next;
+    _Atomic uint32_t next_shard;
     _Atomic uint64_t last_check_ns;
     _Atomic uint32_t vs_n, fs_n, cs_n, skip_n, fail_n;
-    uint32_t merged_since_save;
-    uint64_t last_save_ns;
 } precomp_ctx;
 
 typedef struct {
     precomp_ctx *ctx;
     int wid;
 } precomp_arg;
-
-static void precomp_flush_batch(precomp_ctx *ctx, VkPipelineCache *local_pc, VkPipeline *pipes, int *npipes, const uint32_t *bidx, int *nb_idx) {
-    if (!*nb_idx && !*npipes) return;
-    pthread_mutex_lock(&g_merge_mu);
-    if (*local_pc && g_pc && vk.vkMergePipelineCaches) {
-        VkResult mr = vk.vkMergePipelineCaches(V.dev, g_pc, 1, local_pc);
-        if (mr) { static _Atomic int w; if (atomic_fetch_add(&w, 1) < 4) VRED("gpl precompile: vkMergePipelineCaches failed: %d", (int)mr); }
-    }
-    for (int k = 0; k < *npipes; k++) if (pipes[k]) vk.vkDestroyPipeline(V.dev, pipes[k], NULL);
-    *npipes = 0;
-    if (*local_pc && vk.vkDestroyPipelineCache) {
-        vk.vkDestroyPipelineCache(V.dev, *local_pc, NULL);
-        *local_pc = VK_NULL_HANDLE;
-        VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-        if (vk.vkCreatePipelineCache(V.dev, &ci, NULL, local_pc)) *local_pc = VK_NULL_HANDLE;
-    }
-    for (int k = 0; k < *nb_idx; k++) if (g_gpl_bitset) vka_gpl_cache_bit_set(g_gpl_bitset, bidx[k]);
-    ctx->merged_since_save += (uint32_t)*nb_idx;
-    *nb_idx = 0;
-    uint64_t now = now_ns();
-    if (ctx->merged_since_save >= 250 || (now - ctx->last_save_ns) >= 10000000000ull || atomic_exchange_explicit(&g_pre_checkpoint_want, 0, memory_order_acq_rel)) {
-        pthread_mutex_lock(&g_save_mu);
-        gpl_cache_write_locked(0);
-        pthread_mutex_unlock(&g_save_mu);
-        ctx->merged_since_save = 0;
-        ctx->last_save_ns = now;
-        crash_watch_progress((uint32_t)atomic_load_explicit(&g_pre_compiled, memory_order_relaxed), "boot shader precompile");
-    }
-    pthread_mutex_unlock(&g_merge_mu);
-}
 
 static void *precomp_worker(void *arg_) {
     precomp_arg *pa = (precomp_arg *)arg_;
@@ -1495,14 +1572,8 @@ static void *precomp_worker(void *arg_) {
     vka_fp_host(tname);
     setpriority(PRIO_PROCESS, 0, 5);
 
-    VkPipelineCache local_pc = VK_NULL_HANDLE;
-    VkPipelineCacheCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
-    if (vk.vkCreatePipelineCache(V.dev, &pci, NULL, &local_pc)) local_pc = VK_NULL_HANDLE;
-
-    enum { BATCH_MAX_IDX = 100, BATCH_MAX_PIPES = 256 };
-    VkPipeline pipes[BATCH_MAX_PIPES];
-    uint32_t bidx[BATCH_MAX_IDX];
-    int npipes = 0, nb_idx = 0;
+    enum { SHARD_PIPES_CAP = 512 };
+    VkPipeline pipes[SHARD_PIPES_CAP];
     uint32_t c_vs = 0, c_fs = 0, c_cs = 0, c_skip = 0, c_fail = 0;
 
     for (;;) {
@@ -1510,7 +1581,7 @@ static void *precomp_worker(void *arg_) {
         while (atomic_load_explicit(&g_pso_paused, memory_order_relaxed) &&
                !atomic_load_explicit(&g_pre_skip, memory_order_acquire) &&
                !atomic_load_explicit(&g_pre_stop, memory_order_acquire) &&
-               atomic_load_explicit(&ctx->next, memory_order_acquire) < ctx->work_n) {
+               atomic_load_explicit(&ctx->next_shard, memory_order_acquire) < ctx->rem_shards) {
             usleep(100000);
         }
         uint64_t now = now_ns();
@@ -1531,24 +1602,73 @@ static void *precomp_worker(void *arg_) {
         while (wid >= atomic_load_explicit(&g_pre_active_workers, memory_order_acquire) &&
                !atomic_load_explicit(&g_pre_skip, memory_order_acquire) &&
                !atomic_load_explicit(&g_pre_stop, memory_order_acquire) &&
-               atomic_load_explicit(&ctx->next, memory_order_acquire) < ctx->work_n) {
+               atomic_load_explicit(&ctx->next_shard, memory_order_acquire) < ctx->rem_shards) {
             usleep(100000);
         }
         if (atomic_load_explicit(&g_pre_skip, memory_order_acquire) || atomic_load_explicit(&g_pre_stop, memory_order_acquire) ||
-            atomic_load_explicit(&ctx->next, memory_order_acquire) >= ctx->work_n) break;
+            atomic_load_explicit(&ctx->next_shard, memory_order_acquire) >= ctx->rem_shards) break;
 
-        uint32_t pos = atomic_fetch_add_explicit(&ctx->next, 1, memory_order_relaxed);
-        if (pos >= ctx->work_n) break;
-        uint32_t idx = ctx->order[pos];
-        precomp_compile_entry(ctx->L, idx, local_pc ? local_pc : g_pc, ctx->gl_depth, pipes, &npipes, BATCH_MAX_PIPES, &c_vs, &c_fs, &c_cs, &c_skip, &c_fail);
-        bidx[nb_idx++] = idx;
-        atomic_fetch_add_explicit(&g_pre_compiled, 1, memory_order_relaxed);
-        if (nb_idx >= BATCH_MAX_IDX || npipes >= BATCH_MAX_PIPES - 8) {
-            precomp_flush_batch(ctx, &local_pc, pipes, &npipes, bidx, &nb_idx);
+        uint32_t pos = atomic_fetch_add_explicit(&ctx->next_shard, 1, memory_order_relaxed);
+        if (pos >= ctx->rem_shards) break;
+        uint32_t sid = ctx->shard_order[pos];
+        precomp_shard_slice sl = ctx->slices[sid];
+
+        VkPipelineCache local_pc = VK_NULL_HANDLE;
+        if (sl.count > 0) {
+            VkPipelineCacheCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+            if (vk.vkCreatePipelineCache(V.dev, &pci, NULL, &local_pc)) local_pc = VK_NULL_HANDLE;
+        }
+        int npipes = 0;
+        int aborted_mid_shard = 0;
+        for (uint32_t j = 0; j < sl.count; j++) {
+            if (atomic_load_explicit(&g_pre_skip, memory_order_acquire) || atomic_load_explicit(&g_pre_stop, memory_order_acquire)) {
+                aborted_mid_shard = 1;
+                break;
+            }
+            while (atomic_load_explicit(&g_pso_paused, memory_order_relaxed) &&
+                   !atomic_load_explicit(&g_pre_skip, memory_order_acquire) &&
+                   !atomic_load_explicit(&g_pre_stop, memory_order_acquire)) {
+                usleep(100000);
+            }
+            uint32_t idx = ctx->shard_indices[sl.start + j];
+            if (local_pc) {
+                precomp_compile_entry(ctx->L, idx, local_pc, ctx->gl_depth, pipes, &npipes, SHARD_PIPES_CAP, &c_vs, &c_fs, &c_cs, &c_skip, &c_fail);
+            } else {
+                c_fail++;
+            }
+            atomic_fetch_add_explicit(&g_pre_compiled, 1, memory_order_relaxed);
+        }
+
+        for (int k = 0; k < npipes; k++) if (pipes[k]) vk.vkDestroyPipeline(V.dev, pipes[k], NULL);
+
+        if (!aborted_mid_shard) {
+            size_t n = 0; void *d = NULL;
+            if (local_pc && sl.count > 0) {
+                VkResult gr = VK_INCOMPLETE;
+                for (int tr = 0; tr < 3 && gr == VK_INCOMPLETE; tr++) {
+                    size_t q = 0; if (vk.vkGetPipelineCacheData(V.dev, local_pc, &q, NULL) || !q) { gr = VK_ERROR_UNKNOWN; break; }
+                    n = q + q / 4; free(d); d = malloc(n); if (!d) { gr = VK_ERROR_OUT_OF_HOST_MEMORY; break; }
+                    gr = vk.vkGetPipelineCacheData(V.dev, local_pc, &n, d);
+                }
+                if (gr != VK_SUCCESS) { free(d); d = NULL; n = 0; }
+            }
+            if (local_pc && vk.vkDestroyPipelineCache) { vk.vkDestroyPipelineCache(V.dev, local_pc, NULL); local_pc = VK_NULL_HANDLE; }
+            if (d || sl.count == 0) {
+                pthread_mutex_lock(&g_save_mu);
+                int want_sync = ((++ctx->shards_saved & 3u) == 0u) || atomic_exchange_explicit(&g_pre_checkpoint_want, 0, memory_order_acq_rel);
+                if (!vka_gpl_sharded_write_shard(ctx->rw_fd, &g_gpl_hdr, ctx->table, ctx->shard_count, sid, sl.count, d, (uint32_t)n, &ctx->append_off, want_sync)) {
+                    static _Atomic int k;
+                    if (atomic_fetch_add(&k, 1) < 4) VRED("gpl cache: failed writing shard %u to %s", sid, g_gpl_cache_path);
+                }
+                pthread_mutex_unlock(&g_save_mu);
+                crash_watch_progress(g_gpl_hdr.compiled_entries, "boot shader precompile");
+            }
+            free(d);
+        } else {
+            // Rewind pre_compiled count for unfinished shard so UI doesn't double-count on resume.
+            if (local_pc && vk.vkDestroyPipelineCache) { vk.vkDestroyPipelineCache(V.dev, local_pc, NULL); local_pc = VK_NULL_HANDLE; }
         }
     }
-    precomp_flush_batch(ctx, &local_pc, pipes, &npipes, bidx, &nb_idx);
-    if (local_pc && vk.vkDestroyPipelineCache) vk.vkDestroyPipelineCache(V.dev, local_pc, NULL);
     atomic_fetch_add_explicit(&ctx->vs_n, c_vs, memory_order_relaxed);
     atomic_fetch_add_explicit(&ctx->fs_n, c_fs, memory_order_relaxed);
     atomic_fetch_add_explicit(&ctx->cs_n, c_cs, memory_order_relaxed);
@@ -1557,77 +1677,98 @@ static void *precomp_worker(void *arg_) {
     return NULL;
 }
 
-static void vka_boot_precompile_run(const vka_shlib *L) {
+static void vka_boot_precompile_run(const vka_shlib *L, int rw_fd, vka_gpl_shard_ent *table, uint32_t shard_count, uint64_t append_off) {
     uint32_t total = L->h->entry_count;
-    if (!total || !g_gpl_bitset) return;
-    uint32_t already = vka_gpl_cache_bit_count(g_gpl_bitset, total);
-    uint32_t rem = total - already;
-    if (!rem) {
-        uint64_t t0 = now_ns();
-        precomp_pw_variants(L, !vka_depth_zero());
-        pthread_mutex_lock(&g_save_mu);
-        size_t saved_bytes = gpl_cache_write_locked(1);
-        pthread_mutex_unlock(&g_save_mu);
-        VLOG("boot precompile: complete (%u / %u shaders finalized from partial checkpoint in %.1f s; cache %zu bytes)",
-             already, total, (now_ns() - t0) / 1e9, saved_bytes);
+    if (!total || rw_fd < 0 || !table || !shard_count) {
+        if (rw_fd >= 0) close(rw_fd);
         return;
     }
 
-    uint32_t *order = malloc((size_t)rem * sizeof *order);
-    if (!order) return;
-    uint32_t work_n = 0;
+    precomp_shard_slice *slices = calloc(shard_count, sizeof *slices);
+    uint32_t *shard_indices = malloc((size_t)total * sizeof *shard_indices);
+    uint32_t *shard_order = malloc((size_t)shard_count * sizeof *shard_order);
+    uint8_t *shard_prio = calloc(shard_count, 1);
+    if (!slices || !shard_indices || !shard_order || !shard_prio) {
+        free(slices); free(shard_indices); free(shard_order); free(shard_prio);
+        close(rw_fd);
+        return;
+    }
 
-    // Prioritize starter/prewarm keys first when vk_prewarm.bin / .keys is present.
+    for (uint32_t i = 0; i < total; i++) {
+        uint32_t sid = vka_gpl_shard_of(L->ent[i].key, shard_count);
+        slices[sid].count++;
+    }
+    uint32_t off = 0;
+    for (uint32_t s = 0; s < shard_count; s++) {
+        slices[s].start = off;
+        off += slices[s].count;
+        slices[s].count = 0;
+    }
+    for (uint32_t i = 0; i < total; i++) {
+        uint32_t sid = vka_gpl_shard_of(L->ent[i].key, shard_count);
+        shard_indices[slices[sid].start + slices[sid].count++] = i;
+    }
+
     if (g_pw_load && g_pw_load_len) {
-        uint8_t *prio = calloc(total, 1);
-        if (prio) {
-            for (size_t o = 0; o + sizeof(pwrec) <= g_pw_load_len;) {
-                pwrec r; memcpy(&r, g_pw_load + o, sizeof r);
-                o += vka_pw_size(&r);
-                int nkeys = r.kind == VKA_PW_CS ? 1 : r.kind == VKA_PW_MESH ? 3 : 5;
-                for (int s = 0; s < nkeys; s++) {
-                    if (!r.key[s]) continue;
-                    const dmsh_vk_entry *e = vka_shlib_find(L, r.key[s]);
-                    if (!e) continue;
-                    uint32_t idx = (uint32_t)(e - L->ent);
-                    if (idx < total && !prio[idx] && !vka_gpl_cache_bit_get(g_gpl_bitset, idx)) {
-                        prio[idx] = 1;
-                        order[work_n++] = idx;
-                    }
-                }
+        for (size_t o = 0; o + sizeof(pwrec) <= g_pw_load_len;) {
+            pwrec r; memcpy(&r, g_pw_load + o, sizeof r);
+            o += vka_pw_size(&r);
+            int nkeys = r.kind == VKA_PW_CS ? 1 : r.kind == VKA_PW_MESH ? 3 : 5;
+            for (int s = 0; s < nkeys; s++) {
+                if (!r.key[s]) continue;
+                shard_prio[vka_gpl_shard_of(r.key[s], shard_count)] = 1;
             }
-            for (uint32_t i = 0; i < total; i++) {
-                if (!prio[i] && !vka_gpl_cache_bit_get(g_gpl_bitset, i)) order[work_n++] = i;
-            }
-            free(prio);
         }
     }
-    if (!work_n) {
-        for (uint32_t i = 0; i < total; i++) {
-            if (!vka_gpl_cache_bit_get(g_gpl_bitset, i)) order[work_n++] = i;
+
+    uint32_t rem_shards = 0, already_shaders = 0;
+    for (uint32_t s = 0; s < shard_count; s++) {
+        if (table[s].entries & VKA_GPL_SHARD_DONE) {
+            already_shaders += (table[s].entries & ~VKA_GPL_SHARD_DONE);
+        } else if (shard_prio[s]) {
+            shard_order[rem_shards++] = s;
         }
+    }
+    for (uint32_t s = 0; s < shard_count; s++) {
+        if (!(table[s].entries & VKA_GPL_SHARD_DONE) && !shard_prio[s]) shard_order[rem_shards++] = s;
+    }
+
+    if (!rem_shards) {
+        pthread_mutex_lock(&g_save_mu);
+        vka_gpl_sharded_finalize(rw_fd, &g_gpl_hdr, table, shard_count, 1);
+        pthread_mutex_unlock(&g_save_mu);
+        VLOG("boot precompile: complete (%u / %u shaders finalized across %u shards; cache %.1f MB)",
+             already_shaders, total, shard_count, append_off / (1024.0 * 1024.0));
+        close(rw_fd);
+        free(slices); free(shard_indices); free(shard_order); free(shard_prio);
+        return;
     }
 
     vka_aff_masks aff = vka_aff_topology();
     int bm = aff.replay ? __builtin_popcount(aff.replay) : (int)sysconf(_SC_NPROCESSORS_ONLN) / 2;
     int max_w = bm < 1 ? 1 : bm > 4 ? 4 : bm;
     if (VKA_ENV("DM_VK_RAM_SAVER", 0) >= 2 && max_w > 2) max_w = 2;
+    if ((uint32_t)max_w > rem_shards) max_w = (int)rem_shards;
 
     uint64_t t0 = now_ns();
     atomic_store_explicit(&g_pre_t0_ns, t0, memory_order_relaxed);
     atomic_store_explicit(&g_pre_total, (int)total, memory_order_relaxed);
-    atomic_store_explicit(&g_pre_compiled, (int)already, memory_order_relaxed);
+    atomic_store_explicit(&g_pre_compiled, (int)already_shaders, memory_order_relaxed);
     atomic_store_explicit(&g_pre_skip, 0, memory_order_relaxed);
     atomic_store_explicit(&g_pre_stop, 0, memory_order_relaxed);
     atomic_store_explicit(&g_pre_checkpoint_want, 0, memory_order_relaxed);
     atomic_store_explicit(&g_pre_active_workers, max_w, memory_order_relaxed);
     atomic_store_explicit(&g_pre_active, 1, memory_order_release);
 
-    VLOG("boot precompile: starting %u / %u shaders on %d workers (gl_depth=%d, %s)",
-         work_n, total, max_w, !vka_depth_zero(), g_gpl_cache_path);
+    VLOG("boot precompile: starting %u / %u shaders across %u remaining shards (%u total shards) on %d workers (gl_depth=%d, %s)",
+         total - already_shaders, total, rem_shards, shard_count, max_w, !vka_depth_zero(), g_gpl_cache_path);
 
-    precomp_ctx ctx = {.L = L, .order = order, .work_n = work_n, .max_workers = max_w, .gl_depth = !vka_depth_zero(), .last_save_ns = t0};
-    atomic_init(&ctx.next, 0);
+    precomp_ctx ctx = {
+        .L = L, .slices = slices, .shard_indices = shard_indices, .shard_order = shard_order,
+        .rem_shards = rem_shards, .shard_count = shard_count, .table = table,
+        .rw_fd = rw_fd, .append_off = append_off, .max_workers = max_w, .gl_depth = !vka_depth_zero(),
+    };
+    atomic_init(&ctx.next_shard, 0);
     atomic_init(&ctx.last_check_ns, t0);
     atomic_init(&ctx.vs_n, 0); atomic_init(&ctx.fs_n, 0); atomic_init(&ctx.cs_n, 0);
     atomic_init(&ctx.skip_n, 0); atomic_init(&ctx.fail_n, 0);
@@ -1648,22 +1789,28 @@ static void vka_boot_precompile_run(const vka_shlib *L) {
 
     int skipped_by_user = atomic_load_explicit(&g_pre_skip, memory_order_relaxed);
     int stopped_early = atomic_load_explicit(&g_pre_stop, memory_order_relaxed);
-    uint32_t done_now = vka_gpl_cache_bit_count(g_gpl_bitset, total);
-    if (done_now == total && !stopped_early) precomp_pw_variants(L, !vka_depth_zero());
-    int complete = (done_now == total);
+    uint32_t done_shards = 0, done_now = 0;
+    for (uint32_t s = 0; s < shard_count; s++) {
+        if (table[s].entries & VKA_GPL_SHARD_DONE) {
+            done_shards++;
+            done_now += (table[s].entries & ~VKA_GPL_SHARD_DONE);
+        }
+    }
+    int complete = (done_shards == shard_count);
 
     pthread_mutex_lock(&g_save_mu);
-    size_t saved_bytes = gpl_cache_write_locked(complete);
+    vka_gpl_sharded_finalize(rw_fd, &g_gpl_hdr, table, shard_count, complete);
     pthread_mutex_unlock(&g_save_mu);
+    close(rw_fd);
 
     atomic_store_explicit(&g_pre_active, 0, memory_order_release);
-    free(order);
+    free(slices); free(shard_indices); free(shard_order); free(shard_prio);
 
-    VLOG("boot precompile: %s (%u / %u shaders in %.1f s on %d workers; VS %u, FS %u, CS %u, skipped %u, failed %u; cache %zu bytes)",
+    VLOG("boot precompile: %s (%u / %u shaders across %u / %u shards in %.1f s on %d workers; VS %u, FS %u, CS %u, skipped %u, failed %u; cache %.1f MB)",
          complete ? "complete" : skipped_by_user ? "skipped by user" : stopped_early ? "stopped early (memory/maps guard)" : "partial",
-         done_now, total, (now_ns() - t0) / 1e9, started ? started : 1,
+         done_now, total, done_shards, shard_count, (now_ns() - t0) / 1e9, started ? started : 1,
          atomic_load(&ctx.vs_n), atomic_load(&ctx.fs_n), atomic_load(&ctx.cs_n),
-         atomic_load(&ctx.skip_n), atomic_load(&ctx.fail_n), saved_bytes);
+         atomic_load(&ctx.skip_n), atomic_load(&ctx.fail_n), ctx.append_off / (1024.0 * 1024.0));
 }
 
 typedef struct {
@@ -1886,6 +2033,7 @@ static void vka_retype_variants_startup(const vka_shlib *L, const char *dir, uin
         atomic_store_explicit(&g_svar_loaded_n, g_svar.n, memory_order_relaxed);
         atomic_store_explicit(&g_svar_saved_n, g_svar.n, memory_order_relaxed);
     }
+    precomp_pw_variants(L);
     if (vka_gpl_retype_cache_filename(g_retype_cache_path, sizeof g_retype_cache_path, dir, DM_GAME_ID, lib_hash, V.props.pipelineCacheUUID) < (int)sizeof g_retype_cache_path) {
         const char *bn = strrchr(g_retype_cache_path, '/');
         int pruned = vka_gpl_retype_cache_prune_stale(dir, DM_GAME_ID, bn ? bn + 1 : g_retype_cache_path);
@@ -1899,12 +2047,13 @@ static void vka_retype_variants_startup(const vka_shlib *L, const char *dir, uin
         memcpy(g_retype_hdr.pipeline_cache_uuid, V.props.pipelineCacheUUID, VK_UUID_SIZE);
         g_retype_hdr.dmsh_vk_lib_hash = lib_hash;
 
-        vka_gpl_cache_hdr rhdr; void *rblob = NULL; const char *why_r = NULL;
-        if (vka_gpl_retype_cache_load(g_retype_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
-                                      V.props.pipelineCacheUUID, lib_hash, gl_depth, &rhdr, &rblob, &why_r)) {
+        vka_gpl_cache_hdr rhdr; void *rmap = NULL; size_t rmap_sz = 0; const void *rblob = NULL; const char *why_r = NULL;
+        if (vka_gpl_aux_cache_load_mmap(g_retype_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
+                                        V.props.pipelineCacheUUID, lib_hash, gl_depth, VKA_GPL_CACHE_F_DELTA,
+                                        &rhdr, &rmap, &rmap_sz, &rblob, &why_r)) {
             VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = rhdr.vk_cache_bytes, .pInitialData = rblob};
             VkResult r = vk.vkCreatePipelineCache(V.dev, &ci, NULL, &g_pc_retype);
-            free(rblob);
+            munmap(rmap, rmap_sz);
             if (r == VK_SUCCESS && g_pc_retype) {
                 g_retype_hdr = rhdr;
                 g_retype_cache_loaded = 1;
@@ -1958,8 +2107,8 @@ static void vka_retype_variants_startup(const vka_shlib *L, const char *dir, uin
 
     uint32_t cached = atomic_load(&ctx.cached_n), compiled = atomic_load(&ctx.compiled_n), failed = atomic_load(&ctx.fail_n);
     atomic_store_explicit(&g_svar_precompiled_n, (uint64_t)(cached + compiled), memory_order_relaxed);
-    if (compiled > 0) {
-        atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
+    if (compiled > 0 || atomic_load_explicit(&g_svar_dirty, memory_order_relaxed)) {
+        if (compiled > 0) atomic_store_explicit(&g_retype_dirty, 1, memory_order_relaxed);
         pthread_mutex_lock(&g_save_mu);
         svar_and_retype_save_locked();
         pthread_mutex_unlock(&g_save_mu);
@@ -1967,6 +2116,47 @@ static void vka_retype_variants_startup(const vka_shlib *L, const char *dir, uin
     VLOG("variant manifest: loaded %u, precompiled %u (%u cached, %u newly compiled, %u failed) in %.1f ms; delta retype cache %llu bytes",
          g_svar.n, cached + compiled, cached, compiled, failed, (now_ns() - t0) / 1e6,
          (unsigned long long)atomic_load_explicit(&g_retype_cache_bytes, memory_order_relaxed));
+}
+static void mono_cache_startup(const char *dir, uint64_t lib_hash, int gl_depth) {
+    if (!dir || !*dir) return;
+    if (vka_gpl_mono_cache_filename(g_mono_cache_path, sizeof g_mono_cache_path, dir, DM_GAME_ID, lib_hash, V.props.pipelineCacheUUID) >= (int)sizeof g_mono_cache_path) {
+        g_mono_cache_path[0] = 0;
+        return;
+    }
+    const char *bn = strrchr(g_mono_cache_path, '/');
+    int pruned = vka_gpl_mono_cache_prune_stale(dir, DM_GAME_ID, bn ? bn + 1 : g_mono_cache_path);
+    if (pruned > 0) VLOG("monolithic cache: pruned %d stale cache(s) for %s", pruned, DM_GAME_ID);
+    memset(&g_mono_hdr, 0, sizeof g_mono_hdr);
+    g_mono_hdr.vendor_id = V.props.vendorID;
+    g_mono_hdr.device_id = V.props.deviceID;
+    g_mono_hdr.driver_version = V.props.driverVersion;
+    g_mono_hdr.flags = VKA_GPL_CACHE_F_MONO | (gl_depth ? VKA_GPL_CACHE_F_GL_DEPTH : 0);
+    memcpy(g_mono_hdr.pipeline_cache_uuid, V.props.pipelineCacheUUID, VK_UUID_SIZE);
+    g_mono_hdr.dmsh_vk_lib_hash = lib_hash;
+
+    vka_gpl_cache_hdr mhdr; void *mmap_base = NULL; size_t mmap_sz = 0; const void *mblob = NULL; const char *why_m = NULL;
+    if (vka_gpl_mono_cache_load_mmap(g_mono_cache_path, V.props.vendorID, V.props.deviceID, V.props.driverVersion,
+                                     V.props.pipelineCacheUUID, lib_hash, gl_depth, &mhdr, &mmap_base, &mmap_sz, &mblob, &why_m)) {
+        VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, .initialDataSize = mhdr.vk_cache_bytes, .pInitialData = mblob};
+        VkResult r = vk.vkCreatePipelineCache(V.dev, &ci, NULL, &g_pc_mono);
+        munmap(mmap_base, mmap_sz);
+        if (r == VK_SUCCESS && g_pc_mono) {
+            g_mono_hdr = mhdr;
+            g_mono_cache_loaded = 1;
+            atomic_store_explicit(&g_mono_cache_bytes, mhdr.vk_cache_bytes, memory_order_relaxed);
+            VLOG("monolithic cache %s: loaded (%u pipelines, %u bytes)", g_mono_cache_path, mhdr.compiled_entries, mhdr.vk_cache_bytes);
+        } else {
+            g_pc_mono = VK_NULL_HANDLE;
+            VLOG("monolithic cache %s: vkCreatePipelineCache failed (%d), starting fresh", g_mono_cache_path, (int)r);
+        }
+    } else if (why_m && strcmp(why_m, "missing") != 0) {
+        unlink(g_mono_cache_path);
+        VLOG("monolithic cache %s: discarded (%s), starting fresh", g_mono_cache_path, why_m);
+    }
+    if (!g_pc_mono) {
+        VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        if (vk.vkCreatePipelineCache(V.dev, &ci, NULL, &g_pc_mono) != VK_SUCCESS) g_pc_mono = VK_NULL_HANDLE;
+    }
 }
 // One try of the probe: the library made (and destroyed), its result
 static VkResult try_lib(VkGraphicsPipelineCreateInfo ci, VkGraphicsPipelineLibraryFlagsEXT part, VkPipelineCache pc, VkPipelineCreateFlags extra) {
@@ -2398,7 +2588,9 @@ static int pw_take(const uint8_t *d, size_t len, uint32_t *skipped, const char *
 // (vka_pwlist.h; DM_VK_PREWARM_SEED=0 leaves it out). On a first start the seed is the whole list: the prewarm threads make the pipelines the game's first scenes need
 // while the game plays its logos and menus, where before every one was made on the frame path at the first 3D frame (Ocarina of Time: 128 pipelines, 79 s)
 static void pw_load(void) {
-    if (!g_pw_path[0]) return;
+    static int done;
+    if (done || !g_pw_path[0]) return;
+    done = 1;
     uint32_t skipped = 0; const char *why = NULL; int own = -1, seed = -1;
     FILE *f = fopen(g_pw_path, "rb");
     // No list of this driver's yet: the one every driver shared before 2026-11-18 (vka_fpenv.h vka_pwlist_name), once, so an update does not start cold. It may hold
@@ -2740,19 +2932,37 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
         pstate *P = malloc(sizeof *P);
         if (P && gpl_on() && pstate_fill(P, sh, lay, k_rt)) {   // (the cache-only try needs pipelineCreationCacheControl, which GPL is on with)
             if (V.gpl_indep && !V.gpl_lto && V.cache_ctl && !P->mesh) {
-                uint64_t t0 = now_ns();
-                p = gpl_link(P, k_rt, 1);
-                uint64_t dns = now_ns() - t0;
-                if (p) {
-                    linked = 1;
-                    pthread_mutex_lock(&g_mu);
-                    g_ngfx++; g_frame_made++; g_create_ms += dns / 1e6; g_create_ns += dns;
-                    pthread_mutex_unlock(&g_mu);
+                if (g_gpl_cache_on && g_pc_mono && g_mono_cache_loaded) {
+                    P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                    uint64_t tm0 = now_ns();
+                    VkResult mr = vk.vkCreateGraphicsPipelines(V.dev, g_pc_mono, 1, &P->ci, NULL, &p);
+                    uint64_t mdns = now_ns() - tm0;
+                    P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                    if (mr == VK_SUCCESS && p) {
+                        pthread_mutex_lock(&g_mu);
+                        g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += mdns / 1e6; g_create_ns += mdns;
+                        pthread_mutex_unlock(&g_mu);
+                        atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed);
+                    } else {
+                        p = VK_NULL_HANDLE;
+                    }
+                }
+                if (!p) {
+                    uint64_t t0 = now_ns();
+                    p = gpl_link(P, k_rt, 1);
+                    uint64_t dns = now_ns() - t0;
+                    if (p) {
+                        linked = 1;
+                        pthread_mutex_lock(&g_mu);
+                        g_ngfx++; g_frame_made++; g_create_ms += dns / 1e6; g_create_ns += dns;
+                        pthread_mutex_unlock(&g_mu);
+                    }
                 }
             } else {
                 P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
                 uint64_t t0 = now_ns();
-                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+                VkPipelineCache pc_probe = g_gpl_cache_on ? g_pc_mono : g_pc;
+                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, pc_probe, 1, &P->ci, NULL, &p);
                 uint64_t dns = now_ns() - t0;
                 if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
                 pthread_mutex_lock(&g_mu);
@@ -2765,6 +2975,7 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
         if (p) {
             pw_note(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k))); pw_explain(VKA_PW_GFX, sh, k_canon, (uint32_t)(len - offsetof(gkey_full, k)), (now_ns() - t_make) / 1e6, linked, " on the frame path");
             pthread_mutex_lock(&g_mu); __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE); pthread_cond_broadcast(&g_busy_cv); pthread_mutex_unlock(&g_mu);
+            if (linked && (!V.gpl_indep || V.gpl_lto || (g_gpl_cache_on && VKA_ENV("DM_VK_GPL_OPT", 1)))) opt_queue(g, sh, lay, k_rt);
             *made = 1;
             return g;
         }
@@ -2789,16 +3000,34 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
         }
         else if (!prewarm && !async && gpl_on() && !P->mesh) {   // (a mesh pipeline is made whole: the libraries here are cut for vertex input pipelines)
             if (V.gpl_indep && !V.gpl_lto) {
-                uint64_t t1 = now_ns();
-                p = gpl_link(P, k_rt, 0);
-                if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
-                else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
+                if (g_gpl_cache_on && g_pc_mono && g_mono_cache_loaded && V.cache_ctl) {
+                    P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                    uint64_t tm0 = now_ns();
+                    VkResult mr = vk.vkCreateGraphicsPipelines(V.dev, g_pc_mono, 1, &P->ci, NULL, &p);
+                    uint64_t mdns = now_ns() - tm0;
+                    P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                    if (mr == VK_SUCCESS && p) {
+                        pthread_mutex_lock(&g_mu);
+                        g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += mdns / 1e6; g_create_ns += mdns;
+                        pthread_mutex_unlock(&g_mu);
+                        atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed);
+                    } else {
+                        p = VK_NULL_HANDLE;
+                    }
+                }
+                if (!p) {
+                    uint64_t t1 = now_ns();
+                    p = gpl_link(P, k_rt, 0);
+                    if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
+                    else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
+                }
             } else {
                 // The pipeline cache may already hold the optimized one (made in an earlier run): then it is made at once (a fraction of a millisecond), else linked from parts
                 P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
                 uint64_t t0 = now_ns();
                 int bs = build_begin("graphics pipeline (cache probe)", 0, 0);
-                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+                VkPipelineCache pc_probe = g_gpl_cache_on ? g_pc_mono : g_pc;
+                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, pc_probe, 1, &P->ci, NULL, &p);
                 build_end(bs);
                 P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
                 uint64_t dns = now_ns() - t0;
@@ -2823,7 +3052,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
     __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE);
     pthread_cond_broadcast(&g_busy_cv);
     pthread_mutex_unlock(&g_mu);
-    if (linked && (!V.gpl_indep || V.gpl_lto)) opt_queue(g, sh, lay, k_rt);
+    if (linked && (!V.gpl_indep || V.gpl_lto || (g_gpl_cache_on && VKA_ENV("DM_VK_GPL_OPT", 1)))) opt_queue(g, sh, lay, k_rt);
 }
 _Thread_local int vka_pso_wait;   // set by the pipeline calls of a draw or dispatch: the NULL they return is a pipeline still being made on the asynchronous threads (not a refusal), vka.h
 static inline VkPipeline gval_use(gval *g) {
@@ -2906,9 +3135,13 @@ static VkPipeline cs_obtain(vka_shader *cs, const vka_layout *lay, int prewarm, 
             int spill = 0; for (unsigned i = 0; i < cs->e->bind_count; i++) if (cs->b[i].kind == DMSH_VK_KIND_SHARED_SPILL) spill = 1;
             VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .flags = (spill ? VK_PIPELINE_CREATE_DISPATCH_BASE_BIT : 0) | VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT,
                 .layout = lay->layout, .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = csm, .pName = "main"}};
-            VkPipelineCache pc_use = ((umask | smask) && g_pc_retype) ? g_pc_retype : g_pc;
+            int shard_slot = -1;
+            VkPipelineCache pc_use = ((umask | smask) && g_pc_retype) ? g_pc_retype
+                                   : g_gpl_cache_on ? shard_pc_acquire(cs->key, &shard_slot)
+                                   : g_pc;
             VkPipeline p = VK_NULL_HANDLE; uint64_t t0 = now_ns();
             VkResult r = vk.vkCreateComputePipelines(V.dev, pc_use, 1, &ci, NULL, &p);
+            shard_pc_release(shard_slot);
             uint64_t dns = now_ns() - t0;
             if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
             pthread_mutex_lock(&g_mu);
@@ -2940,12 +3173,16 @@ static void cs_build(gval *g, vka_shader *cs, const vka_layout *lay, VkShaderMod
         .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = csm, .pName = "main"}};
     VkPipeline p = VK_NULL_HANDLE; VkResult r; int over = 0;
     uint32_t smax = V.props.limits.maxComputeSharedMemorySize;
-    VkPipelineCache pc_use = ((umask | smask) && g_pc_retype) ? g_pc_retype : g_pc;
+    int shard_slot = -1;
+    VkPipelineCache pc_use = ((umask | smask) && g_pc_retype) ? g_pc_retype
+                           : g_gpl_cache_on ? shard_pc_acquire(cs->key, &shard_slot)
+                           : g_pc;
     if (smax && cs->e->shared > smax && !VKA_ENV("DM_VK_CS_SHARED_OVER", 0)) {
         r = VK_ERROR_FEATURE_NOT_PRESENT; over = 1;
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) VRED("compute program %016llx takes %u bytes of shared memory, the device at most %u: not made, its dispatches are skipped (the first 16 are logged; the count is in the pipeline line)", (unsigned long long)cs->key, cs->e->shared, smax);
     } else if (!csm) { r = VK_ERROR_INITIALIZATION_FAILED; }
     else { int bs = build_begin("compute pipeline", cs->key, 0); r = vk.vkCreateComputePipelines(V.dev, pc_use, 1, &ci, NULL, &p); build_end(bs); }
+    shard_pc_release(shard_slot);
     uint64_t dns = now_ns() - t0;
     if (!prewarm && !r && p) {
         int rehy = record_compile_outcome(&fb_all, &fb_st, 1, pc_use != VK_NULL_HANDLE, dns, "compute pipeline", cs->key, 0);

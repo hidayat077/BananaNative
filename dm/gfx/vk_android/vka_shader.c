@@ -1063,6 +1063,7 @@ int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *ou
             if (late != out->mods[DMSH_VK_MOD_BASE]) out->pfb_late = late;
         }
     } else if (e->stage == DMSH_VK_STAGE_CS) {
+        if (g_shuffle_lds < 0) shuffle_plan();
         int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
         if (want_shfl) {
             const dmsh_vk_module *ms = vka_shlib_module(L, e, DMSH_VK_MOD_SHUFFLE_LDS);
@@ -1131,6 +1132,7 @@ VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e
 
 VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask) {
     if (!L || !e || e->stage != DMSH_VK_STAGE_CS || !(umask | smask)) return VK_NULL_HANDLE;
+    if (g_shuffle_lds < 0) shuffle_plan();
     int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
     const dmsh_vk_module *m = want_shfl ? vka_shlib_module(L, e, DMSH_VK_MOD_SHUFFLE_LDS) : NULL;
     if (!m) m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
@@ -1155,6 +1157,7 @@ VkShaderModule vka_shader_precomp_variant(const vka_shlib *L, const dmsh_vk_entr
     if (!L || !e || !rec || e->stage != rec->stage) return VK_NULL_HANDLE;
     int var = rec->lib_variant;
     if (rec->stage == DMSH_VK_STAGE_CS) {
+        if (g_shuffle_lds < 0) shuffle_plan();
         int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
         var = want_shfl ? DMSH_VK_MOD_SHUFFLE_LDS : DMSH_VK_MOD_BASE;
     }

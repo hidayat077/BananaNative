@@ -50,9 +50,11 @@ final class ShaderCacheUi {
         if (name == null) return false;
         String gplPrefix = "vk_gpl_cache_" + titleId + "_";
         String retypePrefix = "vk_gpl_retype_cache_" + titleId + "_";
+        String monoPrefix = "vk_monolithic_cache_" + titleId + "_";
         String svarPrefix = "vk_shader_variants_" + titleId + "_";
         if (name.startsWith(gplPrefix) && (name.endsWith(".bin") || name.endsWith(".bin.tmp"))) return true;
         if (name.startsWith(retypePrefix) && (name.endsWith(".bin") || name.endsWith(".bin.tmp") || name.endsWith(".bin.heavy"))) return true;
+        if (name.startsWith(monoPrefix) && (name.endsWith(".bin") || name.endsWith(".bin.tmp") || name.endsWith(".bin.heavy") || name.endsWith(".bin.busy") || name.endsWith(".bin.unfinished"))) return true;
         if (name.startsWith(svarPrefix) && (name.endsWith(".bin") || name.endsWith(".bin.tmp"))) return true;
         return name.startsWith("vk_pipelines") && (name.endsWith(".bin") || name.endsWith(".bin.lib") || name.endsWith(".keys") || name.endsWith(".bin.heavy"));
     }

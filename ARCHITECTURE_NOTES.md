@@ -146,3 +146,24 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
 - **Modified / Added Files:**
   - Added [dm/gfx/vk_android/vka_shader_variants.h](dm/gfx/vk_android/vka_shader_variants.h).
   - Updated [dm/gfx/vk_android/vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [dm/gfx/vk_android/vka_gpl_stats.h](dm/gfx/vk_android/vka_gpl_stats.h), [dm/gfx/vk_android/vka.h](dm/gfx/vk_android/vka.h), [dm/gfx/vk_android/vka_shader.c](dm/gfx/vk_android/vka_shader.c), [dm/gfx/vk_android/vka_pso.c](dm/gfx/vk_android/vka_pso.c), [dm/gfx/vk_android/vka_ctl.c](dm/gfx/vk_android/vka_ctl.c), [android/app/src/main/java/dev/nxnative/android/ShaderCacheUi.java](android/app/src/main/java/dev/nxnative/android/ShaderCacheUi.java), [dm/host/tests/t_android_gpl_cache.c](dm/host/tests/t_android_gpl_cache.c), [dm/host/tests/t_android_eds.c](dm/host/tests/t_android_eds.c), and [dm/host/tests/Makefile](dm/host/tests/Makefile).
+
+---
+
+## 9. Sharded GPL Store, Monolithic Background Upgrade, & Hot-Path Deduplication
+
+- **Sharded v2 GPL Base Cache & Bounded LRU Cache Store (P0-2 & P1, [vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
+  - Replaces the single 400+ MB monolithic `VkPipelineCache` with a hash-bucketed sharded v2 `GPLC` container (`1..256` shards targeting ~160 entries/shard via `vka_gpl_shard_of()`).
+  - **Boot #1 (Flat RAM & Resumable):** Each worker compiles one shard at a time into a local `VkPipelineCache`, destroys temporary `VkPipeline` handles, serializes `vkGetPipelineCacheData` (~1–4 MB), destroys the `VkPipelineCache`, appends atomically via `pwrite` + shard table update (`VKA_GPL_SHARD_DONE`), and moves on.
+  - **Throttling Fix:** `vka_precompile_target_workers()` removes the premature 45 s `4 -> 2` clamp and retains full worker parallelism while `MemAvailable > 1500 MiB` and `maps < 50%`.
+  - **Boot #2+ (Zero-Copy `mmap` + LRU `VkPipelineCache`):** Maps `vk_gpl_cache_*.bin` read-only (`PROT_READ, MAP_SHARED`), loads individual ~1–6 MB shard caches on demand with an LRU memory budget (`DM_VK_GPL_SHARD_BUDGET_MB`, default `32 MiB`, `16 MiB` under `DM_VK_RAM_SAVER >= 2`), and calls `madvise(..., MADV_DONTNEED)` after `vkCreatePipelineCache` to avoid retaining file/anonymous pages.
+  - **Auxiliary Caches (`mmap` + `munmap`):** Delta retype (`vk_gpl_retype_cache_*.bin`) and monolithic (`vk_monolithic_cache_*.bin`) caches load via `vka_gpl_aux_cache_load_mmap()` and `munmap` immediately after `vkCreatePipelineCache`.
+- **Hybrid→Monolithic Background Upgrade & Prewarm (P0-1, [vka_pso.c](dm/gfx/vk_android/vka_pso.c), [ShaderCacheUi.java](android/app/src/main/java/dev/nxnative/android/ShaderCacheUi.java)):**
+  - Keeps GPL fast-link (`~30–40 us`) as a stutter-free bridge while queueing active pipelines (`DM_VK_GPL_OPT=1`) to `vk-psopt` (`DM_VK_PSO_SLOTS=1` on Turnip) to compile monolithic replacements into `g_pc_mono` (`vk_monolithic_cache_*.bin`).
+  - On Boot #2+, `gfx_obtain()` / `gfx_build()` probe `g_pc_mono` (`VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`) before GPL linking, and `pw_start()` prewarms `vk_pipelines-*.keys` into monolithic PSOs on background threads.
+- **4-Set & EDS3 Hot-Path Deduplication (P0-1, [vka_draw.c](dm/gfx/vk_android/vka_draw.c)):**
+  - Keys Set 0 push-descriptor deduplication on `lay->set0` instead of `lay->layout` so fragment shader changes with identical pre-raster bindings still hit Set 0 dedup/delta updates.
+  - Caches Set 1 (`g_s1`) and bindless pool sets (`g_pool_bound`) per command buffer, eliminating redundant `set_alloc`, `vkUpdateDescriptorSets`, and `vkCmdBindDescriptorSets` calls.
+  - Skips redundant `vkCmdSetLogicOpEXT` when `logicOpEnable == 0` and preserves prior `DY.beq[i]` entries for attachments with blending disabled.
+- **Secondary Fixes (P2):**
+  - P2-1: Calls `shuffle_plan()` before `cs` variant SPIR-V selection in `vka_shader_precomp_*` ([vka_shader.c](dm/gfx/vk_android/vka_shader.c)), runs `precomp_pw_variants()` after `vka_svar_manifest_load()`, and always flushes `vk_gpl_retype_cache_*.bin` before committing `vk_shader_variants_*.bin` (`svar_and_retype_save_locked()`).
+  - P2-3: Deduplicates `input: on-screen controls:` log output in `nxhost_touch_controls_set()` ([input_android.c](dm/host/android/input_android.c)) so the layout editor only logs on actual changes.

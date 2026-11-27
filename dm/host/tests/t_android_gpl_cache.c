@@ -103,11 +103,14 @@ int main(void) {
     CHECK(!vka_gpl_cache_load(path, vendor, dev, drv_ver, uuid, lib_hash, total, 1, &out_h, &out_bs, &out_blob, &why) && why,
           "rejects corrupted payload");
 
-    // Worker throttling & debounce policy checks.
+    // Worker throttling & debounce policy checks (no fixed 45s step-down while RAM & maps are healthy).
     int ab = 0;
-    CHECK(vka_precompile_target_workers(4, 10.0, 4096, 10000, 65530, &ab) == 4 && !ab, "full 4 workers");
-    CHECK(vka_precompile_target_workers(4, 50.0, 4096, 10000, 65530, &ab) == 2 && !ab, "thermal step-down at 45s");
+    CHECK(vka_precompile_target_workers(4, 10.0, 4096, 10000, 65530, &ab) == 4 && !ab, "full 4 workers at 10s");
+    CHECK(vka_precompile_target_workers(4, 120.0, 2372, 3610, 65530, &ab) == 4 && !ab, "stays 4 workers past 45s when MemAvailable > 1500 & maps < 50%%");
+    CHECK(vka_precompile_target_workers(4, 50.0, 1450, 10000, 65530, &ab) == 2 && !ab, "steps to 2 workers when MemAvailable <= 1500");
+    CHECK(vka_precompile_target_workers(4, 50.0, 4096, 33000, 65530, &ab) == 2 && !ab, "steps to 2 workers when maps >= 50%%");
     CHECK(vka_precompile_target_workers(4, 10.0, 1000, 10000, 65530, &ab) == 1 && !ab, "low RAM step-down");
+    CHECK(vka_precompile_target_workers(4, 10.0, 4096, 43000, 65530, &ab) == 1 && !ab, "high maps step-down");
     CHECK(vka_precompile_target_workers(4, 10.0, 500, 10000, 65530, &ab) == 0 && ab, "critical RAM abort");
     CHECK(vka_precompile_target_workers(4, 10.0, 4096, 50000, 65530, &ab) == 0 && ab, "critical VMA abort");
     CHECK(!vka_precompile_debounce_due(49, 40000000000ull, 50, 30), "debounce needs >= 50 entries");
@@ -117,6 +120,66 @@ int main(void) {
     free(bs);
     unlink(path);
     unlink(other);
+
+    // Sharded v2 base GPL cache container & resume tests.
+    CHECK(vka_gpl_shard_count(440) == 4, "440 entries -> 4 shards, got %u", vka_gpl_shard_count(440));
+    CHECK(vka_gpl_shard_count(28603) == 256, "28603 entries -> 256 shards, got %u", vka_gpl_shard_count(28603));
+    uint32_t sc = 8;
+    uint32_t s_entries = 1280;
+    vka_gpl_shard_ent stab[8];
+    char spath[512];
+    vka_gpl_cache_filename(spath, sizeof spath, dir, title, lib_hash, uuid);
+    vka_gpl_cache_hdr shdr = {
+        .vendor_id = vendor, .device_id = dev, .driver_version = drv_ver,
+        .flags = VKA_GPL_CACHE_F_GL_DEPTH, .dmsh_vk_lib_hash = lib_hash, .total_entries = s_entries,
+    };
+    memcpy(shdr.pipeline_cache_uuid, uuid, 16);
+    uint64_t aoff = 0;
+    int sfd = vka_gpl_sharded_create(spath, &shdr, sc, stab, &aoff);
+    CHECK(sfd >= 0 && aoff == vka_gpl_shard_data_offset(sc), "create sharded v2 cache");
+    uint8_t sb0[96], sb1[112];
+    for (size_t i = 0; i < sizeof sb0; i++) sb0[i] = (uint8_t)(i + 17);
+    for (size_t i = 0; i < sizeof sb1; i++) sb1[i] = (uint8_t)(i * 3 + 5);
+    CHECK(vka_gpl_sharded_write_shard(sfd, &shdr, stab, sc, 0, 160, sb0, sizeof sb0, &aoff, 0), "write shard 0");
+    CHECK(vka_gpl_sharded_write_shard(sfd, &shdr, stab, sc, 3, 160, sb1, sizeof sb1, &aoff, 1), "write shard 3");
+    close(sfd);
+
+    // Partial resume check (re-open rw & verify shard 0 and 3 survive while unfinished shards remain incomplete).
+    vka_gpl_cache_hdr rshdr; vka_gpl_shard_ent rtab[8]; uint64_t r_aoff = 0;
+    sfd = vka_gpl_sharded_open_rw(spath, vendor, dev, drv_ver, uuid, lib_hash, s_entries, sc, 1, &rshdr, rtab, &r_aoff, &why);
+    CHECK(sfd >= 0 && !(rshdr.flags & VKA_GPL_CACHE_F_COMPLETE) && rshdr.compiled_entries == 320, "resume rw partial sharded cache");
+    CHECK((rtab[0].entries & VKA_GPL_SHARD_DONE) && !(rtab[1].entries & VKA_GPL_SHARD_DONE) && (rtab[3].entries & VKA_GPL_SHARD_DONE), "shard done flags preserved");
+    for (uint32_t s = 0; s < sc; s++) {
+        if (rtab[s].entries & VKA_GPL_SHARD_DONE) continue;
+        CHECK(vka_gpl_sharded_write_shard(sfd, &rshdr, rtab, sc, s, 160, sb0, sizeof sb0, &r_aoff, s == sc - 1), "finish remaining shard");
+    }
+    CHECK(vka_gpl_sharded_finalize(sfd, &rshdr, rtab, sc, 1), "finalize sharded v2 cache");
+    close(sfd);
+
+    const vka_gpl_shard_ent *ro_tab = NULL; void *ro_map = NULL; size_t ro_sz = 0;
+    CHECK(vka_gpl_sharded_open_ro(spath, vendor, dev, drv_ver, uuid, lib_hash, s_entries, sc, 1, &rshdr, &ro_tab, &ro_map, &ro_sz, &why),
+          "open finalized sharded v2 cache ro mmap: %s", why ? why : "ok");
+    CHECK((rshdr.flags & VKA_GPL_CACHE_F_COMPLETE) && ro_tab && ro_map && ro_sz > 0, "sharded mmap complete");
+    CHECK(ro_tab && ro_map && memcmp((const uint8_t *)ro_map + ro_tab[3].offset, sb1, sizeof sb1) == 0, "shard 3 bytes intact via mmap");
+    if (ro_map) munmap(ro_map, ro_sz);
+    unlink(spath);
+
+    // Monolithic optimization cache container tests (vka_gpl_mono_cache_* with mmap load).
+    char mnc_path[512];
+    int mn_len = vka_gpl_mono_cache_filename(mnc_path, sizeof mnc_path, dir, title, lib_hash, uuid);
+    CHECK(mn_len > 0 && strstr(mnc_path, "vk_monolithic_cache_") != NULL, "mono cache filename: %s", mnc_path);
+    vka_gpl_cache_hdr mh = {
+        .vendor_id = vendor, .device_id = dev, .driver_version = drv_ver,
+        .flags = VKA_GPL_CACHE_F_GL_DEPTH, .dmsh_vk_lib_hash = lib_hash, .total_entries = 12, .compiled_entries = 12,
+    };
+    memcpy(mh.pipeline_cache_uuid, uuid, 16);
+    CHECK(vka_gpl_mono_cache_save_atomic(mnc_path, &mh, blob, sizeof blob), "mono cache atomic save");
+    void *mmap_base = NULL; size_t mmap_sz = 0; const void *mblob = NULL; vka_gpl_cache_hdr out_mh;
+    CHECK(vka_gpl_mono_cache_load_mmap(mnc_path, vendor, dev, drv_ver, uuid, lib_hash, 1, &out_mh, &mmap_base, &mmap_sz, &mblob, &why),
+          "mono cache mmap load: %s", why ? why : "ok");
+    CHECK((out_mh.flags & VKA_GPL_CACHE_F_MONO) && out_mh.compiled_entries == 12 && memcmp(mblob, blob, sizeof blob) == 0, "mono mmap contents match");
+    munmap(mmap_base, mmap_sz);
+    unlink(mnc_path);
 
     // Delta retype VkPipelineCache container tests.
     char rpath[512], rstale[512], rother[512];
