@@ -498,6 +498,8 @@ typedef struct vka_shader {
     uint8_t has_ubo_ind;                // 1 if any binding record reads a handle or pointer from a uniform buffer (*_UBO)
     uint16_t tp_ubo_mask;               // bitmask of uniform buffer slots (< 16) holding VKA_BF_TABPOOL handle tables
     uint64_t chash;                     // its library entry's hash (vka_shlib_entry_hash), for the pipeline cache's stamp (vka_pso.c); 0 = not in the library
+    struct vka_shader *mono_peer;       // un-remapped peer shader (no 4-set opDecorate DescriptorSet remap) for 1-set monolithic pipelines
+    uint8_t is_mono;
 } vka_shader;
 // An instanced variant's key (vka_draw.c's instanced runs): its base shader's key XOR this. It is no key of the shader library, and the variant depends on the uniform
 // binding it was made for, which a pipeline key does not record: the prewarm list records the base key and the binding instead (pwrec.inst)
@@ -512,6 +514,8 @@ unsigned vka_layer_gen(void);   // raised when the run-time shader layer (vka_sh
 void vka_layer_poll(void);    // once a second from the present path: maps a layer the packer made (cheap: one stat a second)
 void vka_prog_put(uint64_t serial, const vka_progsh *ps);   // a program made by the host itself (the selftest), by serial
 vka_shader *vka_shader_make(const vka_shlib *L, uint64_t key);
+vka_shader *vka_shader_mono_peer(vka_shader *s);
+void vka_shader_mono_scope(int on);
 const char *vka_shader_lib_path(void);   // the library file loaded ("" before or without one): this version's, or an older one of the same ABI or of a compatible older one (vka_abi_compat.h)
 uint64_t vka_shader_lib_id(void);        // the library played, as a hash of its header (loaded first if needed); 0 = none (the pipeline cache file's stamp, vka_pso.c)
 #include "vka_pckeep.h"
@@ -580,9 +584,11 @@ typedef struct {
     uint32_t fs_ndesc;
 } vka_layout;
 int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out);   // the set-0/set-1 layout of these stages' records with the pools
+int vka_layout_mono_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out);          // compact 1-set layout for monolithic graphics pipelines
 int vka_layout_pre_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out);           // standalone pre-raster layout (Set 0 + pools) for GPL precompile
 int vka_layout_fs_of(vka_shader *fs, vka_layout *out);                              // standalone fragment layout (Set 1 + pools) for GPL precompile
 VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k);
+VkPipeline vka_gfx_pipeline_ex(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay_mono, const vka_gkey *k, int *out_hybrid, vka_layout *out_lay);
 extern _Thread_local int vka_pso_wait;   // after vka_gfx_pipeline / vka_cs_pipeline_frame returned NULL: 1 when the pipeline is still being made in the background (the draw waits, no failure), 0 when it was refused
 VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay);
 VkPipeline vka_cs_pipeline_frame(vka_shader *cs, const vka_layout *lay);   // a dispatch's: VK_NULL_HANDLE while the asynchronous threads make it (DM_VK_CS_ASYNC), the dispatch then skipped

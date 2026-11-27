@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include "../../gfx/vk_android/vka_gpl_cache.h"
 #include "../../gfx/vk_android/vka_shader_variants.h"
+#include "../../gfx/vk_android/vka_pwlist.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -121,9 +122,19 @@ int main(void) {
     unlink(path);
     unlink(other);
 
-    // Sharded v2 base GPL cache container & resume tests.
-    CHECK(vka_gpl_shard_count(440) == 4, "440 entries -> 4 shards, got %u", vka_gpl_shard_count(440));
-    CHECK(vka_gpl_shard_count(28603) == 256, "28603 entries -> 256 shards, got %u", vka_gpl_shard_count(28603));
+    // Sharded v2 base GPL cache container & resume tests (~24 shaders/shard).
+    CHECK(vka_gpl_shard_count(440) == 32, "440 entries -> 32 shards, got %u", vka_gpl_shard_count(440));
+    CHECK(vka_gpl_shard_count(10349) == 512, "10349 entries -> 512 shards, got %u", vka_gpl_shard_count(10349));
+    CHECK(vka_gpl_shard_count(28603) == 2048, "28603 entries -> 2048 shards, got %u", vka_gpl_shard_count(28603));
+
+    // Prewarm record validation regression test: gs_fx==2 (TF capture) must be accepted.
+    vka_gkey tf_gk = {0};
+    tf_gk.samples = 1;
+    tf_gk.gs_fx = 2;
+    pwrec tf_rec = {.kind = VKA_PW_GFX, .klen = (uint32_t)offsetof(vka_gkey, va), .key = {0x1234ull, 0, 0, 0, 0}};
+    CHECK(vka_pw_rec_ok(&tf_rec, (const uint8_t *)&tf_gk) == 1, "gs_fx==2 (TF capture) accepted by vka_pw_rec_ok");
+    tf_gk.gs_fx = 3;
+    CHECK(vka_pw_rec_ok(&tf_rec, (const uint8_t *)&tf_gk) == 0, "gs_fx==3 rejected by vka_pw_rec_ok");
     uint32_t sc = 8;
     uint32_t s_entries = 1280;
     vka_gpl_shard_ent stab[8];

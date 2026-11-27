@@ -2971,11 +2971,11 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     }
 
     PT(1);
-    // The last draw's shaders' layout (layouts live as long as the device): the layout table's lock and hash a draw
+    // The last draw's shaders' compact monolithic layout (layouts live as long as the device): avoids table lock & hash per draw
     static vka_shader *lsh[VKA_NSTAGE]; static vka_layout llay; static int lok;
-    vka_layout lay;
-    if (lok && !memcmp(lsh, sh, sizeof lsh)) lay = llay;
-    else { lok = 0; if (!vka_layout_of(sh, 0, &lay)) SKIP("draw skipped: no pipeline layout"); memcpy(lsh, sh, sizeof lsh); llay = lay; lok = 1; }
+    vka_layout lay_mono;
+    if (lok && !memcmp(lsh, sh, sizeof lsh)) lay_mono = llay;
+    else { lok = 0; if (!(V.gpl_indep ? vka_layout_mono_of(sh, &lay_mono) : vka_layout_of(sh, 0, &lay_mono))) SKIP("draw skipped: no pipeline layout"); memcpy(lsh, sh, sizeof lsh); llay = lay_mono; lok = 1; }
     // Images first used by this draw are made (cleared or uploaded) outside the render pass, then the pass opens over the bound targets
     PT(2);
     walk_all(d, sh);
@@ -3085,17 +3085,23 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     PT(3);
     if (!mesh) vin_build_kept(d, sh[0], &k);
     PT(4);
-    VkPipeline p = vka_gfx_pipeline(sh, &lay, &k);
+    int is_hybrid = 0;
+    vka_layout lay = lay_mono;
+    VkPipeline p = vka_gfx_pipeline_ex(sh, &lay_mono, &k, &is_hybrid, &lay);
     if (!p) { g_skipped++; if (vks_pipeline_counts(vka_pso_wait)) g_skip_dev[VKS_PIPELINE]++; return; }   // the driver refused it (logged when it was made); one still being made in the background is not the driver's (vka_skipwarn.h)
     // DM_VK_INSTANCE: a direct indexed draw of one instance with only vertex and pixel shaders, their base modules and no retyped inputs may join the open run (its
     // instanced pipeline stays bound) or start one (decided at the sets, below)
     VkBuffer i_ib = VK_NULL_HANDLE; VkDeviceSize i_io = 0; VkIndexType i_it = VK_INDEX_TYPE_UINT16;
-    int icand = g_inst_on && !mesh && di && !di->ind && !expand && di->instances <= 1 && d->b.base_instance == 0 && sh[1] && !sh[2] && !sh[3] && !sh[4] && !d->rast_discard
+    int icand = !is_hybrid && g_inst_on && !mesh && di && !di->ind && !expand && di->instances <= 1 && d->b.base_instance == 0 && sh[1] && !sh[2] && !sh[3] && !sh[4] && !d->rast_discard
                 && !(k.vin_u | k.vin_s) && k.fs_variant == DMSH_VK_MOD_BASE && lay.push && vka_enc_on() && inst_ib(di, &i_ib, &i_io, &i_it);
     int ijoin = icand && RUN.open && p == RUN.base.p && DY.valid && DY.pipe == RUN.ipipe && vka_enc_total() == RUN.mark && inst_same_draw(&RUN.base, i_ib, i_io, i_it, di, d);
     if (!ijoin) {
         if (RUN.open) inst_close();
-        if (!DY.valid || !g_dyn_filter || DY.pipe != p) { vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p); DY.pipe = p; VB.vin_stale = 1; }
+        if (!DY.valid || !g_dyn_filter || DY.pipe != p) {
+            vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+            DY.pipe = p; VB.vin_stale = 1;
+            if (!is_hybrid && V.gpl_indep) DY.dirty |= VKA_DYN_EDS_ALL;
+        }
     }
     if (vka_nan_on()) vka_nan_draw(mesh ? sh[7]->key : sh[0]->key, fs ? fs->key : 0);
     PT(5);
@@ -3216,7 +3222,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
         }
         DY_SET1(VKA_DYN_FBL, fbl, fm, vk.vkCmdSetAttachmentFeedbackLoopEnableEXT(g_cb, DY.fbl));
     }
-    {
+    if ((is_hybrid || !V.gpl_indep) && V.eds_mask) {
         uint32_t eds = V.eds_mask;
         if (vka_classic_rp()) eds &= ~(uint32_t)(VKA_EDS_RAST_SAMPLES | VKA_EDS_SAMPLE_MASK);
         if (eds & VKA_EDS_DEPTH_CLAMP) DY_SET1(VKA_DYN_DCLAMP, dclamp, k.depth_clamp ? 1u : 0u, vk.vkCmdSetDepthClampEnableEXT(g_cb, DY.dclamp));

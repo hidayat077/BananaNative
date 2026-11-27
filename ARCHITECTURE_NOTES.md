@@ -167,3 +167,17 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
 - **Secondary Fixes (P2):**
   - P2-1: Calls `shuffle_plan()` before `cs` variant SPIR-V selection in `vka_shader_precomp_*` ([vka_shader.c](dm/gfx/vk_android/vka_shader.c)), runs `precomp_pw_variants()` after `vka_svar_manifest_load()`, and always flushes `vk_gpl_retype_cache_*.bin` before committing `vk_shader_variants_*.bin` (`svar_and_retype_save_locked()`).
   - P2-3: Deduplicates `input: on-screen controls:` log output in `nxhost_touch_controls_set()` ([input_android.c](dm/host/android/input_android.c)) so the layout editor only logs on actual changes.
+
+---
+
+## 10. Monolithic 1-Set Non-EDS3 Fast Path, Fixed Monolithic Cache Saving, & Mini-Shards
+
+- **Decoupled Monolithic Cache Persistence (P0, [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
+  - Fixed Turnip stage-feedback quirk where `VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT` was set on `fb_all` even during 200+ ms cold monolithic compiles, which had left `g_mono_dirty` at `0` and caused `save_now()` to never serialize `g_pc_mono` while logging `delta_retype_cache_bytes` under `g_mono_cache_path`.
+  - `full_pipeline()` now inspects per-stage feedback + compile duration (`!g_mono_cache_loaded || !all_st_hit || dns > 5 ms`), tracks `g_mono_made`, and `save_now()` serializes & logs `vk_monolithic_cache_*.bin` (`mono_cache_save_locked()`) and `vk_gpl_retype_cache_*.bin` (`svar_and_retype_save_locked()`) independently.
+- **Steady-State Monolithic 1-Set Non-EDS3 Fast Path (P1, [vka.h](dm/gfx/vk_android/vka.h), [vka_shader.c](dm/gfx/vk_android/vka_shader.c), [vka_pso.c](dm/gfx/vk_android/vka_pso.c), [vka_draw.c](dm/gfx/vk_android/vka_draw.c)):**
+  - Added un-remapped `mono_peer` shader modules (`vka_shader_mono_peer()`, `vka_shader_mono_scope()`) and compact 1-set pipeline layout (`vka_layout_mono_of()`), plus dual-handle `gval` (`p_mono` + `p_hybrid`) keyed on canonical `vka_gkey`.
+  - Hybrid GPL pipelines (`p_hybrid`) continue using 4-set independent layout + EDS3 dynamic states as a zero-stutter bridge; once `vk-psopt` or `vk-prewarm` populates `p_mono`, `vka_gfx_pipeline_ex()` switches draws transparently to the 1-set compact layout with zero EDS3 `vkCmdSet*` emissions.
+- **Mini-Shards & Cache Hygiene Fixes (P2, [vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [vka_pwlist.h](dm/gfx/vk_android/vka_pwlist.h), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
+  - Scaled `vka_gpl_shard_count()` up to `2048` mini-shards (~24 shaders/shard, `SHARD_LRU_CAP = 64`) to shrink cold-shard frame-path open latency and minor page faults.
+  - Fixed `vka_pw_rec_ok()` rejecting `gs_fx == 2` (transform-feedback capture pipelines) and matched `svar_compile_one()`'s `tf_fx` detection to `make_new()` so all `43/43` variants hit `g_pc_retype` cleanly.

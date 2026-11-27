@@ -24,7 +24,7 @@
 #define VKA_GPL_CACHE_F_SHARDED 16u
 #define VKA_GPL_CACHE_UUID_SIZE 16u
 #define VKA_GPL_SHARD_DONE 0x80000000u
-#define VKA_GPL_SHARD_MAX 256u
+#define VKA_GPL_SHARD_MAX 2048u
 
 typedef struct {
     uint64_t offset;
@@ -109,7 +109,7 @@ static inline int vka_gpl_mono_cache_filename(char *out, size_t n, const char *d
 
 static inline uint32_t vka_gpl_shard_count(uint32_t total_entries) {
     uint32_t s = 1u;
-    while (s < VKA_GPL_SHARD_MAX && s * 160u < total_entries) s <<= 1;
+    while (s < VKA_GPL_SHARD_MAX && s * 24u < total_entries) s <<= 1;
     return s;
 }
 

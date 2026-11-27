@@ -84,6 +84,8 @@ enum {
     VKA_DYN_BLEND_EQ    = 1ull << 28,
     VKA_DYN_WRITE_MASK  = 1ull << 29,
     VKA_DYN_ALL         = (1ull << 30) - 1ull,
+    VKA_DYN_EDS_ALL     = VKA_DYN_DCLAMP | VKA_DYN_PMODE | VKA_DYN_PATCH_CP | VKA_DYN_RSAMP | VKA_DYN_SAMPLE_MASK |
+                          VKA_DYN_A2C | VKA_DYN_LOGEN | VKA_DYN_LOGOP | VKA_DYN_BLEND_EN | VKA_DYN_BLEND_EQ | VKA_DYN_WRITE_MASK,
 };
 
 static inline void vka_dyn_dirty_all(uint64_t *dirty) { *dirty = VKA_DYN_ALL; }

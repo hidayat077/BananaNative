@@ -255,6 +255,8 @@ int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out) {
 // reads report nothing (counted, logged)
 static PFN_vkCreateShaderModule g_csm_next; static PFN_vkDestroyShaderModule g_dsm_next;
 static _Thread_local int g_remap_stage = -1;
+static _Thread_local int g_no_remap;
+void vka_shader_mono_scope(int on) { g_no_remap = on != 0; }
 typedef struct { VkShaderModule early, late; int kind; } pfb_twin;
 static pfb_twin *g_tw; static size_t g_ntw, g_twcap; static pthread_mutex_t g_twmu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic uint64_t g_pfb_mods, g_pfb_sites, g_pfb_early, g_pfb_blind;
@@ -275,7 +277,7 @@ static VkResult csm_emit(VkDevice d, const VkShaderModuleCreateInfo *ci, const V
 }
 static VkResult create_stage_module(int stage, const VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
     int prev = g_remap_stage;
-    g_remap_stage = (V.gpl_indep && stage != DMSH_VK_STAGE_CS) ? stage : -1;
+    g_remap_stage = (!g_no_remap && V.gpl_indep && stage != DMSH_VK_STAGE_CS) ? stage : -1;
     VkResult r = vk.vkCreateShaderModule(V.dev, ci, NULL, mod);
     g_remap_stage = prev;
     return r;
@@ -913,6 +915,39 @@ vka_shader *vka_shader_make(const vka_shlib *L, uint64_t key) {
     pthread_mutex_unlock(&g_mu);
     vka_shader *s = make_new(L, key);
     return s ? sh_settle(key, L, 0, s, NULL) : NULL;
+}
+vka_shader *vka_shader_mono_peer(vka_shader *s) {
+    if (!s || !V.gpl_indep || s->is_mono || !s->e || s->e->stage == DMSH_VK_STAGE_CS) return s;
+    vka_shader *p = __atomic_load_n(&s->mono_peer, __ATOMIC_ACQUIRE);
+    if (p) return p;
+    if (s->inst_bind) return s;   // instanced variants carry an ad-hoc module; never remapped on mono path unless needed
+    const dmsh_vk_module *m = s->lib ? vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_BASE) : NULL;
+    if (!m) return s;
+    vka_shader *n = calloc(1, sizeof *n);
+    if (!n) return s;
+    n->key = s->key; n->e = s->e; n->b = s->b; n->lib = s->lib;
+    n->c1 = s->c1; n->c1_len = s->c1_len;
+    n->tf_fx = s->tf_fx; memcpy(n->tf_stride, s->tf_stride, sizeof n->tf_stride);
+    n->gs_fx = s->gs_fx; memcpy(n->fcomp, s->fcomp, sizeof n->fcomp);
+    n->memu = s->memu; n->has_ubo_ind = s->has_ubo_ind; n->tp_ubo_mask = s->tp_ubo_mask; n->chash = s->chash;
+    n->is_mono = 1;
+    const char *why = NULL; char err[256] = "";
+    int prev = g_no_remap;
+    g_no_remap = 1;
+    n->mods[DMSH_VK_MOD_BASE] = spv_module_(s->lib, s->e, m, s->key, &why, err, sizeof err, NULL);
+    g_no_remap = prev;
+    if (!n->mods[DMSH_VK_MOD_BASE]) { free(n); return s; }
+    pthread_mutex_lock(&g_mu);
+    if (s->mono_peer) {
+        p = s->mono_peer;
+        vk.vkDestroyShaderModule(V.dev, n->mods[DMSH_VK_MOD_BASE], NULL);
+        free(n);
+    } else {
+        __atomic_store_n(&s->mono_peer, n, __ATOMIC_RELEASE);
+        p = n;
+    }
+    pthread_mutex_unlock(&g_mu);
+    return p;
 }
 // A shader of the run-time layer LY (held by the caller: vka_ly_get): found by key and entry hash, else made from a copy of its entry, so it never points into LY.
 // NULL = LY lacks key, the copy failed (logged), or the shader is refused
