@@ -968,8 +968,7 @@ static uint8_t *gw_content(const uint8_t *mem, uint64_t n, uint64_t *seen) {
 int vka_tex_gw_read(uint64_t addr, uint64_t n, void *out) {
     if (!n) return 1;
     if (out) {
-        if (vka_addr(addr, n, NULL, NULL, NULL)) memcpy(out, (const void *)(uintptr_t)addr, (size_t)n);
-        else dm_guest_read_mapped(out, (uintptr_t)addr, (size_t)n);
+        if (!vka_read(addr, out, (size_t)n)) dm_guest_read_mapped(out, (uintptr_t)addr, (size_t)n);
     } else if (!vka_addr(addr, n, NULL, NULL, NULL) && dm_guest_unmapped((uintptr_t)addr, n)) return 0;
     pthread_mutex_lock(&g_tmu);
     uint64_t a = addr, b = a + n, done = vka_done(); uint8_t *c = out; int ok = 1;
@@ -985,7 +984,7 @@ int vka_tex_gw_read(uint64_t addr, uint64_t n, void *out) {
                 if ((!x->fence || x->fence > done) && x->lo < w->src + (hi - w->lo) && x->hi > w->src + (lo - w->lo)) { ok = 0; break; }
             }
             if (!ok) break;
-            if (c) dm_guest_read_mapped(c + (lo - a), (uintptr_t)(w->src + (lo - w->lo)), (size_t)(hi - lo));
+            if (c) { uint64_t sa = w->src + (lo - w->lo); if (!vka_read(sa, c + (lo - a), (size_t)(hi - lo))) dm_guest_read_mapped(c + (lo - a), (uintptr_t)sa, (size_t)(hi - lo)); }
         } else if (c && w->kind == GW_FILL) {
             for (uint64_t k = lo; k < hi; k++) { uint32_t v = w->value; c[k - a] = ((const uint8_t *)&v)[(k - w->lo) & 3]; }
         } else if (c && w->kind == GW_UPDATE) {
@@ -2816,6 +2815,9 @@ int vka_tex_copy_mirror_b2t(vka_img *im, const tex_t *t, unsigned lv_tex, unsign
     if (sp == 1) {
         if (!(tmp = malloc(span)) || !vka_tex_gw_read(src_addr, span, tmp)) { free(tmp); nvn_pool_use(0); return -1; }
         src_ptr = tmp;
+    } else if (vka_canon(src_addr) != src_addr) {
+        if (!(tmp = malloc(span)) || !vka_read(src_addr, tmp, (size_t)span)) { free(tmp); nvn_pool_use(0); return -1; }
+        src_ptr = tmp;
     } else {
         if (!vka_addr(src_addr, span, NULL, NULL, NULL) && dm_guest_unmapped((uintptr_t)src_addr, span)) { nvn_pool_use(0); return -1; }
         src_ptr = (const uint8_t *)(uintptr_t)src_addr;
@@ -3027,10 +3029,11 @@ static int pfb_avail(void) {
     if (v) {
         VkPhysicalDeviceVulkan12Properties p12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p12}; vk.vkGetPhysicalDeviceProperties2(V.pd, &p2);
+        uint32_t fb_set = V.gpl_indep ? 3u : VKA_POOL_FB_SET;
         if (p12.maxPerStageDescriptorUpdateAfterBindStorageBuffers <= DMSH_VK_STAGE_BINDINGS || p12.maxDescriptorSetUpdateAfterBindStorageBuffers <= DMSH_VK_STAGE_BINDINGS) {
             VRED("texture pool reads: %u / %u update-after-bind storage buffers a stage / a layout leave no room beside set 0's: pool reads are not reported",
                  p12.maxPerStageDescriptorUpdateAfterBindStorageBuffers, p12.maxDescriptorSetUpdateAfterBindStorageBuffers); v = 0; }
-        else if (V.props.limits.maxBoundDescriptorSets <= VKA_POOL_FB_SET) { VRED("texture pool reads: %u descriptor sets a pipeline: no room for the bitmap's set; pool reads are not reported", V.props.limits.maxBoundDescriptorSets); v = 0; }
+        else if (V.props.limits.maxBoundDescriptorSets <= fb_set) { VRED("texture pool reads: %u descriptor sets a pipeline: no room for the bitmap's set %u; pool reads are not reported", V.props.limits.maxBoundDescriptorSets, fb_set); v = 0; }
     }
     if (v) {
         VkDeviceSize al = V.sb_align > 256 ? V.sb_align : 256;
@@ -3054,7 +3057,7 @@ static int pfb_avail(void) {
                 vk.vkUpdateDescriptorSets(V.dev, 1, &w, 0, NULL);
             }
         }
-        if (v) VLOG("texture pool reads: the GPU reports the texture IDs shaders read through the pool (a bitmap in descriptor set %d); their images are made when read and kept while read (DM_VK_POOL_FB=0 off)", VKA_POOL_FB_SET);
+        if (v) VLOG("texture pool reads: the GPU reports the texture IDs shaders read through the pool (a bitmap in descriptor set %u); their images are made when read and kept while read (DM_VK_POOL_FB=0 off)", V.gpl_indep ? 3u : VKA_POOL_FB_SET);
     }
     atomic_store(&g_pfb, v);
     pthread_mutex_unlock(&mu);
@@ -3072,17 +3075,25 @@ void vka_tex_pfb_commit(VkCommandBuffer cb, uint64_t fence) {
     for (uint32_t i = 0; i < PFB_RING && k == PFB_RING; i++) if (!g_pfb_r[i].busy) k = i;
     if (!n || k == PFB_RING) { g_pfb_skip++; atomic_store(&g_pfb_any, 1); pthread_mutex_unlock(&g_tmu); return; }   // (every slot waiting: the bits stay for the next submission's copy)
     g_pfb_r[k].fence = fence; g_pfb_r[k].n = n; g_pfb_r[k].busy = 1;
+    static uint64_t pfb_commits;
+    int clr_every = VKA_ENV("DM_VK_POOL_FB_CLEAR", 60);
+    int do_clr = clr_every > 0 && (++pfb_commits % (uint64_t)clr_every) == 0;
     pthread_mutex_unlock(&g_tmu);
-    VkMemoryBarrier b0 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+    VkMemoryBarrier b0 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | (do_clr ? VK_ACCESS_TRANSFER_WRITE_BIT : 0)};
     vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &b0, 0, NULL, 0, NULL);
     VkBufferCopy c = {g_pfb_map.off, g_pfb_ring.off + (VkDeviceSize)k * PFB_BYTES, n}; vk.vkCmdCopyBuffer(cb, g_pfb_map.buf, g_pfb_ring.buf, 1, &c);
-    // The fill writes what the copy reads (a write-after-read hazard): without this barrier Vulkan lets the two transfers run in any order (a spec fix; Qualcomm's driver
-    // reading no IDs has another cause, docs/reference/rendering.md "Texture pool reads report nothing on Qualcomm's driver")
-    VkMemoryBarrier bm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
-    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &bm, 0, NULL, 0, NULL);
-    vk.vkCmdFillBuffer(cb, g_pfb_map.buf, g_pfb_map.off, PFB_BYTES, 0);
-    VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
-    vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    if (do_clr) {
+        // The fill writes what the copy reads (a write-after-read hazard): without this barrier Vulkan lets the two transfers run in any order (a spec fix; Qualcomm's driver
+        // reading no IDs has another cause, docs/reference/rendering.md "Texture pool reads report nothing on Qualcomm's driver")
+        VkMemoryBarrier bm = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &bm, 0, NULL, 0, NULL);
+        vk.vkCmdFillBuffer(cb, g_pfb_map.buf, g_pfb_map.off, PFB_BYTES, 0);
+        VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    } else {
+        VkMemoryBarrier b1 = {VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+        vk.vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &b1, 0, NULL, 0, NULL);
+    }
 }
 static void dirty(int **list, int *n, int *cap, uint8_t **flag, int nslots, int id);
 // Texture ID id was read through the pool (caller holds g_tmu)
@@ -3125,8 +3136,7 @@ static void pfb_consume_locked(void) {
     }
 }
 
-static void bindless_init(void) {
-    static int done; if (done) return; done = 1;
+static void bindless_init_once(void) {
     if (!V.uab) { VRED("no update-after-bind descriptor indexing: the texture and sampler pools have no tables"); return; }
     VkPhysicalDeviceVulkan12Properties p12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
     VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p12}; vk.vkGetPhysicalDeviceProperties2(V.pd, &p2);
@@ -3162,6 +3172,10 @@ static void bindless_init(void) {
         VRED("bindless set (%u textures, %u samplers, %u images): %d", g_ntex_slots, g_nsamp_slots, g_nimg_slots, r); g_set = VK_NULL_HANDLE; return;
     }
     VLOG("bindless tables: %u textures, %u samplers, %u images (update after bind)%s", g_ntex_slots, g_nsamp_slots, g_nimg_slots, pfb ? "; the pool reads' bitmap in a set of its own" : "");
+}
+void vka_bindless_init(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once(&once, bindless_init_once);
 }
 VkDescriptorSet vka_bindless_set(void) { return g_set; }
 uint32_t vka_bindless_tex_slots(void) { return g_set ? g_ntex_slots : 0; }   // the sampled table's length (vka_shader.c tabpool clamps the IDs a module loads to it)
@@ -3882,7 +3896,7 @@ VkSampler vka_samp_default(void) {
 }
 
 void vka_tex_prepare(VkCommandBuffer cb) {
-    bindless_init();
+    vka_bindless_init();
     if (atomic_load_explicit(&g_bl_busy, memory_order_relaxed)) vka_tex_blwb_done(vka_done());
     nvn_pool_use(1);   // the re-uploads below read guest storage: no pool is finalized (and unmapped) under them. Taken before g_tmu, as write_tex does
     pthread_mutex_lock(&g_tmu);

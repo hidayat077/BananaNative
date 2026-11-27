@@ -63,3 +63,5 @@ uint32_t *vka_spv_precise_depth(const uint32_t *words, size_t count, size_t *out
 // subgroups or quad operations) (vka_spvpatch.c vka_spv_quad_shfl). A malloc'd copy (*out_nw words; *sites the calls replaced); NULL with err empty when there is none,
 // NULL with the reason in err when it cannot be rewritten
 uint32_t *vka_spv_quad_shfl(const uint32_t *w, size_t nw, int use_deriv, size_t *out_nw, int *sites, char *err, size_t errn);
+// Remaps OpDecorate DescriptorSet indices s < 4 to map[s] (used for 4-set independent-sets GPL layouts). Returns a malloc'd copy (nw words), or NULL on invalid SPIR-V.
+uint32_t *vka_spv_remap_sets(const uint32_t *w, size_t nw, const uint32_t map[4], int *changed);

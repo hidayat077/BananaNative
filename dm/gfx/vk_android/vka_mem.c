@@ -47,6 +47,11 @@ static void fb_placed(uintptr_t lo, uintptr_t hi);           // File-backed pool
 static void fb_gone(uintptr_t lo, uintptr_t hi, int back);   // a pool's range finalized (back 1: its pieces go back to anonymous memory) or released (0: dropped)
 typedef struct { uintptr_t lo, hi; VkDeviceMemory mem; VkBuffer buf; VkDeviceAddress bda; int refs, fd_alias; } seg_t;
 static seg_t *g_sg; static int g_nsg, g_sgcap;   // sorted by lo, disjoint
+// Virtual pool mappings on Android (hle_nvn.c vpool_map -> mtl_vpool_map): [vlo, vhi) -> [plo, plo + (vhi - vlo)). Guarded by g_rw (and g_pl_use-free);
+// lookups (vka_addr, vka_addr_run, vka_read, vka_mem_chunks) resolve virtual addresses to the underlying placed physical segment.
+typedef struct { uintptr_t vlo, vhi, plo; } vmap_t;
+static vmap_t *g_vm; static int g_nvm, g_vmcap; static _Atomic int g_nvm_a;
+typedef struct { uintptr_t lo, hi, cpu; VkBuffer buf; VkDeviceAddress bda; VkDeviceSize boff; } vseg_t;
 // Bumped (under g_rw for writing) whenever a segment comes or goes: the replay's per-thread lookup cache (vka_addr, vka_addr_run) holds while it stands
 static _Atomic uint64_t g_sg_gen = 1;
 uint64_t vka_mem_gen(void) { return atomic_load_explicit(&g_sg_gen, memory_order_acquire); }   // (vka_draw.c gmem_map: the table is kept while it stands)
@@ -75,6 +80,34 @@ static void sg_insert(const seg_t *s) {   // caller holds g_rw for writing
     atomic_fetch_add(&g_sg_gen, 1);
     if (g_nsg == g_sgcap) { g_sgcap = g_sgcap ? g_sgcap * 2 : 64; g_sg = realloc(g_sg, (size_t)g_sgcap * sizeof *g_sg); }
     int i = sg_find(s->lo) + 1; memmove(&g_sg[i + 1], &g_sg[i], (size_t)(g_nsg - i) * sizeof *g_sg); g_sg[i] = *s; g_nsg++;
+}
+static int vm_find(uintptr_t a) {   // the last virtual run with vlo <= a, or -1; caller holds g_rw
+    int lo = 0, hi = g_nvm - 1, hit = -1;
+    while (lo <= hi) { int m = (lo + hi) / 2; if (g_vm[m].vlo <= a) { hit = m; lo = m + 1; } else hi = m - 1; }
+    return hit;
+}
+static void vm_set_locked(uintptr_t vlo, uintptr_t vhi, uintptr_t plo) {   // caller holds g_rw for writing
+    vmap_t *nw = malloc((size_t)(g_nvm + 3) * sizeof *nw); int nn = 0, ins = 0;
+    if (!nw) return;
+    for (int i = 0; i < g_nvm; i++) {
+        vmap_t e = g_vm[i];
+        if (e.vhi <= vlo) { nw[nn++] = e; continue; }
+        if (e.vlo >= vhi) { if (plo && !ins) { nw[nn++] = (vmap_t){vlo, vhi, plo}; ins = 1; } nw[nn++] = e; continue; }
+        if (e.vlo < vlo) nw[nn++] = (vmap_t){e.vlo, vlo, e.plo};
+        if (plo && !ins) { nw[nn++] = (vmap_t){vlo, vhi, plo}; ins = 1; }
+        if (e.vhi > vhi) nw[nn++] = (vmap_t){vhi, e.vhi, e.plo + (vhi - e.vlo)};
+    }
+    if (plo && !ins) nw[nn++] = (vmap_t){vlo, vhi, plo};
+    int k = 0;
+    for (int i = 0; i < nn; i++) {
+        if (k && nw[k - 1].vhi == nw[i].vlo && nw[k - 1].plo + (nw[k - 1].vhi - nw[k - 1].vlo) == nw[i].plo) nw[k - 1].vhi = nw[i].vhi;
+        else nw[k++] = nw[i];
+    }
+    if (k > g_vmcap) { g_vmcap = k < 64 ? 64 : k * 2; g_vm = realloc(g_vm, (size_t)g_vmcap * sizeof *g_vm); }
+    if (g_vm && k) memcpy(g_vm, nw, (size_t)k * sizeof *g_vm);
+    g_nvm = k; atomic_store_explicit(&g_nvm_a, k, memory_order_release);
+    atomic_fetch_add(&g_sg_gen, 1);
+    free(nw);
 }
 
 // ---------- Swaps and the threads that meet them ----------
@@ -793,7 +826,7 @@ int vka_mem_release(uintptr_t lo, uintptr_t hi) {
 // A segment is unplaced only after the last fence reserved has completed (unplace), so one still in a cache that the generation has not caught yet is not freed under
 // a submission that uses it
 enum { NLC = 1024 };   // direct-mapped by 64 KiB block of the address: the level's ~8,000 draws read buffers in ~1,000 segments
-typedef struct { uint64_t gen; seg_t last; seg_t s[NLC]; } lcache;
+typedef struct { uint64_t gen; vseg_t last; vseg_t s[NLC]; } lcache;
 static __thread lcache *t_lc;
 // The recording thread's cache outside TLS: a __thread variable of a dlopen'ed library is reached through the dynamic TLS descriptor resolver at every access, and the
 // lookups run ~10 times a draw (profile p2: the lookup 8 % of the replay thread, the resolver in it). The first thread that records a submission (vka_mem_rec_thread) owns it
@@ -803,12 +836,32 @@ void vka_mem_rec_thread(void) {
     void *tp = __builtin_thread_pointer(), *none = NULL;
     if (!atomic_load_explicit(&g_rlc_tp, memory_order_relaxed) && VKA_ENV("DM_VK_LC_GLOBAL", 1)) atomic_compare_exchange_strong(&g_rlc_tp, &none, tp);
 }
-static const seg_t *lookup(uintptr_t a, seg_t *tmp) {   // the segment holding a, or NULL
+static int resolve_locked(uintptr_t a, vseg_t *out) {   // caller holds g_rw
+    int i = sg_find(a);
+    if (i >= 0 && a < g_sg[i].hi) {
+        *out = (vseg_t){g_sg[i].lo, g_sg[i].hi, g_sg[i].lo, g_sg[i].buf, g_sg[i].bda, 0};
+        return 1;
+    }
+    if (!atomic_load_explicit(&g_nvm_a, memory_order_relaxed)) return 0;
+    int vi = vm_find(a);
+    if (vi < 0 || a >= g_vm[vi].vhi) return 0;
+    uintptr_t pa = g_vm[vi].plo + (a - g_vm[vi].vlo);
+    int pi = sg_find(pa);
+    if (pi < 0 || pa >= g_sg[pi].hi) return 0;
+    uintptr_t plo = g_vm[vi].plo > g_sg[pi].lo ? g_vm[vi].plo : g_sg[pi].lo;
+    uintptr_t vm_phi = g_vm[vi].plo + (g_vm[vi].vhi - g_vm[vi].vlo);
+    uintptr_t phi = vm_phi < g_sg[pi].hi ? vm_phi : g_sg[pi].hi;
+    uintptr_t vlo = g_vm[vi].vlo + (plo - g_vm[vi].plo), vhi = g_vm[vi].vlo + (phi - g_vm[vi].plo);
+    VkDeviceSize boff = (VkDeviceSize)(plo - g_sg[pi].lo);
+    *out = (vseg_t){vlo, vhi, plo, g_sg[pi].buf, g_sg[pi].bda ? g_sg[pi].bda + boff : 0, boff};
+    return 1;
+}
+static const vseg_t *lookup(uintptr_t a, vseg_t *tmp) {   // the segment (physical or virtual alias) holding a, or NULL
     lcache *c;
     if (__builtin_thread_pointer() == atomic_load_explicit(&g_rlc_tp, memory_order_relaxed)) c = &g_rlc;
     else { c = t_lc; if (!c) c = t_lc = calloc(1, sizeof *c); }
     uint64_t gen = atomic_load_explicit(&g_sg_gen, memory_order_acquire);
-    seg_t *e = NULL;
+    vseg_t *e = NULL;
     if (c) {
         if (c->gen == gen) {
             if (a >= c->last.lo && a < c->last.hi) return &c->last;
@@ -823,19 +876,39 @@ static const seg_t *lookup(uintptr_t a, seg_t *tmp) {   // the segment holding a
         atomic_fetch_add_explicit(c == &g_rlc ? &g_lkw_rec_ns : &g_lkw_oth_ns, mono_ns() - t0, memory_order_relaxed);
     }
     gen = atomic_load_explicit(&g_sg_gen, memory_order_relaxed);
-    int i = sg_find(a); const seg_t *r = NULL;
-    if (i >= 0 && a < g_sg[i].hi) {
-        *tmp = g_sg[i]; r = tmp;
-        if (c) { if (c->gen != gen) { memset(&c->last, 0, sizeof c->last); memset(c->s, 0, sizeof c->s); c->gen = gen; } *e = g_sg[i]; c->last = g_sg[i]; }
+    const vseg_t *r = NULL;
+    if (resolve_locked(a, tmp)) {
+        r = tmp;
+        if (c) { if (c->gen != gen) { memset(&c->last, 0, sizeof c->last); memset(c->s, 0, sizeof c->s); c->gen = gen; } *e = *tmp; c->last = *tmp; }
     }
     pthread_rwlock_unlock(&g_rw);
     return r;
 }
 int vka_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off, VkDeviceAddress *bda) {
-    seg_t tmp; const seg_t *g = lookup((uintptr_t)addr, &tmp);
-    int ok = g && addr + len <= g->hi;
-    if (ok) { if (buf) *buf = g->buf; if (off) *off = addr - g->lo; if (bda) *bda = g->bda ? g->bda + (addr - g->lo) : 0; }
+    vseg_t tmp; const vseg_t *g = lookup((uintptr_t)addr, &tmp);
+    int ok = g && len <= g->hi - addr;
+    if (ok) { if (buf) *buf = g->buf; if (off) *off = g->boff + (addr - g->lo); if (bda) *bda = g->bda ? g->bda + (addr - g->lo) : 0; }
     return ok;
+}
+int vka_read(uint64_t addr, void *out, size_t len) {
+    size_t done = 0; uint8_t *dst = out;
+    while (done < len) {
+        vseg_t tmp; const vseg_t *g = lookup((uintptr_t)(addr + done), &tmp);
+        if (!g) return 0;
+        uint64_t avail = g->hi - (addr + done);
+        size_t take = (uint64_t)(len - done) < avail ? len - done : (size_t)avail;
+        memcpy(dst + done, (const void *)(g->cpu + ((addr + done) - g->lo)), take);
+        done += take;
+    }
+    return 1;
+}
+uint64_t vka_canon(uint64_t addr) {
+    if (!atomic_load_explicit(&g_nvm_a, memory_order_relaxed)) return addr;
+    pthread_rwlock_rdlock(&g_rw);
+    int vi = vm_find((uintptr_t)addr);
+    uint64_t r = (vi >= 0 && addr < g_vm[vi].vhi) ? g_vm[vi].plo + (addr - g_vm[vi].vlo) : addr;
+    pthread_rwlock_unlock(&g_rw);
+    return r;
 }
 
 // Diagnostics (DM_VK_NANSCAN): the segment holding addr and its neighbours
@@ -848,8 +921,8 @@ void vka_mem_describe(uint64_t addr, char *out, size_t n) {
     pthread_rwlock_unlock(&g_rw);
 }
 uint64_t vka_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off) {
-    seg_t tmp; const seg_t *g = lookup((uintptr_t)addr, &tmp); uint64_t n = 0;
-    if (g) { n = g->hi - addr; if (n > len) n = len; *buf = g->buf; *off = addr - g->lo; }
+    vseg_t tmp; const vseg_t *g = lookup((uintptr_t)addr, &tmp); uint64_t n = 0;
+    if (g) { n = g->hi - addr; if (n > len) n = len; *buf = g->buf; *off = g->boff + (addr - g->lo); }
     return n;
 }
 
@@ -875,12 +948,36 @@ uint64_t vka_mem_sink(void) {
     return bda;   // (kept for the process's life)
 }
 
-// The placed segments in address order (raw global memory's table, vka_draw.c gmem_map): at most max, the count returned
+// The placed segments and aliased virtual runs in address order (raw global memory's table, vka_draw.c gmem_map): at most max, the count returned
+typedef struct { uint64_t lo, hi, bda; } gmem_chk_t;
+static int gmem_chk_cmp(const void *a, const void *b) { uint64_t x = ((const gmem_chk_t *)a)->lo, y = ((const gmem_chk_t *)b)->lo; return x < y ? -1 : x > y; }
 int vka_mem_chunks(uint64_t *lo, uint64_t *hi, uint64_t *bda, int max) {
     pthread_rwlock_rdlock(&g_rw);
-    int n = 0; for (int i = 0; i < g_nsg && n < max; i++) if (g_sg[i].bda) { lo[n] = g_sg[i].lo; hi[n] = g_sg[i].hi; bda[n] = g_sg[i].bda; n++; }
-    if (n == max && n < g_nsg) VRED_ONCE("more than %d placed segments: raw global memory sees the first %d", max, max);
+    if (!atomic_load_explicit(&g_nvm_a, memory_order_relaxed)) {
+        int n = 0; for (int i = 0; i < g_nsg && n < max; i++) if (g_sg[i].bda) { lo[n] = g_sg[i].lo; hi[n] = g_sg[i].hi; bda[n] = g_sg[i].bda; n++; }
+        if (n == max && n < g_nsg) VRED_ONCE("more than %d placed segments: raw global memory sees the first %d", max, max);
+        pthread_rwlock_unlock(&g_rw);
+        return n;
+    }
+    int n = 0;
+    gmem_chk_t *tmp = malloc((size_t)max * sizeof *tmp);
+    if (!tmp) { pthread_rwlock_unlock(&g_rw); return 0; }
+    for (int i = 0; i < g_nsg && n < max; i++) if (g_sg[i].bda) tmp[n++] = (gmem_chk_t){g_sg[i].lo, g_sg[i].hi, g_sg[i].bda};
+    for (int vi = 0; vi < g_nvm && n < max; vi++) {
+        uintptr_t pcur = g_vm[vi].plo, pend = pcur + (g_vm[vi].vhi - g_vm[vi].vlo);
+        int pi = sg_find(pcur); if (pi < 0) pi = 0;
+        for (; pi < g_nsg && g_sg[pi].lo < pend && n < max; pi++) {
+            if (g_sg[pi].hi <= pcur || !g_sg[pi].bda) continue;
+            uintptr_t plo = pcur > g_sg[pi].lo ? pcur : g_sg[pi].lo, phi = pend < g_sg[pi].hi ? pend : g_sg[pi].hi;
+            uintptr_t vlo = g_vm[vi].vlo + (plo - g_vm[vi].plo), vhi = g_vm[vi].vlo + (phi - g_vm[vi].plo);
+            tmp[n++] = (gmem_chk_t){vlo, vhi, g_sg[pi].bda + (plo - g_sg[pi].lo)};
+        }
+    }
+    if (n == max) VRED_ONCE("more than %d placed segments: raw global memory sees the first %d", max, max);
     pthread_rwlock_unlock(&g_rw);
+    qsort(tmp, (size_t)n, sizeof *tmp, gmem_chk_cmp);
+    for (int i = 0; i < n; i++) { lo[i] = tmp[i].lo; hi[i] = tmp[i].hi; bda[i] = tmp[i].bda; }
+    free(tmp);
     return n;
 }
 
@@ -1035,7 +1132,7 @@ static void join_placed(const pool_ent *p, uintptr_t a, uintptr_t e, const char 
     else if (!q && k < 8) VRED("memory pool %#lx+%#llx (placed by parts): the GPU is given %#lx+%#lx (%s) across parts placed earlier, which are not joined (%s): lookups over the whole range fail (draws that need it in one piece are skipped)",
                                (unsigned long)p->mem, (unsigned long long)p->size, (unsigned long)a, (unsigned long)(e - a), why, join_cap() ? "out of memory for the join queue" : "DM_VK_PLACE_JOIN_MB=0");
 }
-static void pool_need(const void *addr, uint64_t len, const char *why, int allow_join) {
+static void pool_need_phys(const void *addr, uint64_t len, const char *why, int allow_join) {
     if (!atomic_load_explicit(&g_nlazy, memory_order_relaxed)) return;
     uintptr_t a = (uintptr_t)addr, e = a + (len ? len : 1);
     if (e < a) e = UINTPTR_MAX;
@@ -1105,8 +1202,32 @@ static void pool_need(const void *addr, uint64_t len, const char *why, int allow
         if (lg) placed_line(tot);
     }
 }
+static void pool_need(const void *addr, uint64_t len, const char *why, int allow_join) {
+    pool_need_phys(addr, len, why, allow_join);
+    if (!atomic_load_explicit(&g_nvm_a, memory_order_relaxed)) return;
+    uintptr_t a = (uintptr_t)addr, e = a + (len ? len : 1);
+    if (e < a) e = UINTPTR_MAX;
+    typedef struct { uintptr_t pa; uint64_t n; } preq;
+    preq req[32]; int nr = 0;
+    pthread_rwlock_rdlock(&g_rw);
+    int vi = vm_find(a); if (vi < 0) vi = 0;
+    for (; vi < g_nvm && g_vm[vi].vlo < e && nr < 32; vi++) {
+        if (g_vm[vi].vhi <= a) continue;
+        uintptr_t lo = a > g_vm[vi].vlo ? a : g_vm[vi].vlo, hi = e < g_vm[vi].vhi ? e : g_vm[vi].vhi;
+        req[nr++] = (preq){g_vm[vi].plo + (lo - g_vm[vi].vlo), (uint64_t)(hi - lo)};
+    }
+    pthread_rwlock_unlock(&g_rw);
+    for (int i = 0; i < nr; i++) pool_need_phys((const void *)req[i].pa, req[i].n, why, allow_join);
+}
 void mtl_pool_need(const void *addr, uint64_t len, const char *why) { pool_need(addr, len, why, 1); }
 void mtl_pool_need_parts(const void *addr, uint64_t len, const char *why) { pool_need(addr, len, why, 0); }
+void mtl_vpool_map(uint64_t vaddr, uint64_t paddr, uint64_t size) {
+    if (!size) return;
+    if (paddr) pool_need_phys((const void *)(uintptr_t)paddr, size, "a virtual pool mapping", 1);
+    pthread_rwlock_wrlock(&g_rw);
+    vm_set_locked((uintptr_t)vaddr, (uintptr_t)(vaddr + size), (uintptr_t)paddr);
+    pthread_rwlock_unlock(&g_rw);
+}
 static void lazy_release_note(uintptr_t lo, uintptr_t hi) {
     pthread_mutex_lock(&g_pmu);   // pools not placed yet (DM_VK_PLACE_LAZY) over the range: their storage leaves the guest too
     for (int i = 0; i < g_npool; i++) if (g_pool[i].lazy && g_pool[i].mem < hi && lo < g_pool[i].mem + g_pool[i].size) {

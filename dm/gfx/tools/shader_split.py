@@ -89,6 +89,7 @@ KEY_SKIP = tuple(int(x, 0) for x in GAME.get('shader_key_skip', '0+0').split('+'
 
 CTL_MAGIC, GFX_MAGIC, CS_MAGIC = bytes.fromhex('34127698'), bytes.fromhex('78563412'), bytes.fromhex('79563412')
 GLSLC_MAGIC = b'\x91\x68\x86\x19'
+GPUCODEONLY = b'GPUCODEONLY\0'   # Ubisoft's code-only shader archive (Anvil)
 STAGES = ['vs', 'hs', 'ds', 'gs', 'ps', 'cs']
 # An NVN2 BNSH program has stage slots past those six: 7 holds the task shader and 8 the mesh shader (The Legend of Zelda: Ocarina of Time's Model and Foliage .bfsha,
 # 1,699 task and 1,739 mesh shaders; read from the six slots alone, every mesh-shaded draw was missing from the map and dropped). Slot 6 has not been seen used
@@ -2434,6 +2435,28 @@ def raw_shaders(d, label, known=()):
         if why: print(f'[RED] {label} control section @{c:#x}: {why}; left out', flush=True)
     return out
 
+def gpu_codeonly_shaders(d, label, out):
+    """Shaders of Ubisoft's GPUCODEONLY archive (Immortals Fenyx Rising, Anvil): one or more code-only blobs,
+    each a 0x10-byte header ('GPUCODEONLY', a version word) followed by code areas and their control sections.
+    A control starts with CTL_MAGIC, +0x20 its length and +0x704 the code length; the code area ends four bytes
+    before it, where a word the tools do not need sits. Graphics code areas start with GFX_MAGIC, compute ones
+    are headerless, so glslc_stage takes their stage from the control's thread group (+0x748). Fenyx's
+    ShaderDataNVN.bin keeps headed code in its first blob and headerless code in the later ones; both pair
+    by the same rule."""
+    for m in re.finditer(re.escape(CTL_MAGIC), d):
+        c = m.start()
+        if c + 0x708 > len(d): continue
+        nctl = struct.unpack_from('<I', d, c + 0x20)[0]
+        n = struct.unpack_from('<I', d, c + 0x704)[0]
+        if not (0x760 <= nctl <= 1 << 16 and 0x80 <= n <= 1 << 22 and c + nctl <= len(d)): continue
+        k = c - 4 - n
+        if k < 0: continue
+        ctl, code = d[c:c + nctl], d[k:c - 4]
+        st = glslc_stage(ctl, code)
+        if st and not check(label, st, ctl, code):
+            out.append((f'{label}#GPU@{c:#x}', st, ctl, code))
+    return out
+
 TTDAT = b'TTDAT'   # job tag: TT Games' indexed .nnx_shaders members (ttdat.py)
 def ttdat_jobs(files, parts=64):
     import ttdat
@@ -2462,6 +2485,36 @@ def ttdat_shaders(path, rel, entries, out):
             label = f'/{rel}/{entry[0]}'
             data = ttdat.read(f, entry, oodle)
             out.extend(ttdat_programs(data, label))
+
+
+FORGE = b'FORGE'   # job tag: Ubisoft Anvil scimitar .forge archives (forge.py)
+def forge_jobs(files, parts=64):
+    import forge
+    found, consumed, jobs = [], set(), []
+    for path, rel in files:
+        if not path.lower().endswith('.forge'): continue
+        try: ents = forge.entries(path)
+        except (ValueError, OSError, struct.error) as e:
+            jobs.append((path, rel, (FORGE, None, str(e)))); consumed.add(path); continue
+        if ents is None: continue
+        consumed.add(path); found.append((path, rel, ents))
+    step = max(sum(e[2] for _, _, ents in found for e in ents) // parts, 1)
+    for path, rel, ents in found:
+        batch, size = [], 0
+        for e in ents:
+            batch.append(e); size += e[2]
+            if size >= step: jobs.append((path, rel, (FORGE, tuple(batch)))); batch, size = [], 0
+        if batch: jobs.append((path, rel, (FORGE, tuple(batch))))
+    return jobs, consumed
+
+
+def forge_shaders(path, rel, entries, out):
+    import forge
+    with open(path, 'rb') as f:
+        for entry in entries:
+            label = f'/{rel}#{entry[1]:x}'
+            for block in forge.read(f, entry, oodle, '/' + rel):
+                if GPUCODEONLY in block: gpu_codeonly_shaders(block, label, out)
 
 
 def ttdat_programs(data, label):
@@ -3374,6 +3427,7 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
             # that expands 9 times, which then added up to 18 times the file)
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
+    if d[:12] == GPUCODEONLY: gpu_codeonly_shaders(d, label, out); return
     if d[:4] == b'SHN!': out.extend(shn_shaders(d, label)); return
     if d[:8] == CIVBSF: out.extend(civbsf_shaders(d, label)); return
     if d[:8] == SUMO_MUX:
@@ -3802,12 +3856,19 @@ def scan_file_in(args):
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
     with open(path, 'rb') as f: head = f.read(16)
     found = Shaders(); trees = {}
+    if head[:12] == GPUCODEONLY:   # an Ubisoft code-only shader archive: read the pairs directly, no full blob scan
+        with open(path, 'rb') as f: gpu_codeonly_shaders(f.read(), '/' + rel, found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and args[2][0] == b'ARH':   # ARH1 and ARH2 share archive jobs
         arh_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and args[2][0] == TTDAT:   # TT Games' indexed .nnx_shaders members (ttdat_jobs)
         if args[2][1] is None: red(args[2][2])
         ttdat_shaders(path, rel, args[2][1], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
+    if len(args) > 2 and args[2][0] == FORGE:   # Ubisoft Anvil scimitar .forge archives (forge_jobs)
+        if args[2][1] is None: red(args[2][2])
+        forge_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == NLG_DICT:
         nlg_shaders(path, '/' + rel, found)
@@ -4411,8 +4472,9 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
     pd_jobs, pdats = pdat_jobs(by_head)
     tt_jobs, ttdats = ttdat_jobs(files)   # TT Games' DATs: only indexed .nnx_shaders, Oodle through the game's own decoder
-    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs + tt_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats and p not in ttdats]
+    fg_jobs, forges = forge_jobs(by_head)   # Ubisoft Anvil .forge archives, THFIRE Oodle blocks decoded into GPUCODEONLY shaders
+    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs + tt_jobs + fg_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats and p not in ttdats and p not in forges]
     if want is not None: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]
     return big, files
 

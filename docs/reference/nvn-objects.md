@@ -120,6 +120,13 @@ A game may tell NVN objects apart by their bytes, without an NVN call. A host re
 - **Fix:** a texture of a sparse pool takes its content as on Metal (`tex_from_storage`): a sampled one (not linear, compressible or an image) is gathered through the page table (`nvn_sparse_copy`, unmapped pages as 0), uploaded, and uploaded again when a mapping in its range or a physical page behind it changes (`nvn_sparse_since`, checked when the page table's generation or the dirty clock moves; `vka_img.vtrack`); the others start cleared. Nothing reads the reserved range itself.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md), on the arm64 emulator, 2 s into its first frames.
 
+### Sparse virtual pool buffers on the Vulkan replay
+
+- **Symptom:** Android: `[RED] virtual pool …: aliasing physical pool pages is not yet on Android`, followed by `[RED] vk: storage buffer at 0x73… is not in placed guest RAM`, `[RED] vk: buffer copy …: the source/destination is not in placed guest RAM`, and `[RED] vk: buffer texture ID …: its … bytes are not in placed guest memory`.
+- **Cause:** `vpool_map` in `hle_nvn.c` did not notify `vka_mem.c` when mapping physical pool pages into a sparse virtual pool's `PROT_NONE` reservation, so `vka_addr`, `vka_addr_run`, `mtl_pool_need`, and `vka_mem_chunks` missed every virtual address.
+- **Fix:** `vpool_map` and `vpool_drop` call `mtl_vpool_map(vaddr, paddr, size)` (`nvn_mtl.h`, `vka_mem.c`), maintaining a sorted virtual-to-physical run table (`g_vm`) that places underlying physical pools and resolves virtual addresses in `vka_addr`, `vka_addr_run`, `vka_mem_chunks`, `vka_read`, and `vka_canon` without touching the `PROT_NONE` reservation on the CPU.
+- **Found on:** [Immortals Fenyx Rising](../../dm/games/01004A600EC0A000/README.md), virtual pool `0x4015c6c298` (`0x73…` storage buffers, buffer copies, and buffer textures).
+
 ### A finalized sparse pool read through a registered texture
 
 - **Symptom:** Android: `CRASH sig=11` at a non-canonical address (`0x6db6db6db0ff0e`) in `vpool_at` ← `nvn_sparse_any` ← `upload_sparse_parts` ← `img_first_use` ← `vka_tex_get` ← `write_tex` ← `vka_tex_prepare` (`hle_nvn.c`, `vka_tex.c`), a few seconds after the first frames, right after `pool memory … given back as anonymous memory`.
@@ -671,6 +678,13 @@ Games read this count as a position in their own command memory and size their h
 - **Cause:** NVN's texture, separate texture and sampler handles are 64-bit, but the driver writes each bound one into the c2 handle table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half. The host kept the whole 64 bits of the handles of `nvnCommandBufferBindTextures`, `BindSeparateTextures`, `BindSeparateSamplers` and `BindImages`, and took the sampler ID as the handle shifted right by 20. EA SPORTS FC 27 binds separate textures with bit 32 set (`0x1000001d1`, texture 0x1d1): a shader that takes its sampler from that combined word got ID 4096, where the GPU reads sampler 0. The single `nvnCommandBufferBindTexture` record already read its handle as 32 bits.
 - **Fix:** `bind_handles` (`hle_nvn.c`) keeps the low 32 bits of each handle before it moves the IDs to the part of the host's table of the pool the command buffer bound (which may then pass 12 bits).
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), at the title and in the menus.
+
+### A bind wider than 32 handles
+
+- **Symptom:** `[RED] bind handle count 49` on every frame, tens of thousands of times a run, with textures or samplers missing from the picture.
+- **Cause:** `bind_handles` (`hle_nvn.c`) refused a bind of more than 32 handles and returned NULL, dropping all of them. A host record holds at most 32 handles, but NVN has 128 texture and sampler slots: Immortals Fenyx Rising binds 49 at once, which hardware accepts.
+- **Fix:** `bind_handles_` records the count in consecutive chunks of at most 32, each with its own first slot, handle range and (for deferred binds) its own source address in guest memory. The replay already reads a record's own count, so its records and ABI are unchanged. `t_nvn` checks a 49-handle bind becomes records of 32 and 17 with the right slots and handles.
+- **Found on:** [Immortals Fenyx Rising](../../dm/games/01004A600EC0A000/README.md), first phone run (Turnip, frame loop reached).
 
 ### Version and capability checks that fail quietly
 

@@ -238,12 +238,16 @@ void nxhost_touch_controls_enable(bool on) {
     pthread_mutex_unlock(&g_mu);
 }
 int nxhost_touch_controls_set(const nxhost_touch_control *c, int n) {
+    static int last_kept = -1, last_custom = -1;
     pthread_mutex_lock(&g_mu); touch_once();
     int kept = 0, r = nxin_touch_set_layout(&g_touch, c, n, &kept);
     if (r & 1) publish_touch_pad();
     if (r & 2) publish_fingers();
+    int custom = (c && n > 0) ? 1 : 0;
+    int changed = (kept != last_kept || custom != last_custom);
+    last_kept = kept; last_custom = custom;
     pthread_mutex_unlock(&g_mu);
-    LOG("input: on-screen controls: %d, %s layout", kept, c && n > 0 ? "the launcher's" : "the default");
+    if (changed) LOG("input: on-screen controls: %d, %s layout", kept, custom ? "the launcher's" : "the default");
     return kept;
 }
 int nxhost_touch_controls(nxhost_touch_control *out, int max) {

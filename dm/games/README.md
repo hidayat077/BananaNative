@@ -131,12 +131,14 @@ One row per profile; the notes are each profile's `README.md`.
 | [Ghost Trick: Phantom Detective](010029B018432000/README.md) | `010029B018432000` | 1.0.0 (base) | 13.3.0 | Capcom's RE Engine, Wwise | NVN |
 | [Hades](0100535012974000/README.md) | `0100535012974000` | 1.0.38233 | 9.3.0 | Supergiant Games' engine (The Forge) | Vulkan |
 | [Hades II](0100A00019DE0000/README.md) | `0100A00019DE0000` | base game | 19.3.9 | Supergiant Games' engine | NVN |
+| [Hellblade: Senua's Sacrifice](010044500CF8E000/README.md) | `010044500CF8E000` | 1.1.0 (base) | 7.3.0 | Unreal Engine 4 (version 4 pak, shaders inline), NintendoSDK_movie | NVN |
 | [Hogwarts Legacy](0100F7E00C70E000/README.md) | `0100F7E00C70E000` | v327680 | 17.5.4 | Unreal Engine 4 (IoStore), Havok | NVN |
 | [Hollow Knight](0100633007D48000/README.md) | `0100633007D48000` | 1.5.12620 | 20.5.21 | Unity 6000.0.61f1 IL2CPP, FMOD | NVN |
 | [Hollow Knight: Silksong](010013C00E930000/README.md) | `010013C00E930000` | 1.0.30000 | 20.5.8 | Unity 6000.0.50f1 IL2CPP | NVN |
 | [Hyrule Warriors: Age of Calamity](01002B00111A2000/README.md) | `01002B00111A2000` | 1.3.0 | 9.6.0 | Koei Tecmo's KTGL | NVN |
 | [Hyrule Warriors: Age of Imprisonment](04003F40232DE000/README.md) | `04003F40232DE000` | v196608 (Switch 2) | 20.5.15 (Ounce) | Koei Tecmo's KTGL | NVN2 |
 | [Hyrule Warriors: Definitive Edition](0100AE00096EA000/README.md) | `0100AE00096EA000` | 1.0.1 | 3.5.1 | Koei Tecmo's KTGL | NVN |
+| [Immortals Fenyx Rising](01004A600EC0A000/README.md) | `01004A600EC0A000` | 1.3.4 (base) | 10.4.0 | Ubisoft's Anvil (GPUCODEONLY archives), Havok, Wwise | NVN |
 | [Kirby Air Riders](040077201BE50000/README.md) | `040077201BE50000` | v458752 (Switch 2) | 20.5.26 (Ounce) | Its own engine (`phx`, `Aurora`) | NVN2 |
 | [Kirby and the Forgotten Land](01004D300C5AE000/README.md) | `01004D300C5AE000` | 1.1.0 | 11.4.0 | HAL Laboratory's engine (NintendoWare) | NVN |
 | [Kirby and the Forgotten Land - Nintendo Switch 2 Edition](04004D300C5AE001/README.md) | `04004D300C5AE001` | 1.1.0 (program 1) | 19.3.7 (Ounce) | HAL Laboratory's engine (NintendoWare) | NVN2 |
@@ -192,7 +194,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Pokémon Legends: Arceus](01001F5010DFA000/README.md) | `01001F5010DFA000` | 1.1.1 | 11.4.0 | Game Freak's engine (between Sword's and Trinity) | NVN |
 | [Pokémon Legends: Z-A](0100F43008C44000/README.md) | `0100F43008C44000` | 2.0.2 | 19.3.11 | Game Freak's Trinity engine | NVN |
 | [Pokémon Pokopia](0400A3A01EE4C000/README.md) | `0400A3A01EE4C000` | v655360 (Switch 2) | 20.5.25 (Ounce) | Koei Tecmo's KTGL | NVN2 |
-| [Pokémon Scarlet](0100A3D008C5C000/README.md) | `0100A3D008C5C000` | 1.0.0 | 13.3.5 | Game Freak's Trinity engine | NVN |
+| [Pokémon Scarlet](0100A3D008C5C000/README.md) | `0100A3D008C5C000` | 4.0.0 | 13.3.13 | Game Freak's Trinity engine | NVN |
 | [Pokémon Shield](01008DB008C2C000/README.md) | `01008DB008C2C000` | 1.3.2 | 7.3.2 | Game Freak's engine (before Trinity) | NVN |
 | [Pokémon Shining Pearl](010018E011D92000/README.md) | `010018E011D92000` | 1.3.0 | 11.4.3 | Unity 2019.4.27f1 IL2CPP | NVN |
 | [Pokémon Sword](0100ABF008968000/README.md) | `0100ABF008968000` | 1.3.2 | 7.3.2 | Game Freak's engine (before Trinity) | NVN |

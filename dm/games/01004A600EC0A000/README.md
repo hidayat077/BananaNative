@@ -1,0 +1,46 @@
+# Immortals Fenyx Rising (`01004A600EC0A000`)
+
+Base game 1.3.4 (the `.nup` meta block; NCM version 720896), SDK 10.4.0, NVN, Ubisoft's Anvil engine with Havok and Wwise. The dump is one base package, no updates and no add-ons: three code modules (`main`, `rtld`, `sdk`) and a RomFS of 615 files, 16.35 GB — 372 `.forge` world archives, 132 `.webm` videos, 109 Wwise `.pck` files and the root `ShaderDataNVN.bin`. The profile was made from a survey of the user's own `.nup`, read in place; **bring-up is still open** — no Mac, iPhone or Android run has been made.
+
+## What it needs
+
+| Setting | Where | Why |
+|---|---|---|
+| `modules main sdk` | [`game.tsv`](game.tsv) | `main` imports only from `sdk`; there is no `subsdk` on this build |
+| `romfs_marker ShaderDataNVN.bin` | `game.tsv` | the root shader archive, present in every copy of the game |
+| `zip_store .forge:.pck:.webm` | `game.tsv` | those files are already compressed or media |
+| `mem_reserve`, `mem_alias`, `mem_stack`, `app_pool` | `game.tsv` | the survey's provisional split: the NPDM declares 8 MB of system resource and `main` never sets a heap, so the game maps its memory itself in a 4.375 GB alias region; refine after a real boot |
+| `sys_resource 0x800000` | `game.tsv` | the NPDM declares 8 MB of system resource, enabling virtual address memory |
+| `shader_groups ShaderDataNVN=global` | `game.tsv` | `ShaderDataNVN.bin` in `global`; per-level `.forge` shaders in `other` |
+| [`dual_want.tsv`](dual_want.tsv) | profile | `03cbd63fe553b97c` writes colour output 1 blended with a `SRC1` factor |
+| `status bring-up` | [`readiness.tsv`](readiness.tsv) | the launcher warns that the game may stop or draw wrongly; nothing has been tested on a phone yet |
+
+SDK 10.4.0 is much older than Mario's SDK 16: NVN object sizes, API versions and service layouts differ, so any boot failure must be checked against [NVN objects](../../../docs/reference/nvn-objects.md) rather than assumed to be the game's own code. The survey's rewrite-site census is in the work folder (see Survey).
+
+## Shaders
+
+`ShaderDataNVN.bin` (27.8 MB) is a set of Ubisoft **GPUCODEONLY** code-only archives. Each is a 0x10-byte header followed by a code area, a four-byte record and the control section that names the code length at `+0x704`. Graphics code areas begin with `0x12345678`; compute ones are headerless and their stage comes from the control's thread group at `+0x748`. The first blob holds headed code and the later ones headerless code; both pair by the same rule. This needed a new general reader in `shader_split.py` ([shaders.md](../../../docs/reference/shaders.md#ubisofts-gpucodeonly-shader-archives)), with `test_gpu_codeonly.py` covering both forms.
+
+A further 20,311 distinct shaders live inside `scimitar` `.forge` archives (`DataNX_*_nvn.forge`, `DataNX_*_patch_01.forge`, `dlc_*/*.forge`, 56 files total) inside `THFIRE` (`33 aa fb 57 99 fa 04 10`, Oodle codec 10) compressed chunks (`dm/gfx/tools/forge.py` + `shader_split.py`).
+
+The full split reads **22,889 distinct shaders** (905 compute, 15 domain, 95 geometry, 11 hull, 8,871 pixel, 12,992 vertex; 2,578 `global` and 20,311 `other`) with no `[RED]` lines, matching all 46 programs previously captured by `DM_NVN_SHDUMP=1`. There are no vertex / pixel variation pairs: every program is a single stage, so the split supplies no pairing table. The Vulkan build translates all **22,889 / 22,889** shaders into **26,515** `spirv-val`-valid SPIR-V modules (`150.4 MB` `dmsh_vk.lib`, `600.7 MB` before compression).
+
+## Survey
+
+The survey did not extract the 17 GB `.nup`: `01004A600EC0A000-work/make_survey_dump.py` beside it writes a folder dump whose RomFS files are **sparse** (real sizes and real 32-byte headers, no game data), so `build_ipa_from_nsp.py --survey-only` could read the ExeFS, the manifest, the rewrite-site census and the imports in place; `profile_guess.py` also read the `.nup`'s package paths directly. The report is `01004A600EC0A000-work/survey-dump/01004A600EC0A000_survey/survey.md`. The shader split then read the `.nup` directly; no game file was copied into the repository.
+
+## Found on this game
+
+- **Ubisoft's GPUCODEONLY shader archives**: first game with this container; the reader in `shader_split.py` is general ([shaders.md](../../../docs/reference/shaders.md#ubisofts-gpucodeonly-shader-archives)).
+- **Ubisoft Anvil `.forge` `THFIRE` Oodle shader extraction** (`dm/gfx/tools/forge.py`, `shader_split.py`, `OodleNeed.java`): recovered the remaining 20,311 shaders (`46/46` of the missing shaders captured by `DM_NVN_SHDUMP=1`).
+- **A bind wider than 32 handles**: the first phone run logged `[RED] bind handle count 49` tens of thousands of times; the host now records such a bind in consecutive chunks ([nvn-objects.md](../../../docs/reference/nvn-objects.md#a-bind-wider-than-32-handles)).
+- **Sparse virtual pool buffer aliasing on Android** (`hle_nvn.c` `mtl_vpool_map`, `vka_mem.c`): resolves virtual pool addresses (`0x4015c6c298` / `0x73...`) to their placed physical pool segments for GPU buffers, buffer copies, texel buffers, `gmem_map`, and host CPU reads.
+- **`dual_want.tsv`**: `03cbd63fe553b97c` blends with `SRC1`.
+
+## First phone run (2026-11-27, Turnip v27, build `4c1d0ce`)
+
+Reached the frame loop and held about 30 fps for 1,790 frames, then the GPU device was lost at frame 2,069 (~147 s): `[RED] vk: GPU hang: the present's submission returned -4`, with 174 draws in the stuck submission. This has the shape of [a GPU hang or lost device in warm play](../../../docs/reference/rendering.md#a-gpu-hang-or-lost-device-in-warm-play-android-open), whose cause is still open on other games too; no conclusion yet for this game. The same run also logged 32 distinct shader keys as `not in the shader library`, plus storage buffers, buffer copies, and buffer textures in virtual pool `0x4015c6c298` outside placed guest RAM. Subsequent runs showed that skipping compute dispatches (`DM_VK_DISPATCH_SKIP=0,100000`, even with `DM_VK_EVENT_WAIT=1`) passed the 205-draw / 101-render-pass scene without device loss (`-4`), pointing the hang to a compute dispatch (possibly affected by the missing shaders or unmapped virtual-pool storage buffers). A second run on build `00f59e8d` confirmed the bind fix: `[RED] bind handle count` is gone. `DM_NVN_SHDUMP=1` captured 46 missing shaders, later found in the `.forge` `THFIRE` Oodle blocks (`forge.py`). Still open: re-testing on the phone with the full 22,889-shader library and virtual-pool buffer aliasing to check whether the compute `-4` hang clears.
+
+## Status
+
+Profile, shader tables, docs and the Android game list are in place; the docs / Android game-list checks and all 83 shader-split Python tests pass. A code-only pack from the `.nup` (`pack_android.py --no-shaders`) rewrote both modules with no `[RED]` lines, but the Vulkan shader library, the APK and any phone run have not been made. Bring-up on the Mac and a phone run on the system driver and a Turnip driver are still open, as in [03-bringup](../../../docs/agents/03-bringup.md) and [06-dev-loop](../../../docs/agents/06-dev-loop.md#checking-a-change-for-android).

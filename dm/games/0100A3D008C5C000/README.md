@@ -1,18 +1,21 @@
 # Pokémon Scarlet (`0100A3D008C5C000`)
 
-Base game 1.0.0 (v0), SDK 13.3.5, Game Freak's Trinity engine on NVN.
-Playable on the Mac: language and character selection, the academy opening,
-the native Bink movie, getting up in the bedroom, walking downstairs and
-through the living room and kitchen, camera control, dialogue and save/reload.
-The unsigned 1.0.0 IPA is built (~7.0 GB); iPhone testing is pending.
-Only 1.0.0 is registered, and the profile's shader tables come from v0.
-When the dump folder also contains updates, build the supported version with
-`scripts/build_ipa_from_nsp.py <dump folder> -p v0` (add
-`--platform mac` for a Mac build). The builder otherwise selects the newest
-supplied version. The supplied 4.0.0 update is damaged and remains unsupported
-(see [Files and builds](#files-and-builds)).
-[Pokémon Violet](../01008F6008C5E000/README.md) is its twin: the same `sdk`
-and `subsdk0` builds and the same shader tables, with a `main` of its own.
+The registered build is 4.0.0 (v786432), SDK 13.3.13, Game Freak's Trinity
+engine on NVN (`main` `421c5411…`, `sdk` `bb560bdf…`). The supplied `.nup` holds
+this 4.0.0 code as its `base` package: its metadata says version 4.0.0 and both
+ExeFS build IDs match the profile's `build` row. An earlier damaged update
+supply is described in [Files and builds](#files-and-builds).
+On the earlier 1.0.0 build, playable on the Mac: language and character
+selection, the academy opening, the native Bink movie, getting up in the
+bedroom, walking downstairs and through the living room and kitchen, camera
+control, dialogue and save/reload. The unsigned 1.0.0 IPA is built (~7.0 GB);
+iPhone testing is pending.
+Build with `scripts/build_ipa_from_nsp.py <dump folder>` (add `--platform mac`
+for a Mac build). The builder packs the newest supplied version; the profile
+supplies the registered 4.0.0 build rows for the code in this `.nup`.
+[Pokémon Violet](../01008F6008C5E000/README.md) is its 1.0.0 twin: on that
+build it shares the `sdk` and `subsdk0` builds and the shader tables, with a
+`main` of its own. Violet's 4.0.0 is not registered.
 
 ## Memory
 
@@ -64,10 +67,11 @@ game's own Oodle decoder extract them. Chain `157e1b96c8da`, profile inputs
 bindings. The complete build supplies the stamped `c1_full.tsv` and
 `cb_extent.tsv`; no shader override is needed.
 
-The 4.0.0 split aborts on 195 malformed active Trinity packs in the damaged
-input described [below](#files-and-builds). Full 4.0.0 shader coverage and an
-update IPA have not been produced. Its partial startup used the base shader
-libraries and reported missing update shader keys.
+The earlier damaged input aborted the 4.0.0 split on 195 malformed active
+Trinity packs (see [below](#files-and-builds)); its partial startup used the
+base shader libraries and reported missing update shader keys. The current
+`.nup` supplies that content as `base`: its Android shader build compiled all
+35,937 keys with no failures.
 
 ### Pipeline preparation depth
 
@@ -184,7 +188,7 @@ existing [per-depth-mode entry-point mechanism](../../../docs/reference/shaders.
   The host supplies the imports from Nintendo's movie module `subsdk0`.
 - The complete, CRC-checked 1.0.0 IPA remains preserved at
   `<NSP folder>/PokemonScarlet-1.0.0.ipa`.
-- **Blocked: supplied update 4.0.0 (v786432) has erased payload bytes.**
+- **Blocked (earlier supply): the 4.0.0 update (v786432) had erased payload bytes.**
   Independent checks trace 2,633 invalid 16 KB data blocks to three all-zero
   ciphertext ranges in the original NSP: 2,629 blocks in `arc/data.trpfs`
   and four in `audio/wwise/bin/Switch/DEMO.bnk`. The ranges below use absolute
@@ -222,9 +226,9 @@ existing [per-depth-mode entry-point mechanism](../../../docs/reference/shaders.
   outside this release. That partial startup reached the language screen
   through frame 3,475 using base shaders; it was not gameplay validation.
   The investigation is preserved under the work folder's `update4/` and
-  `release-1.0.0/before-scope-trim/`. No 4.0.0 build or cuts are registered in
-  this profile. An intact update source is required for its full shader build
-  and gameplay validation.
+  `release-1.0.0/before-scope-trim/`. Those experimental cuts stayed out of the
+  release; the 4.0.0 code builds above are now the profile's registered build,
+  and the current `.nup` supplies the same code as its `base` package.
 - The supplied DLC is a licence-only NSP, with no data to extract.
 
 ## Threads

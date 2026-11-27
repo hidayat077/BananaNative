@@ -33,3 +33,7 @@ __attribute__((visibility("default"))) int nxhost_overlay_state(void);
 // (DM_VK_DRIVER, read at the first call in the process: set it before). Its own instance, no device; callable before nxhost_main. 0 = facts written, 1 = an "error=" line
 // says why the facts stop there, -1 = no buffer
 __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n);
+// Boot #1 shader pre-compile progress (vka_pso.c): returns 1 while active, 0 when idle/finished; lock-free atomics safe for UI polling
+__attribute__((visibility("default"))) int nxhost_precompile_status(int *compiled, int *total, uint64_t *elapsed_ms);
+// Requests early termination of Boot #1 shader pre-compile (saves current atomic checkpoint and enters gameplay)
+__attribute__((visibility("default"))) void nxhost_precompile_skip(void);

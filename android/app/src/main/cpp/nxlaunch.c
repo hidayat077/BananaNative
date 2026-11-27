@@ -647,3 +647,20 @@ JNIEXPORT jstring JNICALL Java_dev_nxnative_android_Native_skipStatus(JNIEnv *en
     if (nxhost_skip_status) nxhost_skip_status(buf, sizeof buf);
     return (*env)->NewStringUTF(env, buf);
 }
+#pragma weak nxhost_precompile_status
+#pragma weak nxhost_precompile_skip
+JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_precompileStatus(JNIEnv *env, jclass cls, jlongArray out) {
+    (void)cls;
+    if (!nxhost_precompile_status) return JNI_FALSE;
+    int compiled = 0, total = 0; uint64_t elapsed_ms = 0;
+    int active = nxhost_precompile_status(&compiled, &total, &elapsed_ms);
+    if (out && (*env)->GetArrayLength(env, out) >= 3) {
+        jlong v[3] = {(jlong)compiled, (jlong)total, (jlong)elapsed_ms};
+        (*env)->SetLongArrayRegion(env, out, 0, 3, v);
+    }
+    return active ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_precompileSkip(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    if (nxhost_precompile_skip) nxhost_precompile_skip();
+}

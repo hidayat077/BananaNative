@@ -299,6 +299,7 @@ DM_OOT_SHADOW_RANGE	friendly	Graphics	Shadow range	the game is slow in a field o
 DM_OOT_TEXTURE_POOL_X2	developer	Memory			text			both							
 DM_OOT_WIDE_KEEP	developer	Diagnostics			text			both							
 DM_OPMODE	developer	Game			text			both							
+DM_OPUS_SDK	developer	Audio			text			both							
 DM_OVERLAY	developer	Game			text			both							
 DM_PACKER_COMMIT	developer	Diagnostics			text			both							
 DM_PAD_DEADZONE	developer	Input			text			both							
@@ -469,10 +470,12 @@ DM_VK_AFF_REPLAY	developer	Diagnostics			text			both
 DM_VK_BANDS	developer	Graphics			text			both							
 DM_VK_BAR_KEEP	developer	Diagnostics			text			both							
 DM_VK_BAR_NARROW	developer	Graphics			text			both							
+DM_VK_BC_ALIAS	developer	Graphics			text			both							
 DM_VK_BC_RT	developer	Graphics			text			both							
 DM_VK_BIGIMG_MB	developer	Diagnostics			text			both							
 DM_VK_BIND_LOG	developer	Diagnostics			text			both							
 DM_VK_BISECT	developer	Diagnostics			text			both							
+DM_VK_BOOT_PRECOMPILE	developer	Graphics			text		On on Turnip where GPL independent sets are active; off on other drivers	both							
 DM_VK_CAPTURE	internal	Diagnostics			text			both						Mac or iOS only	
 DM_VK_CHUNK	developer	Graphics			text			both							
 DM_VK_CHUNK_PASS	developer	Graphics			text			both							
@@ -502,7 +505,9 @@ DM_VK_DRV_MEMO	developer	Memory			text			both
 DM_VK_DRV_STAMP	developer	Graphics			text			both							
 DM_VK_DS_FIRST_HERE	developer	Graphics			text			both							
 DM_VK_DYN_FILTER	developer	Diagnostics			text			both							
+DM_VK_DYNAMIC_STATE	developer	Graphics			text		On where the device has it	both							
 DM_VK_EAGER_TEX	developer	Diagnostics			text			both							
+DM_VK_EDS3	developer	Graphics			text		On on Turnip where the device has it; off on other drivers	both							
 DM_VK_ENC	developer	Graphics			text			both							
 DM_VK_ENC_BATCH	developer	Graphics			text			both							
 DM_VK_ENC_SPIN	developer	Performance			text			both							
@@ -511,6 +516,7 @@ DM_VK_EVENT_GATE	developer	Graphics			text			both
 DM_VK_EVENT_LOG	developer	Diagnostics			text			both							
 DM_VK_EVENT_PARK_MS	developer	Diagnostics			text			both							
 DM_VK_EVENT_WAIT	developer	Graphics			text			both							
+DM_VK_FAM_EVICT	developer	Graphics			text			both							
 DM_VK_FB_LOOP	developer	Diagnostics			text			both							
 DM_VK_FD_ALIAS	developer	Graphics			text			both							
 DM_VK_FG	developer	Graphics			text			both							
@@ -535,6 +541,8 @@ DM_VK_GATE_EVENT	developer	Graphics			text			both
 DM_VK_GMEM_REACH	developer	Diagnostics			text			both							
 DM_VK_GPL	developer	Graphics			text			both							
 DM_VK_GPL_GIVEUP	developer	Graphics			text			both							
+DM_VK_GPL_LTO	developer	Graphics			text		Off	both							
+DM_VK_GPL_PRECOMPILE	developer	Graphics			text		On on Turnip where the device has GPL; off on other drivers	both							
 DM_VK_GPL_PROBE	developer	Diagnostics			text			both							
 DM_VK_GPUPROF	developer	Diagnostics			text			both							
 DM_VK_GPUPROF_LIST	developer	Diagnostics			text			both							
@@ -637,6 +645,7 @@ DM_VK_PACE_PROF	developer	Diagnostics			text			both
 DM_VK_PARTLOG	developer	Diagnostics			text			both							
 DM_VK_PASS_CLEARS	developer	Graphics			text			both							
 DM_VK_PASS_KEEP	developer	Graphics			text			both							
+DM_VK_PASS_THROTTLE	developer	Diagnostics			text			both							
 DM_VK_PCACHE	developer	Diagnostics			text			both							
 DM_VK_PCACHE_KEEP	developer	Memory			text			both							
 DM_VK_PCACHE_SAVE_S	developer	Memory			text			both							
@@ -653,6 +662,7 @@ DM_VK_PLACE_PART_MB	developer	Diagnostics			text			both
 DM_VK_PLACE_SHADER_POOLS	developer	Memory			text			both							
 DM_VK_POOL_EAGER	developer	Graphics			text			both							
 DM_VK_POOL_FB	developer	Memory			text			both							
+DM_VK_POOL_FB_CLEAR	developer	Diagnostics			text			both							
 DM_VK_POOL_FB_EARLY	developer	Diagnostics			text			both							
 DM_VK_POOL_SLOT_BIND	developer	Diagnostics			text			both							
 DM_VK_PREFAULT	developer	Diagnostics			text			both							
@@ -689,6 +699,7 @@ DM_VK_RANGE_WATCH_LINES	developer	Diagnostics			text			both
 DM_VK_RC_LOG	developer	Diagnostics			text			both							
 DM_VK_RC_LOG_FROM	developer	Diagnostics			text			both							
 DM_VK_RC_QUERY_MEM	developer	Diagnostics			text			both							
+DM_VK_RD_GW	developer	Graphics			text			both							
 DM_VK_RD_SPLIT	developer	Graphics			text			both							
 DM_VK_RD_TOUCH	developer	Graphics			text			both							
 DM_VK_READTEXELS	developer	Graphics			text			both							

@@ -1540,27 +1540,7 @@ public final class MainActivity extends Activity {
             where.setPadding(dp(4), 0, dp(4), 0);
             return;
         }
-        // What the dump holds: base, updates, DLC (DumpLayout.contents, read off the main thread: a .nup's TOC is hashed)
-        Ui.add(content, Ui.section(this, Tx.s(R.string.home_game_files)), 16);
-        LinearLayout files = Ui.add(content, Ui.listCard(this), 6);
-        TextView reading = Ui.small(this, Tx.s(R.string.home_reading_the_game_files));
-        reading.setPadding(dp(10), dp(10), dp(10), dp(10));
-        files.addView(reading);
-        new Thread(() -> {
-            List<DumpLayout.Item> items = DumpLayout.contents(new File(g.gameDir), Profile.of(g.titleId));
-            runOnUiThread(() -> {
-                if (isFinishing()) return;
-                files.removeAllViews();
-                for (DumpLayout.Item it : items) {
-                    String emoji = it.kind.equals("base") ? "🎮" : it.kind.equals("update") ? "⬆️" : it.kind.equals("dlc") ? "🧩" : "⚠️";
-                    Ui.Setting s = new Ui.Setting(this, emoji, it.title, null).value(it.detail);
-                    if (it.kind.equals("problem")) s.status(it.title);
-                    s.view.setClickable(false);
-                    s.view.setFocusable(false);
-                    files.addView(s.view);
-                }
-            });
-        }, "nx-game-files").start();
+        ShaderCacheUi.section(this, content, g, this::refresh);
         Ui.add(content, Ui.section(this, Tx.s(R.string.home_pack)), 16);
         LinearLayout pack = Ui.add(content, Ui.listCard(this), 6);
         if (Ondevice.isDump(new File(g.gameDir)) && noProfile == null)
@@ -1760,6 +1740,7 @@ public final class MainActivity extends Activity {
         if (SaveUi.documentResult(this, request, data.getData())) return;
         if (CheatsUi.documentResult(this, request, data.getData())) return;
         if (ModsUi.documentResult(this, request, data.getData())) return;
+        if (ShaderCacheUi.documentResult(this, request, data.getData())) return;
         if (request == PICK_NUP_HERE) { nupHere(data.getData()); return; }
         if (request == PICK_NUP) {
             String p = PathUtil.documentToPath(data.getData());

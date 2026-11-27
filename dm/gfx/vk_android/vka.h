@@ -12,6 +12,7 @@
 #include "../../host/dm.h"
 #include "vka_fmtlist.h"
 #include "vka_soft.h"
+#include "vka_eds.h"
 
 #define VLOG(...) LOG("[vk] " __VA_ARGS__)
 #define VRED(...) LOG("[RED] vk: " __VA_ARGS__)
@@ -40,7 +41,7 @@
     X(vkCreateDescriptorSetLayout) X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool) X(vkAllocateDescriptorSets) X(vkUpdateDescriptorSets) \
     X(vkCreateSwapchainKHR) X(vkDestroySwapchainKHR) X(vkGetSwapchainImagesKHR) X(vkAcquireNextImageKHR) X(vkQueuePresentKHR) \
     X(vkGetRefreshCycleDurationGOOGLE) X(vkGetPastPresentationTimingGOOGLE) \
-    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyPipeline) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) \
+    X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyPipeline) X(vkCreatePipelineCache) X(vkDestroyPipelineCache) X(vkMergePipelineCaches) X(vkGetPipelineCacheData) \
     X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkResetDescriptorPool) X(vkCreateBufferView) X(vkDestroyBufferView) \
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers2) X(vkCmdBindIndexBuffer) \
     X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdDrawIndirect) X(vkCmdDrawIndexedIndirect) X(vkCmdDispatch) X(vkCmdDispatchIndirect) X(vkCmdDispatchBase) \
@@ -49,6 +50,9 @@
     X(vkCmdSetAttachmentFeedbackLoopEnableEXT) \
     X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetDepthBias) X(vkCmdSetDepthBiasEnable) \
     X(vkCmdSetRasterizerDiscardEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetBlendConstants) X(vkCmdSetLineWidth) \
+    X(vkCmdSetLogicOpEXT) X(vkCmdSetPatchControlPointsEXT) \
+    X(vkCmdSetDepthClampEnableEXT) X(vkCmdSetPolygonModeEXT) X(vkCmdSetRasterizationSamplesEXT) X(vkCmdSetSampleMaskEXT) \
+    X(vkCmdSetAlphaToCoverageEnableEXT) X(vkCmdSetLogicOpEnableEXT) X(vkCmdSetColorBlendEnableEXT) X(vkCmdSetColorBlendEquationEXT) X(vkCmdSetColorWriteMaskEXT) \
     X(vkCmdPushDescriptorSetKHR) X(vkCmdSetVertexInputEXT) X(vkCmdPushConstants) X(vkCmdDrawMeshTasksEXT) X(vkCmdDrawMeshTasksIndirectEXT) \
     X(vkCmdDrawIndirectCount) X(vkCmdDrawIndexedIndirectCount)
 #define VKA_DECL(f) PFN_##f f;
@@ -119,6 +123,12 @@ typedef struct {
     int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (default off; DM_VK_FB_LOOP=1 turns them on): a draw sampling its own attachment says so (vka_draw.c)
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
+    int gpl_indep;                                  // DM_VK_GPL_PRECOMPILE: 4-set VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT (Set 0 pre-raster, Set 1 FS, Set 2 pool, Set 3 pool-fb)
+    int boot_precompile;                            // DM_VK_BOOT_PRECOMPILE: Boot #1 pre-compile of all dmsh_vk.lib GPL parts + Compute + persistent cache
+    int gpl_lto;                                    // DM_VK_GPL_LTO (default 0): retain link-time optimization info in GPL parts & queue optimized full pipeline
+    int topo_unrestricted;                          // VkPhysicalDeviceExtendedDynamicState3PropertiesEXT.dynamicPrimitiveTopologyUnrestricted
+    int dyn_state_on;                               // DM_VK_DYNAMIC_STATE (default 1; 0 disables optional EDS2/EDS3 and defaults vin_dyn off)
+    uint32_t eds_mask;                              // VKA_EDS_* bitmask of active optional EDS2/EDS3 dynamic states (vka_eds.h)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
     uint32_t subgroup_req_stages;                   // VkShaderStageFlags a pipeline may pin the subgroup size in (requiredSubgroupSizeStages; 0 without subgroupSizeControl)
     int subgroup_quad;                              // VK_SUBGROUP_FEATURE_QUAD_BIT (quad operations; in the fragment stage wherever it has subgroup operations)
@@ -250,6 +260,8 @@ uint64_t vks_bytes_nolock(void);
 // Guest RAM is anonymous memory; each NVN memory pool becomes placed Vulkan memory at its own address when it is made (mtl_pool_add) and anonymous again when it goes (mtl_pool_del):
 // the CPU and GPU see the same bytes. A placed range is a segment with one VkBuffer over it
 int vka_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off, VkDeviceAddress *bda);   // 1 = [addr, addr + len) lies in one placed segment
+int vka_read(uint64_t addr, void *out, size_t len);   // 1 = [addr, addr + len) lies in placed physical memory (resolving virtual pool aliases) and was copied to out
+uint64_t vka_canon(uint64_t addr);                    // resolves a mapped virtual pool address to its physical guest address, else returns addr
 int vka_mem_release(uintptr_t lo, uintptr_t hi);    // the host gives [lo, hi) back: segments there are given back first; 0 = the host releases the range itself
 uint64_t vka_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   // bytes from addr (at most len) in the segment that holds addr, 0 = none
 extern _Atomic uint32_t vka_seg_gen;   // vka_mem.c: bumped when a segment's buffer is destroyed (views over segment buffers are made again)
@@ -386,6 +398,7 @@ void vka_tex_uploads(VkCommandBuffer cb);
 VkDescriptorSet vka_bindless_set(void);
 uint32_t vka_bindless_tex_slots(void);   // the sampled-image pool table's length, 0 without the pool set (vka_tex.c; vka_shader.c tabpool clamps IDs to it)
 VkDescriptorSetLayout vka_bindless_layout(void);
+void vka_bindless_init(void);
 void vka_barrier_at(VkCommandBuffer cb, const char *file, int line);   // a full memory barrier (the replay orders every transfer op after the previous one)
 void vka_xp_ts(VkCommandBuffer cb, int site);   // DM_VK_XP_TS experiment (vka_tex.c)
 #define vka_barrier(cb) vka_barrier_at(cb, __FILE_NAME__, __LINE__)   // the site names the step that ends there in DM_VK_GPUPROF's report (vka_gprof.c)
@@ -487,6 +500,8 @@ typedef struct vka_shader {
     uint8_t has_ubo_ind;                // 1 if any binding record reads a handle or pointer from a uniform buffer (*_UBO)
     uint16_t tp_ubo_mask;               // bitmask of uniform buffer slots (< 16) holding VKA_BF_TABPOOL handle tables
     uint64_t chash;                     // its library entry's hash (vka_shlib_entry_hash), for the pipeline cache's stamp (vka_pso.c); 0 = not in the library
+    struct vka_shader *mono_peer;       // un-remapped peer shader (no 4-set opDecorate DescriptorSet remap) for 1-set monolithic pipelines
+    uint8_t is_mono;
 } vka_shader;
 // An instanced variant's key (vka_draw.c's instanced runs): its base shader's key XOR this. It is no key of the shader library, and the variant depends on the uniform
 // binding it was made for, which a pipeline key does not record: the prewarm list records the base key and the binding instead (pwrec.inst)
@@ -501,6 +516,8 @@ unsigned vka_layer_gen(void);   // raised when the run-time shader layer (vka_sh
 void vka_layer_poll(void);    // once a second from the present path: maps a layer the packer made (cheap: one stat a second)
 void vka_prog_put(uint64_t serial, const vka_progsh *ps);   // a program made by the host itself (the selftest), by serial
 vka_shader *vka_shader_make(const vka_shlib *L, uint64_t key);
+vka_shader *vka_shader_mono_peer(vka_shader *s);
+void vka_shader_mono_scope(int on);
 const char *vka_shader_lib_path(void);   // the library file loaded ("" before or without one): this version's, or an older one of the same ABI or of a compatible older one (vka_abi_compat.h)
 uint64_t vka_shader_lib_id(void);        // the library played, as a hash of its header (loaded first if needed); 0 = none (the pipeline cache file's stamp, vka_pso.c)
 #include "vka_pckeep.h"
@@ -515,6 +532,7 @@ VkShaderModule vka_shader_module(vka_shader *s, int variant);
 vka_shader *vka_shader_remap(vka_shader *s, uint64_t map);   // a pixel shader with its inputs moved / made constant for another mesh module (vka_spv_input_remap), NULL = refused
 void vka_shader_pfb_hook(void);               // vka_dev.c, once the device's functions are loaded: modules made from then on report their pool reads (vka_tex_pfb_flags)
 VkShaderModule vka_shader_pfb_pick(VkShaderModule m, int a2c, int alpha_func);   // a pixel module given early tests, or its twin without them for a pipeline that needs late ones
+int vka_shader_pfb_has_twin(VkShaderModule m);   // 1 if m has a late-test twin (for keep_a2c in vka_eds_runtime_key)
 uint32_t vka_shader_sg_pin(int stage);              // DMSH_VK_STAGE_*: the subgroup size its subgroup shaders' pipelines require (vka_shader.c sg_plan), 0 = none
 VkShaderModule vka_shader_cs_module(vka_shader *s);  // a compute shader's module: its DMSH_VK_MOD_SHUFFLE_LDS one where the device takes it (vka_shader.c shuffle_plan) and the shader does not run as one-invocation subgroups, else the base
 VkShaderModule vka_shader_spec_module(vka_shader *s, int gl);   // a task / mesh module with its specialization constants folded (GL depth = gl), VK_NULL_HANDLE = not needed
@@ -533,18 +551,54 @@ int vka_shader_fout_retyped(vka_shader *s, uint32_t umask, uint32_t smask);   //
 #define VKA_FS_RETYPE 4                  // vka_gkey.fs_variant beyond the library's pixel DMSH_VK_MOD_* (4 is DMSH_VK_MOD_SHUFFLE_LDS of compute modules, never a pixel variant): the base pixel module with its float outputs at integer attachments retyped (vka_pso.c fout_masks)
 VkShaderModule vka_shader_vin_module(vka_shader *s, uint32_t umask, uint32_t smask);   // the base module with those float inputs as uvec4 / ivec4 (vka_spv_vin_retype), made once per masks   // the module of that variant (DMSH_VK_MOD_*), made on first use; VK_NULL_HANDLE = the entry has none   // the shader of key in library L (the game's, or the selftest's own); NULL = not there or refused
 int vka_shlib_check_all(const vka_shlib *L);   // every module and compute pipeline of L made (DM_VK_SHLIB_CHECK=1): the failures
+const vka_shlib *vka_shader_lib(void);         // loads the game's library if needed and returns it (NULL if empty/missing)
+typedef struct {
+    const dmsh_vk_entry *e;
+    const dmsh_vk_bind *b;
+    VkShaderModule mods[6];
+    VkShaderModule pfb_late;
+    int tf_fx;
+    int gs_fx;
+} vka_precomp_sh;
+int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
+void vka_shader_precomp_destroy(vka_precomp_sh *sh);
+const dmsh_vk_bind *vka_shader_precomp_binds(const vka_shlib *L, const dmsh_vk_entry *e);
+VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
+VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
+VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask);
+struct vka_svar_rec;
+VkShaderModule vka_shader_precomp_variant(const vka_shlib *L, const dmsh_vk_entry *e, const void *svar_rec, VkShaderModule *out_base_to_destroy);
+uint64_t vka_shader_frontend_xlate_count(void);
+void vka_shader_retype_counts(uint64_t *fout, uint64_t *vin, uint64_t *tex, uint64_t *cs_img);
 int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out);   // host-visible memory for the process's life (c1 bytes, the support and zero buffers)
 
 // ---------- Pipelines (vka_pso.c) ----------
 #include "vka_gkey.h"   // vka_gkey: what a graphics pipeline is made from beyond its shaders and layout (Vulkan-free: the prewarm list's unit test reads it)
-typedef struct { VkPipelineLayout layout; VkDescriptorSetLayout set0; int push; uint32_t ndesc; } vka_layout;
-int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out);   // the set-0 layout of these stages' records with the pools' set 1
+typedef struct {
+    VkPipelineLayout layout;
+    VkPipelineLayout pre_layout;
+    VkPipelineLayout fs_layout;
+    VkDescriptorSetLayout set0;
+    VkDescriptorSetLayout set1;
+    int push;
+    int indep;
+    uint32_t ndesc;
+    uint32_t fs_ndesc;
+} vka_layout;
+int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out);   // the set-0/set-1 layout of these stages' records with the pools
+int vka_layout_mono_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out);          // compact 1-set layout for monolithic graphics pipelines
+int vka_layout_pre_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out);           // standalone pre-raster layout (Set 0 + pools) for GPL precompile
+int vka_layout_fs_of(vka_shader *fs, vka_layout *out);                              // standalone fragment layout (Set 1 + pools) for GPL precompile
 VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k);
+VkPipeline vka_gfx_pipeline_ex(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay_mono, const vka_gkey *k, int *out_hybrid, vka_layout *out_lay);
 extern _Thread_local int vka_pso_wait;   // after vka_gfx_pipeline / vka_cs_pipeline_frame returned NULL: 1 when the pipeline is still being made in the background (the draw waits, no failure), 0 when it was refused
 VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay);
 VkPipeline vka_cs_pipeline_frame(vka_shader *cs, const vka_layout *lay);   // a dispatch's: VK_NULL_HANDLE while the asynchronous threads make it (DM_VK_CS_ASYNC), the dispatch then skipped
 VkPipeline vka_cs_pipeline_img(vka_shader *cs, const vka_layout *lay, uint64_t umask, uint64_t smask);   // with vka_shader_img_module's module; VK_NULL_HANDLE = none (then the base one)
 void vka_pso_save(int force);         // the VkPipelineCache and the prewarm list to the app's files (DM_TEMP): due DM_VK_PCACHE_SAVE_S after the last save, on the saver thread; force 1 = now, on the caller's; 2 = after a slow pipeline (due DM_VK_PCACHE_SAVE_SLOW_S)
+void vka_pso_prepare(void);
+void vka_pso_pause(int on);
+void vka_pso_telemetry_line(char *out, size_t n);
 void vka_pso_waits(uint64_t *save_ns, uint64_t *pw_wait_ns);   // cumulative: time saving the cache (saver thread), the frame path's waits for a prewarm thread making the same pipeline
 double vka_gpu_span_ms(uint64_t f);   // frame f's submissions from first part's start to last part's end (vka_exec.c); -1 = not in yet
 
@@ -590,6 +644,8 @@ int vka_cpu_read(uint64_t addr, void *out, size_t n);   // guest bytes as the CP
 int vka_mdi_gpu(int indexed, uint32_t n, uint32_t stride);   // 1 = an indirect-count multi-draw of n records stride bytes apart is made whole at its first record, its count read by the GPU (vka_draw.c)
 int vka_mdx_args(uint64_t ind, VkBuffer *b, VkDeviceSize *o);   // an indirect mesh draw's {x, y, z} arguments: its record's {count, 1, 1} copy (vka_exec.c)
 int vka_rp_depth(uint32_t *w, uint32_t *h);   // the open pass has a depth / stencil attachment (*w, *h: its render area)
+int vka_rp_color_count(void);                // number of colour attachments in the open pass (0 if none open)
+int vka_pass_throttle_skip(uint64_t serial); // DM_VK_PASS_THROTTLE=<hex>:<N>: 1 = skip draw/clear for this target this frame
 void vka_rp_zstats(char *b, size_t n);   // DM_VK_PARTLOG: the depth state of the part's draws into depth targets, then reset (vka_draw.c)
 void vka_rp_note_ts(void);                 // a timestamp recorded (inside the open pass or not: counted when one is open)
 int vka_rp_game_barrier(uint32_t bits);                // a game barrier (OP_BARRIER): 1 = taken inside the open pass (DM_VK_BAR_KEEP), 0 = the caller ends the pass and records a full barrier

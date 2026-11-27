@@ -568,6 +568,20 @@ int main(void) {
         EXPECT("single texture bind recording, other pools: 0x20 + END", 0x28, P(nvnCommandBufferGetCommandMemoryUsed)(&c2));
         memcpy(&rh, m, sizeof rh); bh = bind_rec(rh.op, m + 8, &bt);
         EXPECT("the bind adds the pool bases: stage, slot 2, texture 1241, sampler 8", 1, bh->stage == NVN_SHADER_STAGE_VERTEX && bh->first == 2 && bh->h[0] == (8u << 20 | 1241));
+        // A bind wider than one 32-handle record becomes records with consecutive slots instead of being dropped (Immortals Fenyx Rising binds 49)
+        P(nvnCommandBufferAddCommandMemory)(&c2, &mp, 0, sizeof m); P(nvnCommandBufferBeginRecording)(&c2);
+        NVNtextureHandle many[49]; for (int i = 0; i < 49; i++) many[i] = (NVNtextureHandle)(i + 1);
+        P(nvnCommandBufferBindTextures)(&c2, NVN_SHADER_STAGE_FRAGMENT, 0, 49, many);
+        P(nvnCommandBufferEndRecording)(&c2);
+        EXPECT("49 texture handles: two records (32 + 17) + END", (8 + 16 + 8 * 32) + (8 + 16 + 8 * 17) + 8, P(nvnCommandBufferGetCommandMemoryUsed)(&c2));
+        { int ok = 1; size_t at = 0;
+          for (int part = 0; part < 2; part++) { int k = part ? 17 : 32;
+              op_hdr r; memcpy(&r, m + at, sizeof r); p_bind_handles tmp; const p_bind_handles *b = bind_rec(r.op, m + at + 8, &tmp);
+              ok &= r.op == OP_BIND_TEX && b->stage == NVN_SHADER_STAGE_FRAGMENT && b->first == 32 * part && b->n == k;
+              for (int i = 0; i < k; i++) ok &= b->h[i] == (uint64_t)(32 * part + i + 1);
+              at += 8 + 16 + 8 * k;
+          }
+          EXPECT("wide bind: two records with their own slot ranges and handles", 1, ok); }
         // State binds carry only the state object's bytes: 16 bytes for a 4-byte state, 24 for an 8-byte one or the multisample state
         P(nvnCommandBufferAddCommandMemory)(&c2, &mp, 0, sizeof m); P(nvnCommandBufferBeginRecording)(&c2);
         NVNpolygonState ps; P(nvnPolygonStateSetDefaults)(&ps); P(nvnPolygonStateSetCullFace)(&ps, NVN_FACE_BACK); P(nvnCommandBufferBindPolygonState)(&c2, &ps);

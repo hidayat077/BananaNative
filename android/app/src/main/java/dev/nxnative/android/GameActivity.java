@@ -305,6 +305,14 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     /** The last DM_VK_DRIVER= line of the run's environment (null: none, the system driver): which driver runs, for the notice's log line */
     private static String runDriverLine;
     private FrameLayout rootView;
+    private LinearLayout precompileBox;
+    private TextView precompileTitle, precompileDetail;
+    private android.widget.ProgressBar precompileBar;
+    private android.widget.Button precompileSkipBtn;
+    private final long[] precompileOut = new long[3];
+    private boolean precompileSeen;
+    private int precompileIdleTicks;
+    private final Runnable precompileRun = this::precompileTick;
     private final Runnable skipRun = this::skipTick;
     private void skipTick() {
         if (skipShown || rootView == null) return;
@@ -317,6 +325,90 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     private void skipStart() {
         ui.removeCallbacks(skipRun);
         if (!skipShown) ui.postDelayed(skipRun, 30000);
+    }
+    private void precompileStart() {
+        ui.removeCallbacks(precompileRun);
+        precompileIdleTicks = 0;
+        ui.postDelayed(precompileRun, 200);
+    }
+    private void precompileTick() {
+        if (rootView == null || isFinishing()) return;
+        boolean active = Native.precompileStatus(precompileOut);
+        if (active) {
+            precompileSeen = true;
+            int compiled = (int) Math.max(0, precompileOut[0]);
+            int total = (int) Math.max(1, precompileOut[1]);
+            long secs = Math.max(0, precompileOut[2] / 1000L);
+            int pct = Math.min(100, (int) ((compiled * 100L) / total));
+            if (precompileBox == null) {
+                float dp = getResources().getDisplayMetrics().density;
+                int pad = Math.round(16 * dp);
+                LinearLayout box = new LinearLayout(this);
+                box.setOrientation(LinearLayout.VERTICAL);
+                box.setPadding(pad, pad, pad, pad);
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setColor(0xDD14161A);
+                bg.setCornerRadius(12 * dp);
+                box.setBackground(bg);
+
+                TextView title = new TextView(this);
+                title.setTextColor(Color.WHITE);
+                title.setTextSize(15);
+                title.setTypeface(Typeface.DEFAULT_BOLD);
+                box.addView(title);
+
+                android.widget.ProgressBar bar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                bar.setIndeterminate(false);
+                LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(Math.round(280 * dp), LinearLayout.LayoutParams.WRAP_CONTENT);
+                blp.topMargin = Math.round(8 * dp);
+                box.addView(bar, blp);
+
+                TextView detail = new TextView(this);
+                detail.setTextColor(0xB3FFFFFF);
+                detail.setTextSize(12);
+                LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                dlp.topMargin = Math.round(6 * dp);
+                box.addView(detail, dlp);
+
+                android.widget.Button skip = new android.widget.Button(this);
+                skip.setText(Tx.s(R.string.game_compiling_shaders_skip));
+                skip.setOnClickListener(v -> {
+                    v.setEnabled(false);
+                    Native.precompileSkip();
+                    Native.note("boot shader precompile: skip requested by user");
+                });
+                LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                slp.topMargin = Math.round(10 * dp);
+                slp.gravity = Gravity.END;
+                box.addView(skip, slp);
+
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                rootView.addView(box, panel != null ? rootView.indexOfChild(panel) : rootView.getChildCount(), lp);
+                precompileBox = box;
+                precompileTitle = title;
+                precompileBar = bar;
+                precompileDetail = detail;
+                precompileSkipBtn = skip;
+            }
+            precompileTitle.setText(Tx.s(R.string.game_compiling_shaders, compiled, total));
+            precompileBar.setMax(total);
+            precompileBar.setProgress(Math.min(compiled, total));
+            precompileDetail.setText(Tx.s(R.string.game_compiling_shaders_detail, pct, secs));
+            ui.postDelayed(precompileRun, 200);
+            return;
+        }
+        if (precompileSeen) {
+            if (precompileBox != null) {
+                rootView.removeView(precompileBox);
+                precompileBox = null;
+                precompileTitle = null;
+                precompileBar = null;
+                precompileDetail = null;
+                precompileSkipBtn = null;
+            }
+            return;
+        }
+        if (++precompileIdleTicks < 75) ui.postDelayed(precompileRun, 200);
     }
     /**
      * The shader layer (LayerWatch): shaders the game asked for and its prepared library lacks are built while it runs; "Building shaders (N)" is shown small and see-through at the very top middle
@@ -864,6 +956,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                     + ": window " + Prefs.startWindow(this, id) + ", scene " + (sceneName.isEmpty() ? "the game's own palette" : sceneName);
             pinStart();   // Use fast cores (Game settings, Settings)
             skipStart();
+            precompileStart();
             layerStart();
             // DM_TEST_CRASH (a test crash, ExitWatch): the test app only
             if (!testApp() && user.removeIf(kv -> kv.startsWith("DM_TEST_CRASH="))) unknownNotes.add("[nxlaunch] DM_TEST_CRASH not taken: the test app only");
@@ -1039,6 +1132,7 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
         ui.postDelayed(this::fpsTick, 500);
         pinStart();
         skipStart();
+        precompileStart();
         layerStart();
     }
 

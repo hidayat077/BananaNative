@@ -65,7 +65,7 @@ class OodleNeedTest(unittest.TestCase):
 
     def test_containers(self):
         for body in ('romfs_marker\tarc/data.trpfs\n', '# Oodle PKZ\n', '# gfpak archives\n',
-                     '# Unreal .pak files\n', 'ROMFS_MARKER\tARC/DATA.TRPFS\n'):
+                     '# Unreal .pak files\n', 'zip_store\t.forge:.pck:.webm\n', 'ROMFS_MARKER\tARC/DATA.TRPFS\n'):
             with self.subTest(body=body):
                 self.assertTrue(self.needed({'main.patched.bin': ''}, {'game.tsv': body}))
         self.assertFalse(self.needed({'main.patched.bin': ''}, {'game.tsv': 'name\tTest\nromfs_marker\tdata.bin\n'}))

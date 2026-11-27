@@ -1,0 +1,173 @@
+// Unit tests for Canonical vs Runtime pipeline key masking and dirty-state tracking (dm/gfx/vk_android/vka_eds.h).
+#include <stdio.h>
+#include <string.h>
+#include "../../gfx/vk_android/vka_eds.h"
+#include "../../gfx/vk_android/vka_pwlist.h"
+#include "../../gfx/vk_android/vka_gpl_stats.h"
+
+static int fails;
+#define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+
+static vka_gkey make_canon(uint8_t en, uint8_t src, uint8_t dst, uint8_t mask, uint8_t poly, uint8_t samples, uint8_t a2c, uint8_t dclamp, uint8_t logen, uint8_t logop) {
+    vka_gkey k;
+    memset(&k, 0, sizeof k);
+    k.cfmt[0] = 37;
+    k.dfmt = 126;
+    k.ncolor = 1;
+    k.samples = samples;
+    k.topo = 3;
+    k.poly_mode = poly;
+    k.depth_clamp = dclamp;
+    k.a2c = a2c;
+    k.logic_en = logen;
+    k.logic_op = logop;
+    k.att[0].en = en;
+    k.att[0].src = src;
+    k.att[0].dst = dst;
+    k.att[0].op = 0;
+    k.att[0].srca = 1;
+    k.att[0].dsta = 0;
+    k.att[0].opa = 0;
+    k.att[0].mask = mask;
+    return k;
+}
+
+static void test_zero_mask_identity(void) {
+    vka_gkey c = make_canon(1, 6, 7, 0xf, 1, 4, 1, 1, 1, 3);
+    vka_gkey rt;
+    vka_eds_runtime_key(&c, 0, 0, &rt);
+    CHECK(memcmp(&c, &rt, sizeof c) == 0, "eds_mask=0 must preserve canonical key byte-for-byte");
+}
+
+static void test_full_eds_deduplication(void) {
+    vka_gkey c1 = make_canon(0, 1, 0, 0xf, 0, 1, 0, 0, 0, 3);
+    vka_gkey c2 = make_canon(1, 6, 7, 0x7, 1, 4, 1, 1, 1, 12);
+    pwrec r1 = {.kind = VKA_PW_GFX, .klen = (uint32_t)offsetof(vka_gkey, va), .key = {0x11, 0x22}};
+    pwrec r2 = r1;
+    CHECK(vka_pw_hash(&r1, &c1) != vka_pw_hash(&r2, &c2), "canonical hashes must differ");
+
+    uint32_t full = VKA_EDS2_MASK | VKA_EDS3_MASK;
+    vka_gkey rt1, rt2;
+    vka_eds_runtime_key(&c1, full, 0, &rt1);
+    vka_eds_runtime_key(&c2, full, 0, &rt2);
+    size_t len = offsetof(vka_gkey, va);
+    CHECK(memcmp(&rt1, &rt2, len) == 0, "full EDS2+EDS3 mask must deduplicate dynamic state fields");
+    CHECK(vka_pw_fnv(&rt1, len, VKA_PW_FNV0) == vka_pw_fnv(&rt2, len, VKA_PW_FNV0), "runtime hashes must match");
+}
+
+static void test_partial_mask_and_keep_a2c(void) {
+    vka_gkey c = make_canon(1, 6, 7, 0x5, 2, 4, 1, 1, 1, 9);
+    vka_gkey rt;
+    vka_eds_runtime_key(&c, VKA_EDS_COLOR_WRITE_MASK | VKA_EDS_POLYGON_MODE | VKA_EDS_ALPHA_TO_COV, 1, &rt);
+    CHECK(rt.att[0].mask == 0, "write mask zeroed");
+    CHECK(rt.poly_mode == 0, "poly_mode zeroed");
+    CHECK(rt.a2c == 1, "keep_a2c=1 must preserve a2c for pool-feedback early/late twin");
+    CHECK(rt.att[0].en == 1 && rt.att[0].src == 6 && rt.att[0].dst == 7, "unmasked blend state preserved");
+    CHECK(rt.samples == 4 && rt.depth_clamp == 1 && rt.logic_en == 1 && rt.logic_op == 9, "unmasked fields preserved");
+}
+
+static void test_vin_static_preserved(void) {
+    vka_gkey c = make_canon(0, 1, 0, 0xf, 0, 1, 0, 0, 0, 3);
+    c.vin_static = 1;
+    c.va[0].used = 1; c.va[0].fmt = 100; c.va[0].offset = 12;
+    c.vb[0].used = 1; c.vb[0].stride = 32;
+    vka_gkey rt;
+    vka_eds_runtime_key(&c, VKA_EDS2_MASK | VKA_EDS3_MASK, 0, &rt);
+    CHECK(rt.vin_static == 1 && rt.va[0].fmt == 100 && rt.vb[0].stride == 32, "vin_static=1 preserves va/vb");
+}
+
+static void test_dirty_tracker(void) {
+    uint64_t dirty = 0;
+    vka_dyn_dirty_all(&dirty);
+    CHECK(dirty == VKA_DYN_ALL, "dirty_all sets all bits");
+    CHECK(vka_dyn_is_dirty(dirty, VKA_DYN_BLEND_EN), "blend_en dirty initially");
+    CHECK(vka_dyn_is_dirty(dirty, VKA_DYN_WRITE_MASK), "write_mask dirty initially");
+    vka_dyn_clear(&dirty, VKA_DYN_BLEND_EN);
+    CHECK(!vka_dyn_is_dirty(dirty, VKA_DYN_BLEND_EN), "blend_en cleared");
+    CHECK(vka_dyn_is_dirty(dirty, VKA_DYN_WRITE_MASK), "write_mask still dirty");
+}
+
+static void test_topo_unrestricted_and_gpl_stats(void) {
+    vka_gkey c1 = make_canon(0, 1, 0, 0xf, 0, 1, 0, 0, 0, 3);
+    vka_gkey c2 = c1; c2.topo = 5;   // TRIANGLE_FAN
+    vka_gkey c3 = c1; c3.topo = 10;  // PATCH_LIST
+    vka_gkey r1, r2, r3;
+    vka_eds_runtime_key(&c1, VKA_EDS_TOPO_UNRESTRICTED, 0, &r1);
+    vka_eds_runtime_key(&c2, VKA_EDS_TOPO_UNRESTRICTED, 0, &r2);
+    vka_eds_runtime_key(&c3, VKA_EDS_TOPO_UNRESTRICTED, 0, &r3);
+    CHECK(r1.topo == 0 && r2.topo == 0, "non-patch topology masked when topo_unrestricted=1");
+    CHECK(r3.topo == 10, "PATCH_LIST topology preserved");
+
+    CHECK(!vka_binding_is_fs(0) && !vka_binding_is_fs(255), "VS/GS bindings are not FS");
+    CHECK(vka_binding_is_fs(256) && vka_binding_is_fs(319), "FS bindings [256..319] detected");
+    CHECK(!vka_binding_is_fs(320) && !vka_binding_is_fs(382), "CS/MEMU_ARENA bindings are not FS");
+
+    vka_gpl_lat st = {0};
+    for (uint32_t i = 1; i <= 1100; i++) vka_gpl_lat_add(&st, (uint64_t)i * 1000ull);
+    double avg = 0, p99 = 0, mx = 0;
+    vka_gpl_lat_summary(&st, &avg, &p99, &mx);
+    CHECK(st.count == 1100 && mx == 1100.0 && avg > 550.0 && avg < 551.0, "avg/max latency (%g, %g)", avg, mx);
+    CHECK(p99 >= 1085.0 && p99 <= 1100.0, "p99 latency over wrapped ring (%g)", p99);
+}
+
+static void test_m5_retype_suppression_and_telemetry(void) {
+    const uint8_t ckind[8] = {0, 1, 2, 1, 0, 0, 0, 0};   // 0=float, 1=uint, 2=sint, 3=uint
+    const uint8_t fcomp[8] = {0xf, 0xf, 0xf, 0x0, 0xf, 0xf, 0xf, 0xf};
+    uint32_t fu = 99, fsm = 99;
+    // Target 0: float (ignored); Target 1: uint + chmask!=0 -> fu|=2; Target 2: sint + chmask=0 -> suppressed; Target 3: fcomp=0 -> suppressed
+    uint32_t chmask = (0xfu << 0) | (0xfu << 4) | (0x0u << 8) | (0xfu << 12);
+    vka_fout_retype_masks(4, ckind, 0x0f, 0x0000 /* all float */, chmask, fcomp, &fu, &fsm);
+    CHECK(fu == (1u << 1) && fsm == 0, "masked-off sint/fcomp=0 suppressed (fu=%#x fsm=%#x)", fu, fsm);
+
+    // Non-zero mask on target 2 triggers sint retype; already-uint FS output (fout_types!=0 on target 1) does not trigger retype
+    chmask |= (0x1u << 8);
+    vka_fout_retype_masks(4, ckind, 0x0f, (2u << 2) /* target 1 already uint */, chmask, fcomp, &fu, &fsm);
+    CHECK(fu == 0 && fsm == (1u << 2), "already-uint skipped, active sint flagged (fu=%#x fsm=%#x)", fu, fsm);
+
+    // Feedback classification: valid driver feedback + stage miss override + >=20ms heuristic + fallback
+    CHECK(vka_classify_compile_feedback(1, 1, 0, 0, 1, 400000ull) == 1, "valid cache hit (<20ms) -> rehydrate");
+    CHECK(vka_classify_compile_feedback(1, 1, 1, 0, 1, 400000ull) == 0, "stage miss overrides fb_all hit -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(1, 1, 1, 1, 1, 50000000ull) == 0, ">=20ms compile overrides hit -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(1, 0, 1, 1, 1, 100000ull) == 0, "valid cache miss -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 1, 1, 1, 400000ull) == 1, "all stages hit (<20ms) -> rehydrate");
+    CHECK(vka_classify_compile_feedback(0, 0, 1, 0, 1, 100000ull) == 0, "stage miss -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 400000ull) == 1, "fast cached fallback (<5ms) -> rehydrate");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 20000000ull) == 0, "slow cached fallback (>=5ms) -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 0, 100000ull) == 0, "no cache -> ir3 miss");
+
+    // Telemetry line formatting
+    vka_gpl_telemetry t = {
+        .ir3_compiler_miss = 0,
+        .gpl_fast_link_count = 42,
+        .gpl_fast_link_avg_us = 180.0,
+        .gpl_fast_link_p99_us = 390.0,
+        .gpl_fast_link_max_us = 410,
+        .pipeline_ram_rehydrate_count = 15,
+        .frontend_shader_translate_count = 0,
+        .retype_fout = 0, .retype_vin = 1, .retype_tex = 0, .retype_cs_img = 0,
+        .variant_manifest_loaded = 82,
+        .variant_manifest_precompiled = 82,
+        .variant_manifest_saved = 85,
+        .delta_retype_cache_bytes = 262144,
+    };
+    char buf[512];
+    int len = vka_gpl_telemetry_format(&t, buf, sizeof buf);
+    CHECK(len > 0 && strstr(buf, "ir3_compiler_miss=0") && strstr(buf, "gpl_fast_link_count=42") &&
+          strstr(buf, "gpl_fast_link_max_us=410") && strstr(buf, "pipeline_ram_rehydrate_count=15") &&
+          strstr(buf, "frontend_shader_translate_count=0") &&
+          strstr(buf, "variant_manifest_loaded=82") && strstr(buf, "variant_manifest_precompiled=82") &&
+          strstr(buf, "variant_manifest_saved=85") && strstr(buf, "delta_retype_cache_bytes=262144"),
+          "telemetry line: %s", buf);
+}
+
+int main(void) {
+    test_zero_mask_identity();
+    test_full_eds_deduplication();
+    test_partial_mask_and_keep_a2c();
+    test_vin_static_preserved();
+    test_dirty_tracker();
+    test_topo_unrestricted_and_gpl_stats();
+    test_m5_retype_suppression_and_telemetry();
+    printf("t_android_eds: %s\n", fails ? "FAILED" : "ok");
+    return fails != 0;
+}

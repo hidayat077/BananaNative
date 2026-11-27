@@ -1548,22 +1548,32 @@ NVN(nvnCommandBufferBindStorageBuffer, void, NVNcommandBuffer *c, NVNshaderStage
 NVN(nvnCommandBufferBindStorageBuffers, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNbufferRange *rg) {
     for (int i = 0; i < n; i++) { ssbo_slot_check(st, first + i); shp_bind(SHK_SSBO, rg[i].address, rg[i].size); *REC(c, OP_BIND_SSBO, p_bind_buf) = (p_bind_buf){st, first + i, rg[i].address, rg[i].size}; }
 }
-static p_bind_handles *bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) {
-    if (n < 0 || n > 32) { LOG("[RED] bind handle count %d", n); return NULL; }
-    p_bind_handles *r = RECN(c, op, p_bind_handles, h, n); r->stage = st; r->first = first; r->n = n; r->defer = 0; r->src = 0;
-    // The driver writes each handle into the c2 table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half of the 64-bit handle.
-    // EA SPORTS FC 27 binds separate textures with bit 32 set (0x1000001d1): read whole, its sampler ID was 4096, beyond any pool, where the GPU reads sampler 0
-    for (int i = 0; i < n; i++) r->h[i] = (uint32_t)h[i];
-    {   // this command buffer may have bound a pool other than the first: move its IDs to that pool's part of the table (handle: texture ID in bits 0-19, sampler ID from bit 20)
-        int tb = CB(c)->tex_base, sb = CB(c)->samp_base;
-        for (int i = 0; i < n && (tb || sb); i++) {
-            uint64_t v = r->h[i], tid = v & 0xfffff, sid = v >> 20;
-            if (op == OP_BIND_SAMP) { if (sid) r->h[i] = (sid + (uint64_t)sb) << 20; }
-            else { if (tid) tid += (uint64_t)tb; if (sid && op == OP_BIND_TEX) sid += (uint64_t)sb; r->h[i] = tid | sid << 20; }
+static p_bind_handles *bind_handles_(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h, int defer, uint64_t src) {
+    if (n < 0 || (n && !h)) { static int red; if (red++ < 8) LOG("[RED] bind handle count %d", n); return NULL; }
+    p_bind_handles *ret = NULL;
+    // A record holds at most 32 handles; NVN has 128 texture / sampler slots, so a wider bind becomes several records
+    // (Immortals Fenyx Rising binds 49 at once thousands of times a run: the old limit returned NULL and dropped them all).
+    for (int off = 0; off < n; ) {
+        int k = n - off > 32 ? 32 : n - off;
+        p_bind_handles *r = RECN(c, op, p_bind_handles, h, k);
+        r->stage = st; r->first = first + off; r->n = k; r->defer = defer; r->src = src ? src + 4 * (uint64_t)off : 0;
+        // The driver writes each handle into the c2 table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half of the 64-bit handle.
+        // EA SPORTS FC 27 binds separate textures with bit 32 set (0x1000001d1): read whole, its sampler ID was 4096, beyond any pool, where the GPU reads sampler 0
+        for (int i = 0; i < k; i++) r->h[i] = (uint32_t)h[off + i];
+        {   // this command buffer may have bound a pool other than the first: move its IDs to that pool's part of the table (handle: texture ID in bits 0-19, sampler ID from bit 20)
+            int tb = CB(c)->tex_base, sb = CB(c)->samp_base;
+            for (int i = 0; i < k && (tb || sb); i++) {
+                uint64_t v = r->h[i], tid = v & 0xfffff, sid = v >> 20;
+                if (op == OP_BIND_SAMP) { if (sid) r->h[i] = (sid + (uint64_t)sb) << 20; }
+                else { if (tid) tid += (uint64_t)tb; if (sid && op == OP_BIND_TEX) sid += (uint64_t)sb; r->h[i] = tid | sid << 20; }
+            }
         }
+        if (!ret) ret = r;
+        off += k;
     }
-    return r;
+    return ret;
 }
+static p_bind_handles *bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) { return bind_handles_(c, op, st, first, n, h, 0, 0); }
 // Image (writable texture): handle = texture pool index (GetImageHandle returns it as-is; RegisterImage writes the same table as RegisterTexture)
 NVN(nvnCommandBufferBindImages, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNimageHandle *h) {
     bind_handles(c, OP_BIND_IMG, st, first, n, (const uint64_t *)h);
@@ -1753,6 +1763,7 @@ static void gfx_leave(void) { dm_host_work--; pthread_mutex_lock(&g_susp_mu); g_
 void dm_gfx_enter(void) { gfx_enter(); }   // the same gate for the Vulkan layer's submits and presents (dm/gfx/vk)
 void dm_gfx_leave(void) { gfx_leave(); }
 __attribute__((weak)) void dm_keys_stop(void) {}   // hle_hid.c: drop the remaining DM_KEYS steps (DM_MARK_KEYS_STOP; the graphics unit tests have no scripted input)
+__attribute__((weak)) void mtl_resume(void) {}     // dm/gfx/vk_android/vka_exec.c: resume Boot #1 precompile workers on return from background
 __attribute__((weak)) void dm_vk_drain(void) {}   // dm/gfx/vk/hle_vk.m: wait for the Vulkan layer's queue (the graphics unit tests do not link it)
 __attribute__((weak)) void dm_gl_drain(void) {}   // dm/gfx/gl/hle_gl.m: the same for the GL layer
 void dm_gfx_suspend(int on) {
@@ -1761,7 +1772,7 @@ void dm_gfx_suspend(int on) {
     if (on) while (g_inflight_api) pthread_cond_wait(&g_susp_cv, &g_susp_mu);
     else pthread_cond_broadcast(&g_susp_cv);
     pthread_mutex_unlock(&g_susp_mu);
-    if (on) { dm_vk_drain(); dm_gl_drain(); mtl_drain(); LOG("[nvn] graphics suspended: in-flight GPU work drained"); } else LOG("[nvn] graphics resumed");   // the Vulkan and GL queues first: presents on the NVN queue wait for their frames
+    if (on) { dm_vk_drain(); dm_gl_drain(); mtl_drain(); LOG("[nvn] graphics suspended: in-flight GPU work drained"); } else { mtl_resume(); LOG("[nvn] graphics resumed"); }   // the Vulkan and GL queues first: presents on the NVN queue wait for their frames
 }
 // One submission at a time: the Metal replay keeps one command buffer and one upload batch for the submission in progress (nvn_mtl.m g_cb). Fire Emblem: Three Houses initializes two queues and
 // submits on both from two threads; the second submission arrived while the first was replaying and the host stopped with "submit re-entered" at the ninth frame. NVN orders work on different queues only
@@ -2737,7 +2748,11 @@ static uint8_t *vpool_reserve(pool_t *o) {   // → the reserved range, or NULL
 }
 static void vpool_drop(pool_t *o) {   // caller holds g_vp_mu
     struct vpool *v = o->vp; if (!v) return;
+#if !PLAT_APPLE
+    for (int k = 0; k < v->nrun; k++) mtl_vpool_map((uint64_t)(uintptr_t)(v->base + v->run[k].lo), 0, v->run[k].hi - v->run[k].lo);
+#else
     for (int k = 0; k < v->nrun; k++) mtl_pool_del(v->base + v->run[k].lo);
+#endif
     munmap(v->base, v->len);
     for (uint64_t l = 0; l < (v->size + (2u << 20) - 1) >> 21; l++) free(v->pt[l]);
     for (int i = 0; i < g_nvp; i++) if (g_vp[i] == v) { memmove(&g_vp[i], &g_vp[i + 1], (size_t)(g_nvp - 1 - i) * sizeof *g_vp); g_nvp--; break; }
@@ -2750,12 +2765,26 @@ static void vrun_set(struct vpool *v, uint64_t lo, uint64_t hi, int mapped) {
     for (int k = 0; k < v->nrun; k++) {
         uint64_t a = v->run[k].lo, b = v->run[k].hi;
         if (b < lo || a > hi || (!mapped && (b == lo || a == hi))) { if (nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = b; nn++; } continue; }   // untouched (an unmap leaves adjacent runs alone)
+#if PLAT_APPLE
         mtl_pool_del(v->base + a);
+#endif
         if (mapped) { if (a < mlo) mlo = a; if (b > mhi) mhi = b; continue; }   // joins the new run
-        if (a < lo && nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = lo; nn++; mtl_pool_add(v->base + a, lo - a); }   // what the unmap leaves on either side
-        if (b > hi && nn < NVRUN) { nl[nn][0] = hi; nl[nn][1] = b; nn++; mtl_pool_add(v->base + hi, b - hi); }
+        if (a < lo && nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = lo; nn++;
+#if PLAT_APPLE
+            mtl_pool_add(v->base + a, lo - a);
+#endif
+        }   // what the unmap leaves on either side
+        if (b > hi && nn < NVRUN) { nl[nn][0] = hi; nl[nn][1] = b; nn++;
+#if PLAT_APPLE
+            mtl_pool_add(v->base + hi, b - hi);
+#endif
+        }
     }
-    if (mapped && nn < NVRUN) { nl[nn][0] = mlo; nl[nn][1] = mhi; nn++; mtl_pool_add(v->base + mlo, mhi - mlo); }
+    if (mapped && nn < NVRUN) { nl[nn][0] = mlo; nl[nn][1] = mhi; nn++;
+#if PLAT_APPLE
+        mtl_pool_add(v->base + mlo, mhi - mlo);
+#endif
+    }
     if (nn == NVRUN) LOG("[RED] virtual pool %p: more than %d separate mapped runs", (const void *)v->pool, NVRUN);
     for (int a = 1; a < nn; a++) for (int b = a; b > 0 && nl[b][0] < nl[b - 1][0]; b--) { uint64_t t0 = nl[b][0], t1 = nl[b][1]; nl[b][0] = nl[b - 1][0]; nl[b][1] = nl[b - 1][1]; nl[b - 1][0] = t0; nl[b - 1][1] = t1; }
     v->nrun = nn; for (int k = 0; k < nn; k++) { v->run[k].lo = nl[k][0]; v->run[k].hi = nl[k][1]; }
@@ -2786,12 +2815,20 @@ static int vpool_map(struct vpool *v, const map_req *r) {   // caller holds g_vp
         return 1;
     }
     if (!r->phys) {   // unmap: inaccessible pages again
+#if !PLAT_APPLE
+        mtl_vpool_map((uint64_t)to, 0, r->size);
+#else
         if (mmap((void *)to, r->size, PROT_NONE, MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0) == MAP_FAILED) { LOG("[RED] virtual pool unmap %#lx+%#llx failed (errno %d)", (unsigned long)to, (unsigned long long)r->size, errno); return 0; }
+#endif
         vrun_set(v, (uint64_t)r->voff, (uint64_t)r->voff + r->size, 0); return 1;
     }
     uintptr_t from = (uintptr_t)ph->mem + (uintptr_t)r->poff;
 #if !PLAT_APPLE
-    (void)from; { static _Atomic int once; if (!atomic_exchange(&once, 1)) LOG("[RED] virtual pool %p: aliasing physical pool pages is not yet on Android (memfd / placed Vulkan memory, android/PORTING.md)", (const void *)v->pool); }
+    mtl_vpool_map((uint64_t)to, (uint64_t)from, r->size);
+    vrun_set(v, (uint64_t)r->voff, (uint64_t)r->voff + r->size, 1);
+    uint64_t end = (uint64_t)r->voff + r->size;
+    if (end >> 27 > v->top >> 27) LOG("[nvn] virtual pool %p: mapped up to %#llx (%d runs)", (const void *)v->pool, (unsigned long long)end, v->nrun);
+    if (end > v->top) v->top = end;
     return 1;
 #else
     vm_prot_t cur, max;
@@ -3229,8 +3266,7 @@ NVN(nvnCommandBufferBindTextures, void, NVNcommandBuffer *c, NVNshaderStage st, 
 //   passing the address of the handle field in the texture sampler object with a count of 1; command blocks are recorded once and submitted repeatedly, and the handle is written / replaced afterwards. The host used to copy the handles at recording (mostly 0),
 //   so every texture of the deferred lighting composite became the dummy texture 0 and the whole 3D picture was black. The address is recorded and the replay layer reads it when it reads the record (bh_fresh)
 NVN_NOPROTO(nvnCommandBufferBindTexturesDeferred, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNtextureHandle *h) {
-    p_bind_handles *r = bind_handles(c, OP_BIND_TEX, st, first, n, (const uint64_t *)h);
-    if (r && h) { r->defer = 1; r->src = (uint64_t)(uintptr_t)h; }
+    bind_handles_(c, OP_BIND_TEX, st, first, n, (const uint64_t *)h, 1, (uint64_t)(uintptr_t)h);   // every chunk reads its own range of src at replay
     if (CB(c)->tex_base || CB(c)->samp_base) ONCE_LOG("[RED] deferred-bound handles are read only at replay: the numbering base of this command buffer's bound descriptor pools is not added (pools %d / %d)", CB(c)->tex_base, CB(c)->samp_base);
 }
 NVN(nvnCommandBufferBindImage, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNimageHandle h) { uint64_t v = (uint64_t)h; bind_handles(c, OP_BIND_IMG, st, i, 1, &v); }

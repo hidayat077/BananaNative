@@ -28,7 +28,7 @@ final class OodleNeed {
             if (!tsv.isFile()) continue;
             try {
                 String text = new String(Files.readAllBytes(tsv.toPath()), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-                if (text.contains("trpfs") || text.contains("pkz") || text.contains("gfpak") || text.contains(".pak")) return true;
+                if (text.contains("trpfs") || text.contains("pkz") || text.contains("gfpak") || text.contains(".pak") || text.contains(".forge")) return true;
             } catch (IOException ignored) {
                 // A profile we cannot read is no reason to fail Prepare: the split says what it needs if so.
             }

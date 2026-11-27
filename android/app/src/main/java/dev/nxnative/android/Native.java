@@ -180,4 +180,8 @@ final class Native {
     static native int ndsrStatus();
     /** The skipped-work warning (vka_exec.c nxhost_skip_status): "<percent> <causes>" once the replay skipped a large share of the game's draws for causes of the GPU driver or for shaders missing from the pack, "" before or when it is off; SkipNotice reads it */
     static native String skipStatus();
+    /** Boot #1 shader pre-compile status (vka_pso.c nxhost_precompile_status): fills out[0]=compiled, out[1]=total, out[2]=elapsedMs; true while active. */
+    static native boolean precompileStatus(long[] out);
+    /** Requests early termination of Boot #1 shader pre-compile (saves checkpoint and enters gameplay). */
+    static native void precompileSkip();
 }

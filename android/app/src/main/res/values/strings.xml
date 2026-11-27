@@ -1435,4 +1435,21 @@
     <string name="game_info">Game Info</string>
     <string name="game_settings">Game Settings</string>
     <string name="game_misc">Misc</string>
+    <string name="game_compiling_shaders">Compiling shaders: %1$d / %2$d</string>
+    <string name="game_compiling_shaders_detail">First-time setup (%1$d%% · %2$ds)</string>
+    <string name="game_compiling_shaders_skip">Skip / Play Now</string>
+    <string name="game_compiled_shaders">Compiled shaders</string>
+    <string name="game_shader_cache_none">None yet</string>
+    <string name="game_shader_cache_complete">Complete</string>
+    <string name="game_shader_cache_partial">Partial (%1$d / %2$d)</string>
+    <string name="game_export_compiled_shaders">Export compiled shaders…</string>
+    <string name="game_import_compiled_shaders">Import compiled shaders…</string>
+    <string name="game_import_compiled_shaders_desc">A .zip or .bin shader cache file</string>
+    <string name="game_delete_compiled_shaders">Delete compiled shaders</string>
+    <string name="game_delete_compiled_shaders_desc">Forces a fresh shader compile on next boot</string>
+    <string name="game_delete_compiled_shaders_confirm">Delete all compiled shader caches for %1$s?</string>
+    <string name="game_shader_cache_deleted">Deleted %1$d shader cache file(s).</string>
+    <string name="game_shader_cache_exported">Exported %1$d shader cache file(s).</string>
+    <string name="game_shader_cache_imported">Imported %1$d shader cache file(s).</string>
+    <string name="game_shader_cache_failed">Shader cache failed: %1$s</string>
 </resources>
