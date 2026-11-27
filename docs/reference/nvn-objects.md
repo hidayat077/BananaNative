@@ -120,6 +120,13 @@ A game may tell NVN objects apart by their bytes, without an NVN call. A host re
 - **Fix:** a texture of a sparse pool takes its content as on Metal (`tex_from_storage`): a sampled one (not linear, compressible or an image) is gathered through the page table (`nvn_sparse_copy`, unmapped pages as 0), uploaded, and uploaded again when a mapping in its range or a physical page behind it changes (`nvn_sparse_since`, checked when the page table's generation or the dirty clock moves; `vka_img.vtrack`); the others start cleared. Nothing reads the reserved range itself.
 - **Found on:** [Mario Kart World](../../dm/games/0400C3F00006E000/README.md), on the arm64 emulator, 2 s into its first frames.
 
+### Sparse virtual pool buffers on the Vulkan replay
+
+- **Symptom:** Android: `[RED] virtual pool …: aliasing physical pool pages is not yet on Android`, followed by `[RED] vk: storage buffer at 0x73… is not in placed guest RAM`, `[RED] vk: buffer copy …: the source/destination is not in placed guest RAM`, and `[RED] vk: buffer texture ID …: its … bytes are not in placed guest memory`.
+- **Cause:** `vpool_map` in `hle_nvn.c` did not notify `vka_mem.c` when mapping physical pool pages into a sparse virtual pool's `PROT_NONE` reservation, so `vka_addr`, `vka_addr_run`, `mtl_pool_need`, and `vka_mem_chunks` missed every virtual address.
+- **Fix:** `vpool_map` and `vpool_drop` call `mtl_vpool_map(vaddr, paddr, size)` (`nvn_mtl.h`, `vka_mem.c`), maintaining a sorted virtual-to-physical run table (`g_vm`) that places underlying physical pools and resolves virtual addresses in `vka_addr`, `vka_addr_run`, `vka_mem_chunks`, `vka_read`, and `vka_canon` without touching the `PROT_NONE` reservation on the CPU.
+- **Found on:** [Immortals Fenyx Rising](../../dm/games/01004A600EC0A000/README.md), virtual pool `0x4015c6c298` (`0x73…` storage buffers, buffer copies, and buffer textures).
+
 ### A finalized sparse pool read through a registered texture
 
 - **Symptom:** Android: `CRASH sig=11` at a non-canonical address (`0x6db6db6db0ff0e`) in `vpool_at` ← `nvn_sparse_any` ← `upload_sparse_parts` ← `img_first_use` ← `vka_tex_get` ← `write_tex` ← `vka_tex_prepare` (`hle_nvn.c`, `vka_tex.c`), a few seconds after the first frames, right after `pool memory … given back as anonymous memory`.

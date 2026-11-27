@@ -149,7 +149,7 @@ int vka_state_op(vka_dstate *d, uint32_t op, const void *a) {
         uint64_t h[32]; memcpy(h, b->h, 8 * (size_t)b->n);
         if (b->defer && b->src && b->n) {   // BindTexturesDeferred: the handles as memory holds them now (nvn_mtl.m bh_fresh); placed guest memory read directly, else word by word through the fault-safe read
             uint32_t w[32];
-            if (vka_addr(b->src, 4u * (uint64_t)b->n, NULL, NULL, NULL)) { memcpy(w, (const void *)(uintptr_t)b->src, 4 * (size_t)b->n); for (int k = 0; k < b->n; k++) h[k] = w[k]; }
+            if (vka_read(b->src, w, 4u * (uint64_t)b->n)) { for (int k = 0; k < b->n; k++) h[k] = w[k]; }
             else if (!plat_mem_read(b->src, w, 4 * (size_t)b->n)) for (int k = 0; k < b->n; k++) h[k] = w[k];   // one read for the run (they are in the game's heap; profile p2: 3.4 % in process_vm_readv)
             else for (int k = 0; k < b->n; k++) if (!plat_mem_read(b->src + 4u * k, &w[k], 4)) h[k] = w[k];   // a run across an unreadable page: word by word
         }
@@ -1057,7 +1057,7 @@ static VkPrimitiveTopology topo_class(VkPrimitiveTopology t) {   // the pipeline
 
 // ---------- Guest memory as descriptors ----------
 static int cpu_read(uint64_t addr, void *out, size_t n) {   // guest bytes as the CPU sees them now, overlaid with any inline updates deferred in the open pass
-    int ok = vka_addr(addr, n, NULL, NULL, NULL) ? (memcpy(out, (const void *)(uintptr_t)addr, n), 1) : !plat_mem_read(addr, out, n);
+    int ok = vka_read(addr, out, n) ? 1 : !plat_mem_read(addr, out, n);
     if (ok && UB.n) ub_apply(addr, out, n);
     return ok;
 }

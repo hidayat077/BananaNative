@@ -1493,8 +1493,8 @@ static int rc_known(uint64_t a, uint64_t *v) {   // a counter at a: 1 = known (*
         if (e->kind == RCK_CONST) return 0;
         if (!rc_sub_done(e->sub)) { if (e->kind != RCK_TS) return 0; *v = 0; return 1; }
     }
-    if (!vka_addr(a, 8, NULL, NULL, NULL)) return 0;
-    memcpy(v, (const void *)(uintptr_t)a, 8); return 1;
+    if (!vka_read(a, v, 8)) return 0;
+    return 1;
 }
 // DM_VK_RC_LOG=<lines>: render-conditional diagnostics, `rc` lines from the replay thread: each counter reset and report (type, address, submission), each condition (mode, the
 // two counters as memory holds them at record time, the last report posted to each address, its submission and whether post_run has written it yet: "pending" = the value read
@@ -1503,7 +1503,7 @@ static struct { uint64_t addr, sub; uint32_t type; } g_rcr[16384];   // the last
 static struct { int on, skip; uint32_t nd, nc, nx; uint64_t k[3]; char clr[200]; size_t cl; } g_rcb;
 static int rcr_find(uint64_t a) { for (uint32_t i = (uint32_t)(a >> 4) & 16383, k = 0; k < 16384; k++, i = (i + 1) & 16383) if (g_rcr[i].addr == a || !g_rcr[i].addr) return (int)i; return -1; }
 static void rcl_side(char *b, size_t n, uint64_t a) {
-    uint64_t v = 0; int mem = vka_addr(a, 8, NULL, NULL, NULL) != 0; if (mem) memcpy(&v, (const void *)(uintptr_t)a, 8);
+    uint64_t v = 0; int mem = vka_read(a, &v, 8);
     const rc_ent *e = rcm_find(a); int pend = e && !rc_sub_done(e->sub);
     int i = rcr_find(a);
     if (i < 0 || !g_rcr[i].addr) { snprintf(b, n, "%#llx mem %llu%s, no report seen", (unsigned long long)a, (unsigned long long)v, mem ? "" : " (unmapped)"); return; }

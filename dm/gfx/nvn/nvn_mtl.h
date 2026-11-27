@@ -19,6 +19,7 @@ void mtl_pool_del(const void *mem);
 // yet, or the parts of a large pool that [addr, addr+len) touches (vka_mem.c; why names the ask in its log lines); Metal wraps every pool at mtl_pool_add, so this is a no-op there
 void mtl_pool_need(const void *addr, uint64_t len, const char *why);
 void mtl_pool_need_parts(const void *addr, uint64_t len, const char *why);
+void mtl_vpool_map(uint64_t vaddr, uint64_t paddr, uint64_t size);   // paddr == 0: unmap
 int nvn_shader_pools_deferred(void);                 // hle_nvn.c "Shader-code pools": 1 = SHADER_CODE pools are not placed for their address (DM_VK_PLACE_SHADER_POOLS=0)
 int nvn_shader_code_readable(uint64_t a, uint64_t n);   // hle_nvn.c: [a, a+n) lies in one live shader-code pool of its table (read on the CPU as guest memory)
 // memory pool Finalize: evict the textures built on this pool (pool object address) from the storage-sharing table

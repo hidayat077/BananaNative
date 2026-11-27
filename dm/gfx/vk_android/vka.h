@@ -260,6 +260,8 @@ uint64_t vks_bytes_nolock(void);
 // Guest RAM is anonymous memory; each NVN memory pool becomes placed Vulkan memory at its own address when it is made (mtl_pool_add) and anonymous again when it goes (mtl_pool_del):
 // the CPU and GPU see the same bytes. A placed range is a segment with one VkBuffer over it
 int vka_addr(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off, VkDeviceAddress *bda);   // 1 = [addr, addr + len) lies in one placed segment
+int vka_read(uint64_t addr, void *out, size_t len);   // 1 = [addr, addr + len) lies in placed physical memory (resolving virtual pool aliases) and was copied to out
+uint64_t vka_canon(uint64_t addr);                    // resolves a mapped virtual pool address to its physical guest address, else returns addr
 int vka_mem_release(uintptr_t lo, uintptr_t hi);    // the host gives [lo, hi) back: segments there are given back first; 0 = the host releases the range itself
 uint64_t vka_addr_run(uint64_t addr, uint64_t len, VkBuffer *buf, VkDeviceSize *off);   // bytes from addr (at most len) in the segment that holds addr, 0 = none
 extern _Atomic uint32_t vka_seg_gen;   // vka_mem.c: bumped when a segment's buffer is destroyed (views over segment buffers are made again)

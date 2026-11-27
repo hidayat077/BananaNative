@@ -2487,6 +2487,36 @@ def ttdat_shaders(path, rel, entries, out):
             out.extend(ttdat_programs(data, label))
 
 
+FORGE = b'FORGE'   # job tag: Ubisoft Anvil scimitar .forge archives (forge.py)
+def forge_jobs(files, parts=64):
+    import forge
+    found, consumed, jobs = [], set(), []
+    for path, rel in files:
+        if not path.lower().endswith('.forge'): continue
+        try: ents = forge.entries(path)
+        except (ValueError, OSError, struct.error) as e:
+            jobs.append((path, rel, (FORGE, None, str(e)))); consumed.add(path); continue
+        if ents is None: continue
+        consumed.add(path); found.append((path, rel, ents))
+    step = max(sum(e[2] for _, _, ents in found for e in ents) // parts, 1)
+    for path, rel, ents in found:
+        batch, size = [], 0
+        for e in ents:
+            batch.append(e); size += e[2]
+            if size >= step: jobs.append((path, rel, (FORGE, tuple(batch)))); batch, size = [], 0
+        if batch: jobs.append((path, rel, (FORGE, tuple(batch))))
+    return jobs, consumed
+
+
+def forge_shaders(path, rel, entries, out):
+    import forge
+    with open(path, 'rb') as f:
+        for entry in entries:
+            label = f'/{rel}#{entry[1]:x}'
+            for block in forge.read(f, entry, oodle, '/' + rel):
+                if GPUCODEONLY in block: gpu_codeonly_shaders(block, label, out)
+
+
 def ttdat_programs(data, label):
     """TT's serialized programs: newer code is adjacent; older programs put
     reflection data between the control section and headed code. Bound that
@@ -3836,6 +3866,10 @@ def scan_file_in(args):
         if args[2][1] is None: red(args[2][2])
         ttdat_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees
+    if len(args) > 2 and args[2][0] == FORGE:   # Ubisoft Anvil scimitar .forge archives (forge_jobs)
+        if args[2][1] is None: red(args[2][2])
+        forge_shaders(path, rel, args[2][1], found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if head[:4] == NLG_DICT:
         nlg_shaders(path, '/' + rel, found)
         return rel, uniq_keys(found), var_pairs(found), trees
@@ -4438,8 +4472,9 @@ def scan_jobs(files, want=None, mains=(), nros=()):
     fb_jobs, fbs = frostbite_jobs(files)   # EA SPORTS FC 27's Frostbite bundles, Oodle Leviathan decoded by the game's own decoder in the Mac host
     pd_jobs, pdats = pdat_jobs(by_head)
     tt_jobs, ttdats = ttdat_jobs(files)   # TT Games' DATs: only indexed .nnx_shaders, Oodle through the game's own decoder
-    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs + tt_jobs
-    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats and p not in ttdats]
+    fg_jobs, forges = forge_jobs(by_head)   # Ubisoft Anvil .forge archives, THFIRE Oodle blocks decoded into GPUCODEONLY shaders
+    big += pak_jobs + hg_jobs + tr_jobs + ue_jobs + bd_jobs + arc_jobs + pz_jobs + ck_jobs + cr_jobs + zp_jobs + ah_jobs + fb_jobs + pd_jobs + tt_jobs + fg_jobs
+    files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in hg_paks and p not in trp and p not in uep and p not in bdts and p not in arcs and p not in pkzs and p not in cpks and p not in cras and p not in zips and p not in arhs and p not in fbs and p not in pdats and p not in ttdats and p not in forges]
     if want is not None: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]
     return big, files
 

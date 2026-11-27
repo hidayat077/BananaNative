@@ -968,8 +968,7 @@ static uint8_t *gw_content(const uint8_t *mem, uint64_t n, uint64_t *seen) {
 int vka_tex_gw_read(uint64_t addr, uint64_t n, void *out) {
     if (!n) return 1;
     if (out) {
-        if (vka_addr(addr, n, NULL, NULL, NULL)) memcpy(out, (const void *)(uintptr_t)addr, (size_t)n);
-        else dm_guest_read_mapped(out, (uintptr_t)addr, (size_t)n);
+        if (!vka_read(addr, out, (size_t)n)) dm_guest_read_mapped(out, (uintptr_t)addr, (size_t)n);
     } else if (!vka_addr(addr, n, NULL, NULL, NULL) && dm_guest_unmapped((uintptr_t)addr, n)) return 0;
     pthread_mutex_lock(&g_tmu);
     uint64_t a = addr, b = a + n, done = vka_done(); uint8_t *c = out; int ok = 1;
@@ -985,7 +984,7 @@ int vka_tex_gw_read(uint64_t addr, uint64_t n, void *out) {
                 if ((!x->fence || x->fence > done) && x->lo < w->src + (hi - w->lo) && x->hi > w->src + (lo - w->lo)) { ok = 0; break; }
             }
             if (!ok) break;
-            if (c) dm_guest_read_mapped(c + (lo - a), (uintptr_t)(w->src + (lo - w->lo)), (size_t)(hi - lo));
+            if (c) { uint64_t sa = w->src + (lo - w->lo); if (!vka_read(sa, c + (lo - a), (size_t)(hi - lo))) dm_guest_read_mapped(c + (lo - a), (uintptr_t)sa, (size_t)(hi - lo)); }
         } else if (c && w->kind == GW_FILL) {
             for (uint64_t k = lo; k < hi; k++) { uint32_t v = w->value; c[k - a] = ((const uint8_t *)&v)[(k - w->lo) & 3]; }
         } else if (c && w->kind == GW_UPDATE) {
@@ -2815,6 +2814,9 @@ int vka_tex_copy_mirror_b2t(vka_img *im, const tex_t *t, unsigned lv_tex, unsign
     const uint8_t *src_ptr = NULL;
     if (sp == 1) {
         if (!(tmp = malloc(span)) || !vka_tex_gw_read(src_addr, span, tmp)) { free(tmp); nvn_pool_use(0); return -1; }
+        src_ptr = tmp;
+    } else if (vka_canon(src_addr) != src_addr) {
+        if (!(tmp = malloc(span)) || !vka_read(src_addr, tmp, (size_t)span)) { free(tmp); nvn_pool_use(0); return -1; }
         src_ptr = tmp;
     } else {
         if (!vka_addr(src_addr, span, NULL, NULL, NULL) && dm_guest_unmapped((uintptr_t)src_addr, span)) { nvn_pool_use(0); return -1; }

@@ -1275,7 +1275,7 @@ void mtl_prog_release(prog_t *p) {
 void mtl_prog_prefetch(const prog_t *p) { (void)p; }   // modules are made at the program's first draw (vka_prog_shaders)
 
 static int mem_read(uint64_t addr, void *out, size_t n) {
-    if (vka_addr(addr, n, NULL, NULL, NULL)) { memcpy(out, (const void *)(uintptr_t)addr, n); return 1; }
+    if (vka_read(addr, out, n)) return 1;
     return !plat_mem_read(addr, out, n);
 }
 

@@ -2748,7 +2748,11 @@ static uint8_t *vpool_reserve(pool_t *o) {   // → the reserved range, or NULL
 }
 static void vpool_drop(pool_t *o) {   // caller holds g_vp_mu
     struct vpool *v = o->vp; if (!v) return;
+#if !PLAT_APPLE
+    for (int k = 0; k < v->nrun; k++) mtl_vpool_map((uint64_t)(uintptr_t)(v->base + v->run[k].lo), 0, v->run[k].hi - v->run[k].lo);
+#else
     for (int k = 0; k < v->nrun; k++) mtl_pool_del(v->base + v->run[k].lo);
+#endif
     munmap(v->base, v->len);
     for (uint64_t l = 0; l < (v->size + (2u << 20) - 1) >> 21; l++) free(v->pt[l]);
     for (int i = 0; i < g_nvp; i++) if (g_vp[i] == v) { memmove(&g_vp[i], &g_vp[i + 1], (size_t)(g_nvp - 1 - i) * sizeof *g_vp); g_nvp--; break; }
@@ -2761,12 +2765,26 @@ static void vrun_set(struct vpool *v, uint64_t lo, uint64_t hi, int mapped) {
     for (int k = 0; k < v->nrun; k++) {
         uint64_t a = v->run[k].lo, b = v->run[k].hi;
         if (b < lo || a > hi || (!mapped && (b == lo || a == hi))) { if (nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = b; nn++; } continue; }   // untouched (an unmap leaves adjacent runs alone)
+#if PLAT_APPLE
         mtl_pool_del(v->base + a);
+#endif
         if (mapped) { if (a < mlo) mlo = a; if (b > mhi) mhi = b; continue; }   // joins the new run
-        if (a < lo && nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = lo; nn++; mtl_pool_add(v->base + a, lo - a); }   // what the unmap leaves on either side
-        if (b > hi && nn < NVRUN) { nl[nn][0] = hi; nl[nn][1] = b; nn++; mtl_pool_add(v->base + hi, b - hi); }
+        if (a < lo && nn < NVRUN) { nl[nn][0] = a; nl[nn][1] = lo; nn++;
+#if PLAT_APPLE
+            mtl_pool_add(v->base + a, lo - a);
+#endif
+        }   // what the unmap leaves on either side
+        if (b > hi && nn < NVRUN) { nl[nn][0] = hi; nl[nn][1] = b; nn++;
+#if PLAT_APPLE
+            mtl_pool_add(v->base + hi, b - hi);
+#endif
+        }
     }
-    if (mapped && nn < NVRUN) { nl[nn][0] = mlo; nl[nn][1] = mhi; nn++; mtl_pool_add(v->base + mlo, mhi - mlo); }
+    if (mapped && nn < NVRUN) { nl[nn][0] = mlo; nl[nn][1] = mhi; nn++;
+#if PLAT_APPLE
+        mtl_pool_add(v->base + mlo, mhi - mlo);
+#endif
+    }
     if (nn == NVRUN) LOG("[RED] virtual pool %p: more than %d separate mapped runs", (const void *)v->pool, NVRUN);
     for (int a = 1; a < nn; a++) for (int b = a; b > 0 && nl[b][0] < nl[b - 1][0]; b--) { uint64_t t0 = nl[b][0], t1 = nl[b][1]; nl[b][0] = nl[b - 1][0]; nl[b][1] = nl[b - 1][1]; nl[b - 1][0] = t0; nl[b - 1][1] = t1; }
     v->nrun = nn; for (int k = 0; k < nn; k++) { v->run[k].lo = nl[k][0]; v->run[k].hi = nl[k][1]; }
@@ -2797,12 +2815,20 @@ static int vpool_map(struct vpool *v, const map_req *r) {   // caller holds g_vp
         return 1;
     }
     if (!r->phys) {   // unmap: inaccessible pages again
+#if !PLAT_APPLE
+        mtl_vpool_map((uint64_t)to, 0, r->size);
+#else
         if (mmap((void *)to, r->size, PROT_NONE, MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0) == MAP_FAILED) { LOG("[RED] virtual pool unmap %#lx+%#llx failed (errno %d)", (unsigned long)to, (unsigned long long)r->size, errno); return 0; }
+#endif
         vrun_set(v, (uint64_t)r->voff, (uint64_t)r->voff + r->size, 0); return 1;
     }
     uintptr_t from = (uintptr_t)ph->mem + (uintptr_t)r->poff;
 #if !PLAT_APPLE
-    (void)from; { static _Atomic int once; if (!atomic_exchange(&once, 1)) LOG("[RED] virtual pool %p: aliasing physical pool pages is not yet on Android (memfd / placed Vulkan memory, android/PORTING.md)", (const void *)v->pool); }
+    mtl_vpool_map((uint64_t)to, (uint64_t)from, r->size);
+    vrun_set(v, (uint64_t)r->voff, (uint64_t)r->voff + r->size, 1);
+    uint64_t end = (uint64_t)r->voff + r->size;
+    if (end >> 27 > v->top >> 27) LOG("[nvn] virtual pool %p: mapped up to %#llx (%d runs)", (const void *)v->pool, (unsigned long long)end, v->nrun);
+    if (end > v->top) v->top = end;
     return 1;
 #else
     vm_prot_t cur, max;
