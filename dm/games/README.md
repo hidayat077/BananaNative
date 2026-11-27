@@ -131,6 +131,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Ghost Trick: Phantom Detective](010029B018432000/README.md) | `010029B018432000` | 1.0.0 (base) | 13.3.0 | Capcom's RE Engine, Wwise | NVN |
 | [Hades](0100535012974000/README.md) | `0100535012974000` | 1.0.38233 | 9.3.0 | Supergiant Games' engine (The Forge) | Vulkan |
 | [Hades II](0100A00019DE0000/README.md) | `0100A00019DE0000` | base game | 19.3.9 | Supergiant Games' engine | NVN |
+| [Hellblade: Senua's Sacrifice](010044500CF8E000/README.md) | `010044500CF8E000` | 1.1.0 (base) | 7.3.0 | Unreal Engine 4 (version 4 pak, shaders inline), NintendoSDK_movie | NVN |
 | [Hogwarts Legacy](0100F7E00C70E000/README.md) | `0100F7E00C70E000` | v327680 | 17.5.4 | Unreal Engine 4 (IoStore), Havok | NVN |
 | [Hollow Knight](0100633007D48000/README.md) | `0100633007D48000` | 1.5.12620 | 20.5.21 | Unity 6000.0.61f1 IL2CPP, FMOD | NVN |
 | [Hollow Knight: Silksong](010013C00E930000/README.md) | `010013C00E930000` | 1.0.30000 | 20.5.8 | Unity 6000.0.50f1 IL2CPP | NVN |

@@ -1,0 +1,40 @@
+# Hellblade: Senua's Sacrifice (Ninja Theory), base game 1.1.0, Unreal Engine 4 (a version 4 pak with its shaders inline in the cooked packages and the global shader cache), SDK 7.3.0, NVN.
+# Profile made from a survey of the user's own .nup (read in place, no extraction); bring-up and on-device validation are still open. See README.md.
+# Format: see dm/games/README.md.
+
+# ---- Identity ----
+title_id	010044500CF8E000
+program_id	010044500CF8E000
+
+# ---- App ----
+name	Hellblade: Senua's Sacrifice
+ipa	HellbladeSenuasSacrifice.ipa
+app_category	public.app-category.adventure-games
+
+# ---- Versions ----
+build	v0	1.1.0	main=9b3ddf2fb9100e51feb11867410606ef	subsdk0=1bfa289d84f5608331f88deedf2005c1	sdk=6bfe1085ed54bdf0dcc5d0ea0262b7c3
+package	v0
+shader_versions	v0
+
+# ---- Files ----
+# subsdk0 is NintendoSDK_movie (main imports from it); load order main, subsdk*, sdk.
+modules	main subsdk0 sdk
+romfs_marker	HellbladeGame/Content/Paks/HellbladeGame-Switch.pak
+zip_store	.bk2:.pak
+
+# ---- Memory ----
+# Provisional Unreal values from the survey: nninitStartup reserves a 62 GB address region and its allocator takes part of it.
+# The rewriter's engine-wide gate (dm/tools/ue_region.py) gives the region what the alias area has room for; refine on a real boot.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 16 MB of system resource
+sys_resource	0x1000000
+
+# ---- Shaders ----
+# One version 4 pak (HellbladeGame-Switch.pak, 50,337 files, no compression) with no shader code archives: the shaders are inline
+# in the cooked packages and in Engine/GlobalShaderCache-GLSL_SWITCH.bin (LSLG records, Zlib), as in early Unreal Engine 4.
+# Unreal combines vertex and pixel shaders per draw, so the split pairs each vertex shader with a pixel-input cover.
+shader_groups	GlobalShaderCache=global #Engine/=engine #HellbladeGame/=game
+shader_note	Hellblade: Senua's Sacrifice shaders
