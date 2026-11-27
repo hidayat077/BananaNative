@@ -7,9 +7,121 @@
 #include "../../gfx/vk_android/vka_gpl_cache.h"
 #include "../../gfx/vk_android/vka_shader_variants.h"
 #include "../../gfx/vk_android/vka_pwlist.h"
+#include "../../gfx/vk_android/vka_spv_retype_infer.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+
+// Tiny in-memory SPIR-V builder for the static retype-inference tests. IDs are fixed:
+// %1 uint, %2 int, %3 float, %4 vec4<float>, %5 pointer, %6 variable, %7 function type,
+// %8 function, %9 constant 0, body results from %10. Bound 64 covers every module here.
+typedef struct { uint32_t w[256]; size_t n; } spv_test_b;
+static void spv_test_init(spv_test_b *b) {
+    memset(b, 0, sizeof *b);
+    b->w[0] = 0x07230203u; b->w[1] = 0x00010000u; b->n = 5; b->w[3] = 64;
+}
+#define SPV(op, ...) do { \
+    uint32_t a_[] = {__VA_ARGS__}; size_t l_ = sizeof a_ / sizeof a_[0] + 1; \
+    if (b->n + l_ <= sizeof b->w / sizeof b->w[0]) { \
+        b->w[b->n++] = (uint32_t)(l_ << 16) | (op); \
+        memcpy(b->w + b->n, a_, sizeof a_); b->n += l_ - 1; \
+    } \
+} while (0)
+#define SPV0(op) do { if (b->n < sizeof b->w / sizeof b->w[0]) b->w[b->n++] = (uint32_t)(1u << 16) | (op); } while (0)
+
+// Input vec4<float> at loc; optional access chain; load; bitcast/convert to cast_ty (1 uint, 2 int);
+// optional signed consumer of the cast result.
+static size_t spv_test_vin(spv_test_b *b, uint32_t loc, uint32_t cast_ty, int use_chain,
+                           uint32_t cast_op, int signed_consumer) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, loc);   // annotations before types/variables
+    SPV(21, 1, 32, 0); SPV(21, 2, 32, 1); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(32, 5, 1, 4); SPV(59, 5, 6, 1);
+    SPV(33, 7, 3); SPV(43, 1, 9, 0); SPV(54, 3, 8, 0, 7);
+    uint32_t ptr = 6;
+    if (use_chain) { SPV(65, 5, 10, 6, 9); ptr = 10; }
+    SPV(61, 4, 11, ptr);
+    SPV(cast_op, cast_ty, 12, 11);
+    if (signed_consumer) SPV(177, 2, 13, 12, 9);   // OpSLessThan %2 %12 %9
+    SPV0(56);
+    return b->n;
+}
+
+// UniformConstant image at set/binding; load; unfiltered fetch or filtered sample;
+// extract one component; bitcast to uint.
+static size_t spv_test_tex(spv_test_b *b, uint32_t set, uint32_t binding, int sampled, uint32_t read_op) {
+    SPV(17, 1); SPV(14, 0, 1);
+    SPV(71, 7, 34, set); SPV(71, 7, 33, binding);   // annotations before types/variables
+    SPV(21, 1, 32, 0); SPV(21, 2, 32, 1); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(25, 5, 3, 2, 0, 0, 0, (uint32_t)sampled, 0);   // float sampled type
+    SPV(32, 6, 0, 5); SPV(59, 6, 7, 0);
+    SPV(33, 8, 4); SPV(43, 1, 9, 0); SPV(54, 4, 10, 0, 8);
+    SPV(61, 5, 11, 7);
+    SPV(read_op, 4, 12, 11, 9);
+    SPV(81, 3, 13, 12, 0); SPV(124, 1, 14, 13);
+    SPV0(56);
+    return b->n;
+}
+
+// OpCompositeInsert: w[i+5..] are literal indices. %2 is an int->float bitcast (ff_int),
+// stored nowhere; inserting %1 (a float constant) into %3 with literal indices 1 and 2
+// must not inherit ff_int, so the store to Output @5 is not a fout hint.
+static size_t spv_test_composite_insert(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 14, 30, 5);
+    SPV(21, 10, 32, 0); SPV(22, 11, 32); SPV(23, 12, 11, 4);
+    SPV(32, 13, 3, 12); SPV(59, 13, 14, 3);
+    SPV(33, 15, 11); SPV(54, 11, 16, 0, 15);
+    SPV(43, 11, 1, 0); SPV(43, 10, 6, 0);
+    SPV(124, 11, 2, 6);            // %2 = int->float bitcast, not stored
+    SPV(80, 12, 3, 1, 1, 1, 1);    // %3 = vec4 of float constant, no ff_int
+    SPV(82, 12, 4, 1, 3, 1, 2);    // %4 = CompositeInsert %1 into %3, literal indices 1, 2
+    SPV(62, 14, 4);
+    SPV0(56);
+    return b->n;
+}
+
+// Control-flow instructions before the bitcast must not clobber rt[] for %1 (uint).
+// An unguarded rt[w[i+2]] = w[i+1] would set rt[1] = %20 (the signed int type) and
+// make the fout bitcast look signed.
+static size_t spv_test_ctrl_flow_fout(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 14, 30, 5);
+    SPV(21, 10, 32, 0); SPV(21, 20, 32, 1); SPV(22, 11, 32); SPV(23, 12, 11, 4);
+    SPV(32, 13, 3, 12); SPV(59, 13, 14, 3);
+    SPV(33, 15, 11); SPV(54, 11, 16, 0, 15);
+    SPV(43, 10, 1, 0);             // %1 = uint constant, rt[1] must stay %10
+    SPV(248, 18);                  // OpLabel
+    SPV(247, 20, 1);               // OpSelectionMerge (would write rt[1] = %20)
+    SPV(250, 20, 1, 19);           // OpBranchConditional (would write rt[1] = %20)
+    SPV(248, 19); SPV(124, 11, 2, 1);
+    SPV(80, 12, 3, 2, 2, 2, 2); SPV(62, 14, 3);
+    SPV0(56);
+    return b->n;
+}
+
+// Input vec4<float> @4 -> load -> bitcast to vec4<uint> -> CompositeExtract -> SLessThan.
+// The extracted scalar inherits c_vin, so the signed consumer promotes loc 4 to vin_s.
+static size_t spv_test_vin_extract_signed(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, 4);
+    SPV(21, 1, 32, 0); SPV(22, 3, 32); SPV(23, 4, 3, 4); SPV(23, 2, 1, 4);
+    SPV(32, 5, 1, 4); SPV(59, 5, 6, 1);
+    SPV(33, 7, 3); SPV(43, 1, 9, 0); SPV(54, 3, 8, 0, 7);
+    SPV(61, 4, 10, 6); SPV(124, 2, 11, 10);
+    SPV(81, 1, 12, 11, 0); SPV(177, 1, 13, 12, 9);
+    SPV0(56);
+    return b->n;
+}
+
+// Output vec4<float> at loc 5; int constant; bitcast/convert to float; composite construct; store.
+static size_t spv_test_fout(spv_test_b *b, uint32_t int_ty, uint32_t cast_op) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, 5);   // annotations before types/variables
+    SPV(21, 1, 32, 0); SPV(21, 2, 32, 1); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(32, 5, 3, 4); SPV(59, 5, 6, 3);
+    SPV(33, 7, 3); SPV(43, int_ty, 9, 0); SPV(54, 3, 8, 0, 7);
+    SPV(cast_op, 3, 10, 9);
+    SPV(80, 4, 11, 10, 10, 10, 10);
+    SPV(62, 6, 11);
+    SPV0(56);
+    return b->n;
+}
 
 int main(void) {
     char dir_tmpl[] = "/tmp/t_gpl_cache_XXXXXX";
@@ -275,6 +387,103 @@ int main(void) {
     CHECK(vka_svar_is_pre_retyped(0, 0, 0, tu_fs_only, ts_zero) == 0, "FS tex mask (index 4) must not mark pre_retyped");
     CHECK(vka_svar_is_fs_retyped(1, 0, 0, 0, tu_tcs_only, ts_zero, 0) == 0, "TCS tex mask (index 1) must not mark fs_retyped");
     CHECK(vka_svar_is_pre_retyped(0, 0, 0, tu_tcs_only, ts_zero) == 1, "TCS tex mask (index 1) marks pre_retyped");
+
+    // Static SPIR-V retype inference (vka_spv_retype_infer.h).
+    vka_spv_retype_hint hint;
+    spv_test_b sb;
+
+    // 1. vin positive, unsigned: Input vec4<float> @3 -> access chain -> load -> bitcast to uint.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin(&sb, 3, 1, 1, 124, 0), 0, 1, 1, 1, &hint) == 1,
+          "vin unsigned: hint found");
+    CHECK(hint.vin_u == (1u << 3) && hint.vin_s == 0, "vin unsigned: loc 3, got u=%#x s=%#x", hint.vin_u, hint.vin_s);
+    CHECK(!hint.fout_u && !hint.fout_s && !hint.tex_u && !hint.tex_s, "vin unsigned: no other masks");
+
+    // 2. vin positive, signed: int bitcast target, and a signed-only consumer of a uint bitcast.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin(&sb, 5, 2, 0, 124, 0), 0, 1, 0, 0, &hint) == 1,
+          "vin signed type: hint found");
+    CHECK(hint.vin_s == (1u << 5) && hint.vin_u == 0, "vin signed type: loc 5, got u=%#x s=%#x", hint.vin_u, hint.vin_s);
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin(&sb, 6, 1, 0, 124, 1), 0, 1, 0, 0, &hint) == 1,
+          "vin signed consumer: hint found");
+    CHECK(hint.vin_s == (1u << 6) && hint.vin_u == 0, "vin signed consumer: loc 6 promoted, got u=%#x s=%#x", hint.vin_u, hint.vin_s);
+
+    // 3. vin negative: OpConvertFToU is not a bitcast.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin(&sb, 2, 1, 0, 109, 0), 0, 1, 1, 1, &hint) == 0,
+          "vin negative: OpConvertFToU ignored");
+    CHECK(!hint.vin_u && !hint.vin_s && !hint.fout_u && !hint.fout_s && !hint.tex_u && !hint.tex_s,
+          "vin negative: all masks zero");
+
+    // 4. tex positive: stage-relative binding 64+4 with tex_base 64, fetch -> extract -> bitcast.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 4, 2, 95), 64, 0, 1, 0, &hint) == 1,
+          "tex unsigned: hint found");
+    CHECK(hint.tex_u == (1ull << 4) && hint.tex_s == 0, "tex unsigned: bit 4, got u=%#llx s=%#llx",
+          (unsigned long long)hint.tex_u, (unsigned long long)hint.tex_s);
+    CHECK(!hint.vin_u && !hint.vin_s && !hint.fout_u && !hint.fout_s, "tex unsigned: no other masks");
+
+    // 5. tex negatives: filtered sample, out-of-range binding, non-zero descriptor set.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 4, 1, 87), 64, 0, 1, 0, &hint) == 0,
+          "tex negative: filtered sample ignored");
+    CHECK(!hint.tex_u && !hint.tex_s, "tex negative: filtered sample masks zero");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 64, 2, 95), 64, 0, 1, 0, &hint) == 0,
+          "tex negative: binding outside stage range ignored");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 1, 64 + 4, 2, 95), 64, 0, 1, 0, &hint) == 0,
+          "tex negative: DescriptorSet != 0 ignored");
+    CHECK(!hint.tex_u && !hint.tex_s, "tex negative: all masks zero");
+
+    // 6. fout positive: int -> bitcast to float -> composite construct -> store to Output @5.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_fout(&sb, 1, 124), 0, 0, 0, 1, &hint) == 1,
+          "fout unsigned: hint found");
+    CHECK(hint.fout_u == (1u << 5) && hint.fout_s == 0, "fout unsigned: loc 5, got u=%#x s=%#x", hint.fout_u, hint.fout_s);
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_fout(&sb, 2, 124), 0, 0, 0, 1, &hint) == 1,
+          "fout signed: hint found");
+    CHECK(hint.fout_s == (1u << 5) && hint.fout_u == 0, "fout signed: loc 5, got u=%#x s=%#x", hint.fout_u, hint.fout_s);
+
+    // 7. fout negative: OpConvertUToF is not a bitcast.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_fout(&sb, 1, 112), 0, 0, 0, 1, &hint) == 0,
+          "fout negative: OpConvertUToF ignored");
+    CHECK(!hint.fout_u && !hint.fout_s, "fout negative: masks zero");
+
+    // 8. Malformed / truncated / bad magic / bad bound / bad instruction length: clean zeroed result.
+    memset(&hint, 0xff, sizeof hint);
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, 4, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u && !hint.vin_s &&
+          !hint.fout_u && !hint.fout_s && !hint.tex_u && !hint.tex_s, "truncated header");
+    spv_test_init(&sb); sb.w[0] = 0xdeadbeefu;
+    CHECK(vka_spv_infer_retype(sb.w, sb.n, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u, "bad magic");
+    spv_test_init(&sb); sb.w[3] = 0;
+    CHECK(vka_spv_infer_retype(sb.w, sb.n, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u, "zero bound");
+    spv_test_init(&sb); sb.w[3] = (1u << 20) + 1u;
+    CHECK(vka_spv_infer_retype(sb.w, sb.n, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u, "oversized bound");
+    spv_test_init(&sb); sb.w[5] = 17u;   // zero-length instruction
+    CHECK(vka_spv_infer_retype(sb.w, sb.n, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u, "zero instruction length");
+    spv_test_init(&sb); sb.w[5] = (200u << 16) | 17u;   // runs past the word array
+    CHECK(vka_spv_infer_retype(sb.w, sb.n, 0, 1, 1, 1, &hint) == 0 && !hint.vin_u, "overlong instruction");
+
+    // Review regressions: CompositeInsert literal indices, control-flow rt[] clobber,
+    // and CompositeExtract of a bitcasted vin vector into a signed consumer.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_composite_insert(&sb), 0, 1, 1, 1, &hint) == 0 &&
+          !hint.fout_u && !hint.fout_s, "CompositeInsert literal indices are not SSA provenance");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_ctrl_flow_fout(&sb), 0, 1, 1, 1, &hint) == 1,
+          "control flow before bitcast: hint found");
+    CHECK(hint.fout_u == (1u << 5) && hint.fout_s == 0, "control flow did not clobber rt[], got u=%#x s=%#x",
+          hint.fout_u, hint.fout_s);
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin_extract_signed(&sb), 0, 1, 0, 0, &hint) == 1,
+          "CompositeExtract of bitcasted vin: hint found");
+    CHECK(hint.vin_s == (1u << 4) && hint.vin_u == 0, "CompositeExtract promoted to signed, got u=%#x s=%#x",
+          hint.vin_u, hint.vin_s);
 
     // Corruption test on variant manifest payload.
     FILE *mcf = fopen(mpath, "r+b");

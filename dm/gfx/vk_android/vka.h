@@ -13,6 +13,7 @@
 #include "vka_fmtlist.h"
 #include "vka_soft.h"
 #include "vka_eds.h"
+#include "vka_spv_retype_infer.h"
 
 #define VLOG(...) LOG("[vk] " __VA_ARGS__)
 #define VRED(...) LOG("[RED] vk: " __VA_ARGS__)
@@ -559,6 +560,8 @@ typedef struct {
     VkShaderModule pfb_late;
     int tf_fx;
     int gs_fx;
+    VkShaderModule retype_mod;            // Boot #1 inferred SPIR-V retype module (VK_NULL_HANDLE: none)
+    vka_spv_retype_hint retype_hint;      // the inference that made retype_mod, for telemetry
 } vka_precomp_sh;
 int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
 void vka_shader_precomp_destroy(vka_precomp_sh *sh);

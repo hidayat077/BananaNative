@@ -556,7 +556,7 @@ $(B)/t_android_auto: t_android_auto.c $(VKA)/vka_auto.h $(VKA)/vka_psogate.h | $
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_auto.c
 $(B)/t_android_eds: t_android_eds.c $(VKA)/vka_eds.h $(VKA)/vka_gkey.h $(VKA)/vka_pwlist.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_eds.c
-$(B)/t_android_gpl_cache: t_android_gpl_cache.c $(VKA)/vka_gpl_cache.h $(VKA)/vka_shader_variants.h | $(B)
+$(B)/t_android_gpl_cache: t_android_gpl_cache.c $(VKA)/vka_gpl_cache.h $(VKA)/vka_shader_variants.h $(VKA)/vka_spv_retype_infer.h | $(B)
 	$(CLANG) -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=address,undefined -I.. -o $@ t_android_gpl_cache.c
 # CPU topology and auto-affinity mask computation (vka_aff.h; vka_worker.c, vka_enc.c)
 $(B)/t_android_aff: t_android_aff.c $(VKA)/vka_aff.h | $(B)
