@@ -150,7 +150,7 @@ static void stats_line(uint64_t f) {
     { char im[600]; vka_imem_stats(im, sizeof im); VLOG("ctl: %s", im); }
     { char bs[1000]; vka_tex_big_stats(bs, sizeof bs); if (bs[0]) VLOG("ctl: %s", bs); }
     { char ss[300]; vka_tex_soft_stats(ss, sizeof ss); VLOG("ctl: %s", ss); }
-    { char tb[320]; vka_pso_telemetry_line(tb, sizeof tb); if (tb[0]) VLOG("ctl: shader telemetry: %s", tb); }
+    { char tb[512]; vka_pso_telemetry_line(tb, sizeof tb); if (tb[0]) VLOG("ctl: shader telemetry: %s", tb); }
     vka_tex_kind_log();
 }
 void vka_ctl_frame(uint64_t f) {   // mtl_set_frame: frame f begins

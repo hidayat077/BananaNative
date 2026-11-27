@@ -12,6 +12,7 @@
 #include "../nvn/dmsh_chain_vk.h"
 #include "game_profile.h"
 #include "vka_spvpatch.h"
+#include "vka_shader_variants.h"
 #include "vka_layerreq.h"
 #include "plat/plat.h"
 #include <stdio.h>
@@ -1145,6 +1146,54 @@ VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
     if (create_stage_module(e->stage, &ci, &mod)) mod = VK_NULL_HANDLE;
     free(o);
+    return mod;
+}
+
+VkShaderModule vka_shader_precomp_variant(const vka_shlib *L, const dmsh_vk_entry *e, const void *svar_rec, VkShaderModule *out_base_to_destroy) {
+    if (out_base_to_destroy) *out_base_to_destroy = VK_NULL_HANDLE;
+    const vka_svar_rec *rec = (const vka_svar_rec *)svar_rec;
+    if (!L || !e || !rec || e->stage != rec->stage) return VK_NULL_HANDLE;
+    int var = rec->lib_variant;
+    if (rec->stage == DMSH_VK_STAGE_CS) {
+        int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
+        var = want_shfl ? DMSH_VK_MOD_SHUFFLE_LDS : DMSH_VK_MOD_BASE;
+    }
+    const dmsh_vk_module *m = vka_shlib_module(L, e, var);
+    if (!m && rec->stage == DMSH_VK_STAGE_CS) m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+    if (!m) return VK_NULL_HANDLE;
+    char err[256] = ""; size_t nb = 0, on = 0;
+    uint32_t *w = lib_words(L, e, m, &nb, err, sizeof err);
+    if (!w) return VK_NULL_HANDLE;
+    prep_words(e, e->key, &w, &nb);
+    uint32_t *o = NULL;
+    if (rec->stage == DMSH_VK_STAGE_VS && (rec->vin_u | rec->vin_s)) {
+        o = vka_spv_vin_retype(w, nb / 4, rec->vin_u, rec->vin_s, &on, err, sizeof err);
+        free(w); w = o; nb = on * 4;
+    }
+    if (w && rec->stage == DMSH_VK_STAGE_FS && (rec->fout_u | rec->fout_s)) {
+        o = vka_spv_fout_retype(w, nb / 4, rec->fout_u, rec->fout_s, &on, err, sizeof err);
+        free(w); w = o; nb = on * 4;
+    }
+    if (w && (rec->tex_u | rec->tex_s)) {
+        uint32_t range_base = 0;
+        if (rec->stage != DMSH_VK_STAGE_CS) {
+            int st = rec->stage;
+            int rg = st == DMSH_VK_STAGE_TS ? DMSH_VK_STAGE_TCS : (st == DMSH_VK_STAGE_MS ? DMSH_VK_STAGE_VS : st);
+            range_base = (uint32_t)rg * DMSH_VK_STAGE_BINDINGS;
+        }
+        o = vka_spv_img_retype(w, nb / 4, range_base, rec->tex_u, rec->tex_s, &on, err, sizeof err);
+        free(w); w = o; nb = on * 4;
+    }
+    if (!w || !nb) { free(w); return VK_NULL_HANDLE; }
+    VkShaderModule mod = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nb, .pCode = w};
+    if (create_stage_module(e->stage, &ci, &mod)) mod = VK_NULL_HANDLE;
+    free(w);
+    if (!mod) return VK_NULL_HANDLE;
+    if (out_base_to_destroy) *out_base_to_destroy = mod;
+    if (rec->stage == DMSH_VK_STAGE_FS && (rec->flags & VKA_SVAR_F_PFB_LATE)) {
+        return vka_shader_pfb_pick(mod, 1, rec->alpha_func);
+    }
     return mod;
 }
 

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "../../gfx/vk_android/vka_gpl_cache.h"
+#include "../../gfx/vk_android/vka_shader_variants.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -116,6 +117,89 @@ int main(void) {
     free(bs);
     unlink(path);
     unlink(other);
+
+    // Delta retype VkPipelineCache container tests.
+    char rpath[512], rstale[512], rother[512];
+    int rfn = vka_gpl_retype_cache_filename(rpath, sizeof rpath, dir, title, lib_hash, uuid);
+    CHECK(rfn > 0 && strstr(rpath, "vk_gpl_retype_cache_0100F2C0115B6000_123456789abcdef0_0123456789abcdef1032547698badcfe.bin") != NULL,
+          "retype cache filename: %s", rpath);
+    vka_gpl_cache_hdr rh = {
+        .vendor_id = vendor,
+        .device_id = dev,
+        .driver_version = drv_ver,
+        .flags = VKA_GPL_CACHE_F_GL_DEPTH,
+        .dmsh_vk_lib_hash = lib_hash,
+        .total_entries = 82,
+        .compiled_entries = 82,
+    };
+    memcpy(rh.pipeline_cache_uuid, uuid, 16);
+    CHECK(vka_gpl_retype_cache_save_atomic(rpath, &rh, blob, sizeof blob), "delta retype atomic save");
+    vka_gpl_cache_hdr out_rh; void *out_rblob = NULL;
+    CHECK(vka_gpl_retype_cache_load(rpath, vendor, dev, drv_ver, uuid, lib_hash, 1, &out_rh, &out_rblob, &why),
+          "load delta retype cache: %s", why ? why : "ok");
+    CHECK((out_rh.flags & VKA_GPL_CACHE_F_DELTA) && out_rh.compiled_entries == 82 && out_rh.bitset_bytes == 0,
+          "delta retype header metadata preserved");
+    CHECK(out_rblob && memcmp(out_rblob, blob, sizeof blob) == 0, "delta retype blob preserved");
+    free(out_rblob);
+    CHECK(!vka_gpl_retype_cache_load(rpath, vendor, dev, drv_ver, bad_uuid, lib_hash, 1, &out_rh, &out_rblob, &why) && why,
+          "delta retype rejects UUID mismatch");
+    CHECK(!vka_gpl_retype_cache_load(rpath, vendor, dev, drv_ver, uuid, lib_hash + 1, 1, &out_rh, &out_rblob, &why) && why,
+          "delta retype rejects dmsh_vk.lib hash mismatch");
+    CHECK(!vka_gpl_retype_cache_load(rpath, vendor, dev, drv_ver, uuid, lib_hash, 0, &out_rh, &out_rblob, &why) && why,
+          "delta retype rejects GL depth mismatch");
+    CHECK(!vka_gpl_retype_cache_load(path, vendor, dev, drv_ver, uuid, lib_hash, 1, &out_rh, &out_rblob, &why),
+          "missing file rejected");
+    snprintf(rstale, sizeof rstale, "%s/vk_gpl_retype_cache_%s_0000000000000001_00000000000000000000000000000000.bin", dir, title);
+    snprintf(rother, sizeof rother, "%s/vk_gpl_retype_cache_040074A01BF12000_0000000000000001_00000000000000000000000000000000.bin", dir);
+    FILE *rf1 = fopen(rstale, "wb"); if (rf1) fclose(rf1);
+    FILE *rf2 = fopen(rother, "wb"); if (rf2) fclose(rf2);
+    const char *rkeep = strrchr(rpath, '/') + 1;
+    CHECK(vka_gpl_retype_cache_prune_stale(dir, title, rkeep) == 1, "pruned 1 stale delta retype cache");
+    CHECK(access(rpath, F_OK) == 0 && access(rother, F_OK) == 0, "kept active and other-title delta retype caches");
+    unlink(rpath);
+    unlink(rother);
+
+    // Driver-agnostic Shader Variant Manifest tests (vk_shader_variants.h).
+    char mpath[512], mstale[512];
+    int mfn = vka_svar_manifest_filename(mpath, sizeof mpath, dir, title, lib_hash);
+    CHECK(mfn > 0 && strstr(mpath, "vk_shader_variants_0100F2C0115B6000_123456789abcdef0.bin") != NULL,
+          "variant manifest filename: %s", mpath);
+    vka_svar_set sv = {0};
+    vka_svar_rec r_vs = {.shader_hash = 0x1111111111111111ull, .stage = 0 /* VS */, .vin_u = 0x5u, .vin_s = 0x2u, .flags = VKA_SVAR_F_GL_DEPTH};
+    vka_svar_rec r_fs = {.shader_hash = 0x2222222222222222ull, .stage = 4 /* FS */, .fout_u = 0x1u, .tex_u = 0x4ull, .alpha_func = 3, .samples = 1, .flags = VKA_SVAR_F_PFB_LATE | VKA_SVAR_F_A2C};
+    vka_svar_rec r_cs = {.shader_hash = 0x7f19e3052ceb6c32ull, .stage = 5 /* CS */, .tex_u = 0x14ull};
+    CHECK(vka_svar_set_add(&sv, &r_vs) == 1, "add VS variant");
+    CHECK(vka_svar_set_add(&sv, &r_vs) == 0, "dedup identical VS variant");
+    CHECK(vka_svar_set_add(&sv, &r_fs) == 1, "add FS variant");
+    CHECK(vka_svar_set_add(&sv, &r_cs) == 1, "add CS variant");
+    CHECK(sv.n == 3, "manifest set has 3 unique variants");
+    CHECK(vka_svar_manifest_save_atomic(mpath, lib_hash, sv.recs, sv.n), "save variant manifest atomically");
+    vka_svar_set_free(&sv);
+
+    vka_svar_set sv_loaded = {0};
+    CHECK(vka_svar_manifest_load(mpath, lib_hash, &sv_loaded, &why) && sv_loaded.n == 3,
+          "load variant manifest: %s", why ? why : "ok");
+    CHECK(vka_svar_rec_eq(&sv_loaded.recs[0], &r_vs) && vka_svar_rec_eq(&sv_loaded.recs[1], &r_fs) && vka_svar_rec_eq(&sv_loaded.recs[2], &r_cs),
+          "manifest records round-trip");
+    CHECK(vka_svar_set_add(&sv_loaded, &r_cs) == 0, "loaded set deduplicates existing entry");
+    vka_svar_set_free(&sv_loaded);
+
+    CHECK(!vka_svar_manifest_load(mpath, lib_hash + 1, &sv_loaded, &why) && why, "manifest rejects dmsh_vk.lib hash mismatch");
+    vka_svar_set_free(&sv_loaded);
+
+    snprintf(mstale, sizeof mstale, "%s/vk_shader_variants_%s_0000000000000001.bin", dir, title);
+    FILE *mf = fopen(mstale, "wb"); if (mf) fclose(mf);
+    const char *mkeep = strrchr(mpath, '/') + 1;
+    CHECK(vka_svar_manifest_prune_stale(dir, title, mkeep) == 1, "pruned 1 stale variant manifest");
+    CHECK(access(mpath, F_OK) == 0 && access(mstale, F_OK) != 0, "kept active manifest and removed stale");
+
+    // Corruption test on variant manifest payload.
+    FILE *mcf = fopen(mpath, "r+b");
+    if (mcf) { fseek(mcf, -1, SEEK_END); int ch = fgetc(mcf); fseek(mcf, -1, SEEK_END); fputc(ch ^ 0xff, mcf); fclose(mcf); }
+    CHECK(!vka_svar_manifest_load(mpath, lib_hash, &sv_loaded, &why) && why, "manifest rejects corrupted payload");
+    vka_svar_set_free(&sv_loaded);
+    unlink(mpath);
+
     rmdir(dir);
     printf("t_android_gpl_cache: %s\n", fails ? "FAILED" : "ok");
     return fails != 0;

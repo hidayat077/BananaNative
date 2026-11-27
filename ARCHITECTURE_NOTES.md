@@ -115,3 +115,33 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
   - `precomp_pw_variants()` scans loaded prewarm seed records (`vk_prewarm.bin` / `.keys`) at the end of Boot #1 and pre-compiles known `VKA_FS_RETYPE` (`vka_shader_precomp_fout`), `alpha_func != 0` specializations, `vin_u`/`vin_s` (`vka_shader_precomp_vin`), and compute image retypes (`vka_shader_precomp_cs_img`) directly into `g_pc` before the final atomic checkpoint save.
 - **Separated Runtime Telemetry (`vka_gpl_stats.h`, `vka_pso.c`, `vka_exec.c`, `vka_ctl.c`):**
   - Periodic replay logs (`shader telemetry:`) and `ctl: stats` emit `vka_gpl_telemetry_format()` with separated counters: `ir3_compiler_miss` (via `VkPipelineCreationFeedback` + `vka_classify_compile_feedback`), `gpl_fast_link_count`, `gpl_fast_link_avg_us`, `gpl_fast_link_p99_us`, `gpl_fast_link_max_us`, `pipeline_ram_rehydrate_count`, `frontend_shader_translate_count`, and per-path retype counts (`fout`, `vin`, `tex`, `cs_img`).
+
+---
+
+## 8. Runtime Shader Variant Manifest & Memory-Safe Delta Retype Cache (Audit + Fix)
+
+### Audit Findings (Verified Before Editing)
+1. **Why `vin` retypes trigger frequently under `VK_EXT_vertex_input_dynamic_state`:**
+   - [dm/gfx/vk_android/vka_draw.c](dm/gfx/vk_android/vka_draw.c) (`vin_format()`, `vin_build()`) and [dm/gfx/vk_android/vka_spvpatch.c](dm/gfx/vk_android/vka_spvpatch.c) (`vka_spv_vin_retype()`) handle Maxwell's rule where integer vertex attributes (`UINT8..SINT32`) load raw integer bits into scalar registers for shader `OpBitcast` while `dmsh_vk.lib` declares every VS input as `vec4<float>` (`vin_types == DMSH_VK_TYPE_FLOAT`).
+   - Because Vulkan prohibits feeding an integer `VkFormat` to a float shader input (and `USCALED`/`SSCALED` converts `5` to `5.0f` instead of bit-pattern `5`), each active `vin_u`/`vin_s` bit is strictly gated by `vs->e->vin_mask` and actual integer attribute formats bound by the game. Static SPIR-V inspection cannot safely guess unsigned vs. signed extension (`UINT` vs `SINT` on 8/16-bit attributes) or dynamic subset combinations without combinatorial bloat, so persisting exact runtime variants via the manifest + delta cache solves this cleanly across all games.
+2. **Why `skipped 6` occurred during Boot #1 (`10349 / 10349` on No Man's Sky):**
+   - `precomp_compile_entry()` in [dm/gfx/vk_android/vka_pso.c](dm/gfx/vk_android/vka_pso.c) increments `skip_n` whenever `vka_shader_precomp_open()` ([dm/gfx/vk_android/vka_shader.c](dm/gfx/vk_android/vka_shader.c)) returns `0`: stages other than VS/FS/CS (`TCS`/`TES`/`GS`/`TS`/`MS`), `refusal()` entries, `FS` with `DMSH_VK_F_MESH_PRIM` when `!V.mesh`, or `CS` exceeding `maxComputeSharedMemorySize` / `vka_is_ndve_key()`. None of those skipped entries caused the Run #2 misses (`vin`, `tex`, `fout`, `cs_img`).
+3. **Full Runtime Variant Key Inventory ([vka_shader_variants.h](dm/gfx/vk_android/vka_shader_variants.h)):**
+   - `shader_hash` (`uint64_t`), `stage` (`DMSH_VK_STAGE_*`), `lib_variant` (`DMSH_VK_MOD_*`), `vin_u`/`vin_s` (`uint32_t`), `fout_u`/`fout_s` (`uint32_t`), `tex_u`/`tex_s` (`uint64_t`: per-stage graphics texture/image retype or compute `img_retype`), `alpha_func` (`SpecId 1`), `samples`, and `flags` (`VKA_SVAR_F_GL_DEPTH`, `VKA_SVAR_F_PFB_LATE`, `VKA_SVAR_F_A2C`, `VKA_SVAR_F_GS_CLAIM`).
+   - Pool-read feedback instrumentation (`csm_pfb`) and independent-sets descriptor remapping (`vka_spv_remap_sets`) apply automatically inside `create_stage_module()`, while runtime `early_fragment_tests` control-block aliasing (`prog_key_alt`) resolves to its existing `dmsh_vk.lib` entry key.
+4. **Partial-Resume `compiled == total` Edge Case & `.heavy` Persistence:**
+   - Fixed `vka_boot_precompile_run()` (`rem == 0` early return) in [dm/gfx/vk_android/vka_pso.c](dm/gfx/vk_android/vka_pso.c) so a partial checkpoint that reached `compiled == total` runs `precomp_pw_variants()` and stamps `VKA_GPL_CACHE_F_COMPLETE`.
+   - Initialized `g_heavy_path` from the delta cache path when `g_gpl_cache_on` is active so long compiles persist on disk instead of falling back to `"this run only"`.
+
+### Persistence & Startup Rehydration Architecture
+- **Driver-Agnostic Variant Manifest ([vka_shader_variants.h](dm/gfx/vk_android/vka_shader_variants.h)):**
+  - Stored as `vk_shader_variants_<TitleID>_<dmsh_hash>.bin` (`SVAR` v1 header + 56-byte `vka_svar_rec` entries + FNV checksums, atomic `fsync` + `rename` writes).
+  - Survives driver updates (`pipelineCacheUUID` changes) so recorded runtime variants are automatically re-compiled on the new driver; pruned only when `dmsh_vk.lib` changes.
+- **Read-Only Base Cache + Lightweight Delta Retype `VkPipelineCache` ([vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
+  - Boot #1 base `vk_gpl_cache_*.bin` stays strictly **read-only** in-game (`save_now()` never calls `vkGetPipelineCacheData` on it), eliminating 180+ MB RAM spikes and write amplification.
+  - Runtime-retyped/specialized graphics stage libraries (`L_PRE`, `L_FS`, `L_PREFS`) and compute pipelines (`cs_img`) route through `g_pc_retype`, persisted atomically as `vk_gpl_retype_cache_<TitleID>_<dmsh_hash>_<driver_uuid>.bin` (`VKA_GPL_CACHE_F_DELTA`).
+- **Startup Rehydration ([vka_shader.c](dm/gfx/vk_android/vka_shader.c), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
+  - `vka_retype_variants_startup()` runs after loading Boot #2+ or finishing Boot #1: loads the manifest + delta cache, probes `g_pc_retype` (`VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`) or compiles missing/driver-swapped variants via a RAM/maps-guarded worker pool (`vka_shader_precomp_variant()`), merges into `g_pc_retype`, and saves atomically.
+- **Modified / Added Files:**
+  - Added [dm/gfx/vk_android/vka_shader_variants.h](dm/gfx/vk_android/vka_shader_variants.h).
+  - Updated [dm/gfx/vk_android/vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [dm/gfx/vk_android/vka_gpl_stats.h](dm/gfx/vk_android/vka_gpl_stats.h), [dm/gfx/vk_android/vka.h](dm/gfx/vk_android/vka.h), [dm/gfx/vk_android/vka_shader.c](dm/gfx/vk_android/vka_shader.c), [dm/gfx/vk_android/vka_pso.c](dm/gfx/vk_android/vka_pso.c), [dm/gfx/vk_android/vka_ctl.c](dm/gfx/vk_android/vka_ctl.c), [android/app/src/main/java/dev/nxnative/android/ShaderCacheUi.java](android/app/src/main/java/dev/nxnative/android/ShaderCacheUi.java), [dm/host/tests/t_android_gpl_cache.c](dm/host/tests/t_android_gpl_cache.c), [dm/host/tests/t_android_eds.c](dm/host/tests/t_android_eds.c), and [dm/host/tests/Makefile](dm/host/tests/Makefile).

@@ -75,18 +75,25 @@ typedef struct {
     uint64_t retype_vin;
     uint64_t retype_tex;
     uint64_t retype_cs_img;
+    uint64_t variant_manifest_loaded;
+    uint64_t variant_manifest_precompiled;
+    uint64_t variant_manifest_saved;
+    uint64_t delta_retype_cache_bytes;
 } vka_gpl_telemetry;
 
 static inline int vka_gpl_telemetry_format(const vka_gpl_telemetry *t, char *out, size_t n) {
     if (!out || !n || !t) return 0;
     return snprintf(out, n,
         "ir3_compiler_miss=%llu gpl_fast_link_count=%llu gpl_fast_link_avg_us=%.0f gpl_fast_link_p99_us=%.0f gpl_fast_link_max_us=%llu "
-        "pipeline_ram_rehydrate_count=%llu frontend_shader_translate_count=%llu (retype fout=%llu vin=%llu tex=%llu cs_img=%llu)",
+        "pipeline_ram_rehydrate_count=%llu frontend_shader_translate_count=%llu (retype fout=%llu vin=%llu tex=%llu cs_img=%llu) "
+        "variant_manifest_loaded=%llu variant_manifest_precompiled=%llu variant_manifest_saved=%llu delta_retype_cache_bytes=%llu",
         (unsigned long long)t->ir3_compiler_miss, (unsigned long long)t->gpl_fast_link_count,
         t->gpl_fast_link_avg_us, t->gpl_fast_link_p99_us, (unsigned long long)t->gpl_fast_link_max_us,
         (unsigned long long)t->pipeline_ram_rehydrate_count, (unsigned long long)t->frontend_shader_translate_count,
         (unsigned long long)t->retype_fout, (unsigned long long)t->retype_vin,
-        (unsigned long long)t->retype_tex, (unsigned long long)t->retype_cs_img);
+        (unsigned long long)t->retype_tex, (unsigned long long)t->retype_cs_img,
+        (unsigned long long)t->variant_manifest_loaded, (unsigned long long)t->variant_manifest_precompiled,
+        (unsigned long long)t->variant_manifest_saved, (unsigned long long)t->delta_retype_cache_bytes);
 }
 
 #endif

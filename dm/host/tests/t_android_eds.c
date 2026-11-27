@@ -145,12 +145,19 @@ static void test_m5_retype_suppression_and_telemetry(void) {
         .pipeline_ram_rehydrate_count = 15,
         .frontend_shader_translate_count = 0,
         .retype_fout = 0, .retype_vin = 1, .retype_tex = 0, .retype_cs_img = 0,
+        .variant_manifest_loaded = 82,
+        .variant_manifest_precompiled = 82,
+        .variant_manifest_saved = 85,
+        .delta_retype_cache_bytes = 262144,
     };
-    char buf[320];
+    char buf[512];
     int len = vka_gpl_telemetry_format(&t, buf, sizeof buf);
     CHECK(len > 0 && strstr(buf, "ir3_compiler_miss=0") && strstr(buf, "gpl_fast_link_count=42") &&
           strstr(buf, "gpl_fast_link_max_us=410") && strstr(buf, "pipeline_ram_rehydrate_count=15") &&
-          strstr(buf, "frontend_shader_translate_count=0"), "telemetry line: %s", buf);
+          strstr(buf, "frontend_shader_translate_count=0") &&
+          strstr(buf, "variant_manifest_loaded=82") && strstr(buf, "variant_manifest_precompiled=82") &&
+          strstr(buf, "variant_manifest_saved=85") && strstr(buf, "delta_retype_cache_bytes=262144"),
+          "telemetry line: %s", buf);
 }
 
 int main(void) {

@@ -17,6 +17,7 @@
 #define VKA_GPL_CACHE_VERSION 1u
 #define VKA_GPL_CACHE_F_COMPLETE 1u
 #define VKA_GPL_CACHE_F_GL_DEPTH 2u
+#define VKA_GPL_CACHE_F_DELTA 4u
 #define VKA_GPL_CACHE_UUID_SIZE 16u
 
 typedef struct {
@@ -68,16 +69,27 @@ static inline uint32_t vka_gpl_cache_bit_count(const uint8_t *bs, uint32_t total
     return c;
 }
 
+static inline void vka_gpl_cache_uuid_hex(const uint8_t uuid[VKA_GPL_CACHE_UUID_SIZE], char out[VKA_GPL_CACHE_UUID_SIZE * 2 + 1]) {
+    static const char hx[] = "0123456789abcdef";
+    for (size_t i = 0; i < VKA_GPL_CACHE_UUID_SIZE; i++) {
+        out[2 * i] = hx[uuid[i] >> 4];
+        out[2 * i + 1] = hx[uuid[i] & 0xf];
+    }
+    out[VKA_GPL_CACHE_UUID_SIZE * 2] = 0;
+}
+
 static inline int vka_gpl_cache_filename(char *out, size_t n, const char *dir, const char *title_id, uint64_t dmsh_hash, const uint8_t uuid[VKA_GPL_CACHE_UUID_SIZE]) {
     if (!out || !n || !dir || !title_id || !uuid) return -1;
     char uhex[VKA_GPL_CACHE_UUID_SIZE * 2 + 1];
-    static const char hx[] = "0123456789abcdef";
-    for (size_t i = 0; i < VKA_GPL_CACHE_UUID_SIZE; i++) {
-        uhex[2 * i] = hx[uuid[i] >> 4];
-        uhex[2 * i + 1] = hx[uuid[i] & 0xf];
-    }
-    uhex[VKA_GPL_CACHE_UUID_SIZE * 2] = 0;
+    vka_gpl_cache_uuid_hex(uuid, uhex);
     return snprintf(out, n, "%s/vk_gpl_cache_%s_%016llx_%s.bin", dir, title_id, (unsigned long long)dmsh_hash, uhex);
+}
+
+static inline int vka_gpl_retype_cache_filename(char *out, size_t n, const char *dir, const char *title_id, uint64_t dmsh_hash, const uint8_t uuid[VKA_GPL_CACHE_UUID_SIZE]) {
+    if (!out || !n || !dir || !title_id || !uuid) return -1;
+    char uhex[VKA_GPL_CACHE_UUID_SIZE * 2 + 1];
+    vka_gpl_cache_uuid_hex(uuid, uhex);
+    return snprintf(out, n, "%s/vk_gpl_retype_cache_%s_%016llx_%s.bin", dir, title_id, (unsigned long long)dmsh_hash, uhex);
 }
 
 static inline int vka_gpl_cache_hdr_validate(const vka_gpl_cache_hdr *h, uint32_t vendor_id, uint32_t device_id, uint32_t driver_version,
@@ -228,12 +240,12 @@ static inline int vka_gpl_cache_load(const char *path, uint32_t vendor_id, uint3
     return 1;
 }
 
-static inline int vka_gpl_cache_prune_stale(const char *dir, const char *title_id, const char *keep_basename) {
+static inline int vka_gpl_cache_prune_prefix(const char *dir, const char *fmt_prefix, const char *title_id, const char *keep_basename) {
     if (!dir || !*dir || !title_id || !*title_id) return 0;
     DIR *d = opendir(dir);
     if (!d) return 0;
-    char prefix[96];
-    int plen = snprintf(prefix, sizeof prefix, "vk_gpl_cache_%s_", title_id);
+    char prefix[128];
+    int plen = snprintf(prefix, sizeof prefix, fmt_prefix, title_id);
     if (plen <= 0 || plen >= (int)sizeof prefix) { closedir(d); return 0; }
     int removed = 0;
     struct dirent *de;
@@ -250,6 +262,73 @@ static inline int vka_gpl_cache_prune_stale(const char *dir, const char *title_i
     }
     closedir(d);
     return removed;
+}
+
+static inline int vka_gpl_cache_prune_stale(const char *dir, const char *title_id, const char *keep_basename) {
+    return vka_gpl_cache_prune_prefix(dir, "vk_gpl_cache_%s_", title_id, keep_basename);
+}
+
+static inline int vka_gpl_retype_cache_prune_stale(const char *dir, const char *title_id, const char *keep_basename) {
+    return vka_gpl_cache_prune_prefix(dir, "vk_gpl_retype_cache_%s_", title_id, keep_basename);
+}
+
+static inline int vka_gpl_retype_cache_save_atomic(const char *path, const vka_gpl_cache_hdr *h_in, const void *vk_blob, uint32_t vk_len) {
+    if (!h_in) return 0;
+    vka_gpl_cache_hdr h = *h_in;
+    h.flags |= VKA_GPL_CACHE_F_DELTA;
+    return vka_gpl_cache_save_atomic(path, &h, NULL, 0, vk_blob, vk_len);
+}
+
+static inline int vka_gpl_retype_cache_load(const char *path, uint32_t vendor_id, uint32_t device_id, uint32_t driver_version,
+                                            const uint8_t uuid[VKA_GPL_CACHE_UUID_SIZE], uint64_t dmsh_hash, int expected_gl_depth,
+                                            vka_gpl_cache_hdr *out_hdr, void **out_vk_blob, const char **why) {
+    if (out_vk_blob) *out_vk_blob = NULL;
+    if (!path || !*path) { if (why) *why = "empty path"; return 0; }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { if (why) *why = "missing"; return 0; }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(vka_gpl_cache_hdr)) {
+        close(fd);
+        if (why) *why = "truncated header";
+        return 0;
+    }
+    vka_gpl_cache_hdr h;
+    if (!vka_gpl_cache_read_all(fd, &h, sizeof h)) {
+        close(fd);
+        if (why) *why = "header read error";
+        return 0;
+    }
+    if (h.magic != VKA_GPL_CACHE_MAGIC) { close(fd); if (why) *why = "bad magic"; return 0; }
+    if (h.schema_version != VKA_GPL_CACHE_VERSION) { close(fd); if (why) *why = "schema version mismatch"; return 0; }
+    if (h.header_crc != vka_gpl_cache_hdr_crc(&h)) { close(fd); if (why) *why = "header checksum mismatch"; return 0; }
+    if (h.vendor_id != vendor_id) { close(fd); if (why) *why = "vendorID mismatch"; return 0; }
+    if (h.device_id != device_id) { close(fd); if (why) *why = "deviceID mismatch"; return 0; }
+    if (h.driver_version != driver_version) { close(fd); if (why) *why = "driverVersion mismatch"; return 0; }
+    if (memcmp(h.pipeline_cache_uuid, uuid, VKA_GPL_CACHE_UUID_SIZE) != 0) { close(fd); if (why) *why = "pipelineCacheUUID mismatch"; return 0; }
+    if (h.dmsh_vk_lib_hash != dmsh_hash) { close(fd); if (why) *why = "dmsh_vk.lib hash mismatch"; return 0; }
+    if (!(h.flags & VKA_GPL_CACHE_F_DELTA)) { close(fd); if (why) *why = "missing delta flag"; return 0; }
+    if (((h.flags & VKA_GPL_CACHE_F_GL_DEPTH) != 0) != (expected_gl_depth != 0)) { close(fd); if (why) *why = "GL depth mode mismatch"; return 0; }
+    if (h.bitset_bytes != 0) { close(fd); if (why) *why = "unexpected bitset"; return 0; }
+    if (h.vk_cache_bytes == 0) { close(fd); if (why) *why = "empty pipeline cache payload"; return 0; }
+    if ((uint64_t)st.st_size != (uint64_t)sizeof h + h.vk_cache_bytes) {
+        close(fd);
+        if (why) *why = "file size mismatch";
+        return 0;
+    }
+    void *blob = malloc(h.vk_cache_bytes);
+    if (!blob) { close(fd); if (why) *why = "out of memory"; return 0; }
+    int ok = vka_gpl_cache_read_all(fd, blob, h.vk_cache_bytes);
+    close(fd);
+    if (!ok) { free(blob); if (why) *why = "payload read error"; return 0; }
+    if (vka_gpl_cache_fnv64(blob, h.vk_cache_bytes) != h.vk_cache_fnv) {
+        free(blob);
+        if (why) *why = "payload checksum mismatch";
+        return 0;
+    }
+    if (out_hdr) *out_hdr = h;
+    if (out_vk_blob) *out_vk_blob = blob; else free(blob);
+    if (why) *why = NULL;
+    return 1;
 }
 
 static inline int vka_precompile_target_workers(int max_workers, double elapsed_s, uint64_t avail_mb, long maps, long maps_max, int *abort_early) {

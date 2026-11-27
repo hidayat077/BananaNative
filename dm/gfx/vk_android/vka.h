@@ -560,6 +560,8 @@ const dmsh_vk_bind *vka_shader_precomp_binds(const vka_shlib *L, const dmsh_vk_e
 VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
 VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
 VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask);
+struct vka_svar_rec;
+VkShaderModule vka_shader_precomp_variant(const vka_shlib *L, const dmsh_vk_entry *e, const void *svar_rec, VkShaderModule *out_base_to_destroy);
 uint64_t vka_shader_frontend_xlate_count(void);
 void vka_shader_retype_counts(uint64_t *fout, uint64_t *vin, uint64_t *tex, uint64_t *cs_img);
 int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out);   // host-visible memory for the process's life (c1 bytes, the support and zero buffers)
