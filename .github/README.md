@@ -39,6 +39,7 @@ The [games table](../dm/games/README.md#games) lists every title the app knows a
 | [Sid Meier's Civilization VII](../dm/games/0100C3601518C000/README.md) | 1.5.1 | `0100C3601518C000` |
 | [LEGO Star Wars: The Skywalker Saga](../dm/games/010042D00D900000/README.md) | 1.10.0 | `010042D00D900000` |
 | [Hellblade: Senua's Sacrifice](../dm/games/010044500CF8E000/README.md) | 1.1.0 (base) | `010044500CF8E000` |
+| [Immortals Fenyx Rising](../dm/games/01004A600EC0A000/README.md) | 1.3.4 (base) | `01004A600EC0A000` |
 | [No Man's Sky](../dm/games/0100853015E86000/README.md) | v5308416 (7.10.0) | `0100853015E86000` |
 | [Super Mario Odyssey](../dm/games/0100000000010000/README.md) | 1.4.1 | `0100000000010000` |
 

@@ -89,6 +89,7 @@ KEY_SKIP = tuple(int(x, 0) for x in GAME.get('shader_key_skip', '0+0').split('+'
 
 CTL_MAGIC, GFX_MAGIC, CS_MAGIC = bytes.fromhex('34127698'), bytes.fromhex('78563412'), bytes.fromhex('79563412')
 GLSLC_MAGIC = b'\x91\x68\x86\x19'
+GPUCODEONLY = b'GPUCODEONLY\0'   # Ubisoft's code-only shader archive (Anvil)
 STAGES = ['vs', 'hs', 'ds', 'gs', 'ps', 'cs']
 # An NVN2 BNSH program has stage slots past those six: 7 holds the task shader and 8 the mesh shader (The Legend of Zelda: Ocarina of Time's Model and Foliage .bfsha,
 # 1,699 task and 1,739 mesh shaders; read from the six slots alone, every mesh-shaded draw was missing from the map and dropped). Slot 6 has not been seen used
@@ -2434,6 +2435,28 @@ def raw_shaders(d, label, known=()):
         if why: print(f'[RED] {label} control section @{c:#x}: {why}; left out', flush=True)
     return out
 
+def gpu_codeonly_shaders(d, label, out):
+    """Shaders of Ubisoft's GPUCODEONLY archive (Immortals Fenyx Rising, Anvil): one or more code-only blobs,
+    each a 0x10-byte header ('GPUCODEONLY', a version word) followed by code areas and their control sections.
+    A control starts with CTL_MAGIC, +0x20 its length and +0x704 the code length; the code area ends four bytes
+    before it, where a word the tools do not need sits. Graphics code areas start with GFX_MAGIC, compute ones
+    are headerless, so glslc_stage takes their stage from the control's thread group (+0x748). Fenyx's
+    ShaderDataNVN.bin keeps headed code in its first blob and headerless code in the later ones; both pair
+    by the same rule."""
+    for m in re.finditer(re.escape(CTL_MAGIC), d):
+        c = m.start()
+        if c + 0x708 > len(d): continue
+        nctl = struct.unpack_from('<I', d, c + 0x20)[0]
+        n = struct.unpack_from('<I', d, c + 0x704)[0]
+        if not (0x760 <= nctl <= 1 << 16 and 0x80 <= n <= 1 << 22 and c + nctl <= len(d)): continue
+        k = c - 4 - n
+        if k < 0: continue
+        ctl, code = d[c:c + nctl], d[k:c - 4]
+        st = glslc_stage(ctl, code)
+        if st and not check(label, st, ctl, code):
+            out.append((f'{label}#GPU@{c:#x}', st, ctl, code))
+    return out
+
 TTDAT = b'TTDAT'   # job tag: TT Games' indexed .nnx_shaders members (ttdat.py)
 def ttdat_jobs(files, parts=64):
     import ttdat
@@ -3374,6 +3397,7 @@ NEST = 16   # archives in archives scan_blob opens (SARC, PlatinumGames' DAT): r
             # that expands 9 times, which then added up to 18 times the file)
 def scan_blob(d, label, out, depth=0, left=None):
     if depth > NEST: red(f'{label}: archives nested more than {NEST} deep')
+    if d[:12] == GPUCODEONLY: gpu_codeonly_shaders(d, label, out); return
     if d[:4] == b'SHN!': out.extend(shn_shaders(d, label)); return
     if d[:8] == CIVBSF: out.extend(civbsf_shaders(d, label)); return
     if d[:8] == SUMO_MUX:
@@ -3802,6 +3826,9 @@ def scan_file_in(args):
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
     with open(path, 'rb') as f: head = f.read(16)
     found = Shaders(); trees = {}
+    if head[:12] == GPUCODEONLY:   # an Ubisoft code-only shader archive: read the pairs directly, no full blob scan
+        with open(path, 'rb') as f: gpu_codeonly_shaders(f.read(), '/' + rel, found)
+        return rel, uniq_keys(found), var_pairs(found), trees
     if len(args) > 2 and args[2][0] == b'ARH':   # ARH1 and ARH2 share archive jobs
         arh_shaders(path, rel, args[2][1], found)
         return rel, uniq_keys(found), var_pairs(found), trees

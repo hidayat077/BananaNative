@@ -248,6 +248,13 @@ Finding, keying and translating shaders (`dm/gfx/tools/shader_split.py`, `dmsh_b
 - **Fix:** `shader_split.py`'s `snowdrop_sdf_zlib_shaders()` scans zlib headers in `BERG` slices, inflates only streams whose first four bytes are `0xabcd00d4`, reassembles consecutive 64 KB zlib chunks up to `payload_length + 20` when the first chunk is 64 KB, and reads the GLSLC control and code with the same `+0x20` / `+0x704` lengths and checks as `snowdrop_shaders()`. The source column records the zlib and control offsets (`#SDFZLIB@…`).
 - **Found on:** [South Park: The Fractured but Whole](../../dm/games/01008F2005154000/README.md): 4,614 shaders in a clean full split (75 compute, 467 pixel, 4,072 vertex), including 10 pixel shaders from 956 multi-chunk `.mcache` assets (among them `a19dd0ddaa9e08ce` at `sdf-A-0200.sdfdata#SDFZLIB@0x67e6962:0x166a6`) and 27 in `sdf-A-0000.sdfdata`'s `.mcache` assets.
 
+### Ubisoft's GPUCODEONLY shader archives
+
+- **Symptom:** the split finds no shaders in a RomFS of `.forge` world archives and a root `ShaderDataNVN.bin` that begins with `GPUCODEONLY`, even though `main` imports `nvnBootstrapLoader`.
+- **Cause:** Anvil keeps all compiled NVN programs in code-only blobs: a 0x10-byte `GPUCODEONLY` header and a version word, then code areas followed by a four-byte record and their control sections. A control begins with `0x98761234`, holds its own length at `+0x20` and the code length at `+0x704`; the code area ends four bytes before it. The first blob's graphics code areas start with `0x12345678`, but those of later blobs are headerless compute, so a reader that looks for the code magic finds only part of the file. The `.forge` archives hold control sections whose code is not adjacent, and are not the shader source.
+- **Fix:** `shader_split.py` recognises `GPUCODEONLY` by magic (`gpu_codeonly_shaders`) and pairs every control with the code ending four bytes before it, using `glslc_stage` to read a headerless compute shader's stage from the control's thread group at `+0x748`. Each pair passes the usual control / code / stage check; the source column records the control's offset (`#GPU@…`). `test_gpu_codeonly.py` covers both the headed and the headerless form without game data.
+- **Found on:** [Immortals Fenyx Rising](../../dm/games/01004A600EC0A000/README.md): 2,578 distinct shaders (180 vertex, 3 hull, 7 domain, 95 geometry, 1,388 pixel, 905 compute) from 4,259 control sections, no `[RED]` lines and no vertex / pixel variation pairs.
+
 ### CompiledBytecode resources in Frostbite superbundles
 
 - **Symptom:** the survey finds no shader container in a RomFS of `.toc` and `.cas` files (`Data/NX`, `Patch/NX`, `Data/layout.toc`, `Data/initfs_NX`); the split reads every file loosely and finds nothing.
