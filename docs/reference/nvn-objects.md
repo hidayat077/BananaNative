@@ -672,6 +672,13 @@ Games read this count as a position in their own command memory and size their h
 - **Fix:** `bind_handles` (`hle_nvn.c`) keeps the low 32 bits of each handle before it moves the IDs to the part of the host's table of the pool the command buffer bound (which may then pass 12 bits).
 - **Found on:** [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), at the title and in the menus.
 
+### A bind wider than 32 handles
+
+- **Symptom:** `[RED] bind handle count 49` on every frame, tens of thousands of times a run, with textures or samplers missing from the picture.
+- **Cause:** `bind_handles` (`hle_nvn.c`) refused a bind of more than 32 handles and returned NULL, dropping all of them. A host record holds at most 32 handles, but NVN has 128 texture and sampler slots: Immortals Fenyx Rising binds 49 at once, which hardware accepts.
+- **Fix:** `bind_handles_` records the count in consecutive chunks of at most 32, each with its own first slot, handle range and (for deferred binds) its own source address in guest memory. The replay already reads a record's own count, so its records and ABI are unchanged. `t_nvn` checks a 49-handle bind becomes records of 32 and 17 with the right slots and handles.
+- **Found on:** [Immortals Fenyx Rising](../../dm/games/01004A600EC0A000/README.md), first phone run (Turnip, frame loop reached).
+
 ### Version and capability checks that fail quietly
 
 - **Symptom:** device / subsystem setup returns quietly and the next stage never starts.

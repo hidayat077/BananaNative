@@ -1548,22 +1548,32 @@ NVN(nvnCommandBufferBindStorageBuffer, void, NVNcommandBuffer *c, NVNshaderStage
 NVN(nvnCommandBufferBindStorageBuffers, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNbufferRange *rg) {
     for (int i = 0; i < n; i++) { ssbo_slot_check(st, first + i); shp_bind(SHK_SSBO, rg[i].address, rg[i].size); *REC(c, OP_BIND_SSBO, p_bind_buf) = (p_bind_buf){st, first + i, rg[i].address, rg[i].size}; }
 }
-static p_bind_handles *bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) {
-    if (n < 0 || n > 32) { LOG("[RED] bind handle count %d", n); return NULL; }
-    p_bind_handles *r = RECN(c, op, p_bind_handles, h, n); r->stage = st; r->first = first; r->n = n; r->defer = 0; r->src = 0;
-    // The driver writes each handle into the c2 table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half of the 64-bit handle.
-    // EA SPORTS FC 27 binds separate textures with bit 32 set (0x1000001d1): read whole, its sampler ID was 4096, beyond any pool, where the GPU reads sampler 0
-    for (int i = 0; i < n; i++) r->h[i] = (uint32_t)h[i];
-    {   // this command buffer may have bound a pool other than the first: move its IDs to that pool's part of the table (handle: texture ID in bits 0-19, sampler ID from bit 20)
-        int tb = CB(c)->tex_base, sb = CB(c)->samp_base;
-        for (int i = 0; i < n && (tb || sb); i++) {
-            uint64_t v = r->h[i], tid = v & 0xfffff, sid = v >> 20;
-            if (op == OP_BIND_SAMP) { if (sid) r->h[i] = (sid + (uint64_t)sb) << 20; }
-            else { if (tid) tid += (uint64_t)tb; if (sid && op == OP_BIND_TEX) sid += (uint64_t)sb; r->h[i] = tid | sid << 20; }
+static p_bind_handles *bind_handles_(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h, int defer, uint64_t src) {
+    if (n < 0 || (n && !h)) { static int red; if (red++ < 8) LOG("[RED] bind handle count %d", n); return NULL; }
+    p_bind_handles *ret = NULL;
+    // A record holds at most 32 handles; NVN has 128 texture / sampler slots, so a wider bind becomes several records
+    // (Immortals Fenyx Rising binds 49 at once thousands of times a run: the old limit returned NULL and dropped them all).
+    for (int off = 0; off < n; ) {
+        int k = n - off > 32 ? 32 : n - off;
+        p_bind_handles *r = RECN(c, op, p_bind_handles, h, k);
+        r->stage = st; r->first = first + off; r->n = k; r->defer = defer; r->src = src ? src + 4 * (uint64_t)off : 0;
+        // The driver writes each handle into the c2 table as a 32-bit word (texture ID in bits 0-19, sampler ID in bits 20-31), so the GPU never sees the upper half of the 64-bit handle.
+        // EA SPORTS FC 27 binds separate textures with bit 32 set (0x1000001d1): read whole, its sampler ID was 4096, beyond any pool, where the GPU reads sampler 0
+        for (int i = 0; i < k; i++) r->h[i] = (uint32_t)h[off + i];
+        {   // this command buffer may have bound a pool other than the first: move its IDs to that pool's part of the table (handle: texture ID in bits 0-19, sampler ID from bit 20)
+            int tb = CB(c)->tex_base, sb = CB(c)->samp_base;
+            for (int i = 0; i < k && (tb || sb); i++) {
+                uint64_t v = r->h[i], tid = v & 0xfffff, sid = v >> 20;
+                if (op == OP_BIND_SAMP) { if (sid) r->h[i] = (sid + (uint64_t)sb) << 20; }
+                else { if (tid) tid += (uint64_t)tb; if (sid && op == OP_BIND_TEX) sid += (uint64_t)sb; r->h[i] = tid | sid << 20; }
+            }
         }
+        if (!ret) ret = r;
+        off += k;
     }
-    return r;
+    return ret;
 }
+static p_bind_handles *bind_handles(NVNcommandBuffer *c, int op, int st, int first, int n, const uint64_t *h) { return bind_handles_(c, op, st, first, n, h, 0, 0); }
 // Image (writable texture): handle = texture pool index (GetImageHandle returns it as-is; RegisterImage writes the same table as RegisterTexture)
 NVN(nvnCommandBufferBindImages, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNimageHandle *h) {
     bind_handles(c, OP_BIND_IMG, st, first, n, (const uint64_t *)h);
@@ -3230,8 +3240,7 @@ NVN(nvnCommandBufferBindTextures, void, NVNcommandBuffer *c, NVNshaderStage st, 
 //   passing the address of the handle field in the texture sampler object with a count of 1; command blocks are recorded once and submitted repeatedly, and the handle is written / replaced afterwards. The host used to copy the handles at recording (mostly 0),
 //   so every texture of the deferred lighting composite became the dummy texture 0 and the whole 3D picture was black. The address is recorded and the replay layer reads it when it reads the record (bh_fresh)
 NVN_NOPROTO(nvnCommandBufferBindTexturesDeferred, void, NVNcommandBuffer *c, NVNshaderStage st, int first, int n, const NVNtextureHandle *h) {
-    p_bind_handles *r = bind_handles(c, OP_BIND_TEX, st, first, n, (const uint64_t *)h);
-    if (r && h) { r->defer = 1; r->src = (uint64_t)(uintptr_t)h; }
+    bind_handles_(c, OP_BIND_TEX, st, first, n, (const uint64_t *)h, 1, (uint64_t)(uintptr_t)h);   // every chunk reads its own range of src at replay
     if (CB(c)->tex_base || CB(c)->samp_base) ONCE_LOG("[RED] deferred-bound handles are read only at replay: the numbering base of this command buffer's bound descriptor pools is not added (pools %d / %d)", CB(c)->tex_base, CB(c)->samp_base);
 }
 NVN(nvnCommandBufferBindImage, void, NVNcommandBuffer *c, NVNshaderStage st, int i, NVNimageHandle h) { uint64_t v = (uint64_t)h; bind_handles(c, OP_BIND_IMG, st, i, 1, &v); }

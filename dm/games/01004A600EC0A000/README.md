@@ -29,6 +29,11 @@ The survey did not extract the 17 GB `.nup`: `01004A600EC0A000-work/make_survey_
 ## Found on this game
 
 - **Ubisoft's GPUCODEONLY shader archives**: first game with this container; the reader in `shader_split.py` is general ([shaders.md](../../../docs/reference/shaders.md#ubisofts-gpucodeonly-shader-archives)).
+- **A bind wider than 32 handles**: the first phone run logged `[RED] bind handle count 49` tens of thousands of times; the host now records such a bind in consecutive chunks ([nvn-objects.md](../../../docs/reference/nvn-objects.md#a-bind-wider-than-32-handles)).
+
+## First phone run (2026-11-27, Turnip v27, build `4c1d0ce`)
+
+Reached the frame loop and held about 30 fps for 1,790 frames, then the GPU device was lost at frame 2,069 (~147 s): `[RED] vk: GPU hang: the present's submission returned -4`, with 174 draws in the stuck submission. This has the shape of [a GPU hang or lost device in warm play](../../../docs/reference/rendering.md#a-gpu-hang-or-lost-device-in-warm-play-android-open), whose cause is still open on other games too; no conclusion yet for this game. The same run also logged 32 distinct shader keys as `not in the shader library` (they are not in `shader_map.tsv`), plus a few guest buffers the GPU could not see. Next: a run with `DM_VK_PARTLOG=1` on Turnip to name the stuck draws, and one with `DM_NVN_SHDUMP=1` to capture the missing shaders for a re-split. This phone's system driver has no Vulkan 1.3 and shows a black screen, so the Turnip / system-driver A/B from the reference entry is not available here.
 
 ## Status
 
