@@ -20,6 +20,7 @@ enum {
     VKA_EDS_COLOR_BLEND_ENABLE = 1u << 8,    // VK_EXT_extended_dynamic_state3: colorBlendEnable
     VKA_EDS_COLOR_BLEND_EQ     = 1u << 9,    // VK_EXT_extended_dynamic_state3: colorBlendEquation
     VKA_EDS_COLOR_WRITE_MASK   = 1u << 10,   // VK_EXT_extended_dynamic_state3: colorWriteMask
+    VKA_EDS_TOPO_UNRESTRICTED  = 1u << 11,   // dynamicPrimitiveTopologyUnrestricted: non-tessellation topology is dynamic
 
     VKA_EDS2_MASK = VKA_EDS_LOGIC_OP | VKA_EDS_PATCH_CP,
     VKA_EDS3_MASK = VKA_EDS_DEPTH_CLAMP | VKA_EDS_POLYGON_MODE | VKA_EDS_RAST_SAMPLES | VKA_EDS_SAMPLE_MASK |
@@ -33,6 +34,7 @@ static inline void vka_eds_runtime_key(const vka_gkey *canon, uint32_t eds_mask,
     size_t n = canon->vin_static ? sizeof *out : offsetof(vka_gkey, va);
     memset(out, 0, sizeof *out);
     memcpy(out, canon, n);
+    if ((eds_mask & VKA_EDS_TOPO_UNRESTRICTED) && canon->topo != 10 /* VK_PRIMITIVE_TOPOLOGY_PATCH_LIST */) out->topo = 0;
     if (eds_mask & VKA_EDS_DEPTH_CLAMP) out->depth_clamp = 0;
     if (eds_mask & VKA_EDS_POLYGON_MODE) out->poly_mode = 0;
     if (eds_mask & VKA_EDS_RAST_SAMPLES) out->samples = 0;

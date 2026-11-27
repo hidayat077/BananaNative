@@ -354,8 +354,10 @@ static int init_once(void) {
     VkPhysicalDeviceMaintenance3Properties pm3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES, .pNext = V.push_desc ? (void *)&ppd : (void *)&p11};
     VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT pgpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT, .pNext = &pm3};
     VkPhysicalDeviceDriverProperties pdr = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, .pNext = x_gpl ? (void *)&pgpl : (void *)&pm3};
-    VkPhysicalDeviceMeshShaderPropertiesEXT pmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT, .pNext = &pdr};
-    VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = x_mesh ? (void *)&pmesh : (void *)&pdr};
+    VkPhysicalDeviceExtendedDynamicState3PropertiesEXT peds3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_PROPERTIES_EXT, .pNext = &pdr};
+    void *p2_next = x_eds3 ? (void *)&peds3 : (void *)&pdr;
+    VkPhysicalDeviceMeshShaderPropertiesEXT pmesh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT, .pNext = p2_next};
+    VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = x_mesh ? (void *)&pmesh : p2_next};
     vk.vkGetPhysicalDeviceProperties2(V.pd, &p2);
     VLOG("driver: %s (%s), driver ID %d, conformance %u.%u.%u.%u, driver version %#x; %s", pdr.driverName, pdr.driverInfo, pdr.driverID, pdr.conformanceVersion.major,
          pdr.conformanceVersion.minor, pdr.conformanceVersion.subminor, pdr.conformanceVersion.patch, V.props.driverVersion, vka_driver_tag() ? "custom (DM_VK_DRIVER)" : "the system's");
@@ -370,7 +372,16 @@ static int init_once(void) {
     { const char *e = getenv("DM_VK_GPL"); int want = !(e && !strcmp(e, "0"));   // restart only: the libraries are made with the device's pipelines
       V.gpl = want && x_gpl && fgpl.graphicsPipelineLibrary && pgpl.graphicsPipelineLibraryFastLinking;
       VLOG("graphics pipeline libraries: %s", V.gpl ? "on (a pipeline the cache lacks is linked from stage libraries, the optimized one is made in the background; DM_VK_GPL=0 off)"
-           : !x_gpl ? "not on this device" : !fgpl.graphicsPipelineLibrary ? "extension without the feature" : !pgpl.graphicsPipelineLibraryFastLinking ? "no fast linking" : "off (DM_VK_GPL=0)"); }
+           : !x_gpl ? "not on this device" : !fgpl.graphicsPipelineLibrary ? "extension without the feature" : !pgpl.graphicsPipelineLibraryFastLinking ? "no fast linking" : "off (DM_VK_GPL=0)");
+      const char *le = getenv("DM_VK_GPL_LTO");
+      V.gpl_lto = le && atoi(le) > 0;
+      const char *pe = getenv("DM_VK_GPL_PRECOMPILE");
+      int gpl_pre_want = pe && *pe ? atoi(pe) != 0 : (V.driver_id == VK_DRIVER_ID_MESA_TURNIP);
+      V.gpl_indep = V.gpl && gpl_pre_want && V.props.limits.maxBoundDescriptorSets >= 4;
+      V.topo_unrestricted = x_eds3 && peds3.dynamicPrimitiveTopologyUnrestricted;
+      VLOG("GPL independent-sets layout: %s (LTO retain %s, dynamicPrimitiveTopologyUnrestricted %d; maxBoundDescriptorSets %u)",
+           V.gpl_indep ? "on (4-set VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT; DM_VK_GPL_PRECOMPILE=0 off)" : "off",
+           V.gpl_lto ? "on (DM_VK_GPL_LTO=1)" : "off (DM_VK_GPL_LTO=0)", V.topo_unrestricted, V.props.limits.maxBoundDescriptorSets); }
     V.placed_align = pmp.minPlacedMemoryMapAlignment ? pmp.minPlacedMemoryMapAlignment : 4096; V.max_alloc = pm3.maxMemoryAllocationSize;
     V.max_push = V.push_desc ? ppd.maxPushDescriptors : 0;
     if (V.mesh && !vk.vkCmdDrawMeshTasksEXT) V.mesh = V.task = 0;
@@ -405,8 +416,10 @@ static int init_once(void) {
         if (e && *e) V.vin_dyn = strcmp(e, "0") != 0; else if (V.qcom_old || !V.dyn_state_on) V.vin_dyn = 0;
         if (!V.vin_dyn) VLOG("vertex input dynamic state: off (%s; DM_VK_VIN_DYN=1: on), the vertex input goes into the pipeline", e && *e ? "DM_VK_VIN_DYN=0" : !V.dyn_state_on ? "DM_VK_DYNAMIC_STATE=0" : "Qualcomm driver before 512.800");
     }
+    if (V.topo_unrestricted && V.vin_dyn) V.eds_mask |= VKA_EDS_TOPO_UNRESTRICTED;
     auto_log(&(vka_auto_in){.driver_id = V.driver_id, .qcom_old = V.qcom_old, .mesh_ext = mesh_ext, .memu = V.memu, .vin_dyn_ext = vin_dyn_ext,
-                            .prof_one_lane = DM_GAME_NSUBGROUP_ONE_LANE, .prof_prepass_cut = DM_GAME_NMESH_PREPASS_CUT, .prof_oq_split = DM_GAME_OCCLUSION_SPLIT_PASS, .eds3_ext = x_eds3_ext}, pdr.driverName);
+                            .prof_one_lane = DM_GAME_NSUBGROUP_ONE_LANE, .prof_prepass_cut = DM_GAME_NMESH_PREPASS_CUT, .prof_oq_split = DM_GAME_OCCLUSION_SPLIT_PASS, .eds3_ext = x_eds3_ext,
+                            .gpl_ext = V.gpl && V.props.limits.maxBoundDescriptorSets >= 4}, pdr.driverName);
     vka_enc_install();
     vka_gbar_install();   // on top of the encoder: sees every work command the replay records (vka_gbar.c)
     const VkPhysicalDeviceLimits *lim = &V.props.limits;

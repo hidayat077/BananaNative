@@ -3,6 +3,7 @@
 #include <string.h>
 #include "../../gfx/vk_android/vka_eds.h"
 #include "../../gfx/vk_android/vka_pwlist.h"
+#include "../../gfx/vk_android/vka_gpl_stats.h"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -86,12 +87,36 @@ static void test_dirty_tracker(void) {
     CHECK(vka_dyn_is_dirty(dirty, VKA_DYN_WRITE_MASK), "write_mask still dirty");
 }
 
+static void test_topo_unrestricted_and_gpl_stats(void) {
+    vka_gkey c1 = make_canon(0, 1, 0, 0xf, 0, 1, 0, 0, 0, 3);
+    vka_gkey c2 = c1; c2.topo = 5;   // TRIANGLE_FAN
+    vka_gkey c3 = c1; c3.topo = 10;  // PATCH_LIST
+    vka_gkey r1, r2, r3;
+    vka_eds_runtime_key(&c1, VKA_EDS_TOPO_UNRESTRICTED, 0, &r1);
+    vka_eds_runtime_key(&c2, VKA_EDS_TOPO_UNRESTRICTED, 0, &r2);
+    vka_eds_runtime_key(&c3, VKA_EDS_TOPO_UNRESTRICTED, 0, &r3);
+    CHECK(r1.topo == 0 && r2.topo == 0, "non-patch topology masked when topo_unrestricted=1");
+    CHECK(r3.topo == 10, "PATCH_LIST topology preserved");
+
+    CHECK(!vka_binding_is_fs(0) && !vka_binding_is_fs(255), "VS/GS bindings are not FS");
+    CHECK(vka_binding_is_fs(256) && vka_binding_is_fs(319), "FS bindings [256..319] detected");
+    CHECK(!vka_binding_is_fs(320) && !vka_binding_is_fs(382), "CS/MEMU_ARENA bindings are not FS");
+
+    vka_gpl_lat st = {0};
+    for (uint32_t i = 1; i <= 1100; i++) vka_gpl_lat_add(&st, (uint64_t)i * 1000ull);
+    double avg = 0, p99 = 0, mx = 0;
+    vka_gpl_lat_summary(&st, &avg, &p99, &mx);
+    CHECK(st.count == 1100 && mx == 1100.0 && avg > 550.0 && avg < 551.0, "avg/max latency (%g, %g)", avg, mx);
+    CHECK(p99 >= 1085.0 && p99 <= 1100.0, "p99 latency over wrapped ring (%g)", p99);
+}
+
 int main(void) {
     test_zero_mask_identity();
     test_full_eds_deduplication();
     test_partial_mask_and_keep_a2c();
     test_vin_static_preserved();
     test_dirty_tracker();
+    test_topo_unrestricted_and_gpl_stats();
     printf("t_android_eds: %s\n", fails ? "FAILED" : "ok");
     return fails != 0;
 }

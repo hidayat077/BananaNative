@@ -3027,10 +3027,11 @@ static int pfb_avail(void) {
     if (v) {
         VkPhysicalDeviceVulkan12Properties p12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p12}; vk.vkGetPhysicalDeviceProperties2(V.pd, &p2);
+        uint32_t fb_set = V.gpl_indep ? 3u : VKA_POOL_FB_SET;
         if (p12.maxPerStageDescriptorUpdateAfterBindStorageBuffers <= DMSH_VK_STAGE_BINDINGS || p12.maxDescriptorSetUpdateAfterBindStorageBuffers <= DMSH_VK_STAGE_BINDINGS) {
             VRED("texture pool reads: %u / %u update-after-bind storage buffers a stage / a layout leave no room beside set 0's: pool reads are not reported",
                  p12.maxPerStageDescriptorUpdateAfterBindStorageBuffers, p12.maxDescriptorSetUpdateAfterBindStorageBuffers); v = 0; }
-        else if (V.props.limits.maxBoundDescriptorSets <= VKA_POOL_FB_SET) { VRED("texture pool reads: %u descriptor sets a pipeline: no room for the bitmap's set; pool reads are not reported", V.props.limits.maxBoundDescriptorSets); v = 0; }
+        else if (V.props.limits.maxBoundDescriptorSets <= fb_set) { VRED("texture pool reads: %u descriptor sets a pipeline: no room for the bitmap's set %u; pool reads are not reported", V.props.limits.maxBoundDescriptorSets, fb_set); v = 0; }
     }
     if (v) {
         VkDeviceSize al = V.sb_align > 256 ? V.sb_align : 256;
@@ -3054,7 +3055,7 @@ static int pfb_avail(void) {
                 vk.vkUpdateDescriptorSets(V.dev, 1, &w, 0, NULL);
             }
         }
-        if (v) VLOG("texture pool reads: the GPU reports the texture IDs shaders read through the pool (a bitmap in descriptor set %d); their images are made when read and kept while read (DM_VK_POOL_FB=0 off)", VKA_POOL_FB_SET);
+        if (v) VLOG("texture pool reads: the GPU reports the texture IDs shaders read through the pool (a bitmap in descriptor set %u); their images are made when read and kept while read (DM_VK_POOL_FB=0 off)", V.gpl_indep ? 3u : VKA_POOL_FB_SET);
     }
     atomic_store(&g_pfb, v);
     pthread_mutex_unlock(&mu);

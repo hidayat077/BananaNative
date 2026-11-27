@@ -540,6 +540,8 @@ DM_VK_GATE_EVENT	developer	Graphics			text			both
 DM_VK_GMEM_REACH	developer	Diagnostics			text			both							
 DM_VK_GPL	developer	Graphics			text			both							
 DM_VK_GPL_GIVEUP	developer	Graphics			text			both							
+DM_VK_GPL_LTO	developer	Graphics			text		Off	both							
+DM_VK_GPL_PRECOMPILE	developer	Graphics			text		On on Turnip where the device has GPL; off on other drivers	both							
 DM_VK_GPL_PROBE	developer	Diagnostics			text			both							
 DM_VK_GPUPROF	developer	Diagnostics			text			both							
 DM_VK_GPUPROF_LIST	developer	Diagnostics			text			both							

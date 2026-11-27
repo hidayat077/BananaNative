@@ -66,7 +66,7 @@ Phase 0 codebase audit for implementing zero in-game `ir3` shader compilation on
 | `VK_EXT_vertex_input_dynamic_state` | **Enabled** | [vka_dev.c](dm/gfx/vk_android/vka_dev.c), [vka_draw.c](dm/gfx/vk_android/vka_draw.c) | `V.vin_dyn`, emits `vkCmdSetVertexInputEXT` (off by default on Qualcomm < 512.800). |
 | `VK_EXT_extended_dynamic_state3` | **Added (M2)** | [vka_dev.c](dm/gfx/vk_android/vka_dev.c), [vka_eds.h](dm/gfx/vk_android/vka_eds.h) | Gated by `DM_VK_EDS3` (default `1` on Turnip, `0` elsewhere). Covers 9 feature bits (`depthClampEnable`, `polygonMode`, `rasterizationSamples`, `sampleMask`, `alphaToCoverageEnable`, `logicOpEnable`, `colorBlendEnable`, `colorBlendEquation`, `colorWriteMask`). |
 | `VK_EXT_graphics_pipeline_library` | **Enabled** | [vka_dev.c](dm/gfx/vk_android/vka_dev.c), [vka_pso.c](dm/gfx/vk_android/vka_pso.c) | 4-part GPL (`L_VI`, `L_PRE`, `L_FS`, `L_FO`), `RETAIN_LTO` off by default. |
-| `VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT` | **Planned (M3)** | [vka_pso.c](dm/gfx/vk_android/vka_pso.c) | Currently used only in diagnostic `pre_probe()`; M3 promotes it to the main layout path. |
+| `VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT` | **Added (M3)** | [vka_pso.c](dm/gfx/vk_android/vka_pso.c), [vka_shader.c](dm/gfx/vk_android/vka_shader.c), [vka_draw.c](dm/gfx/vk_android/vka_draw.c) | 4-set layout (`DM_VK_GPL_PRECOMPILE=1` on Turnip): Set 0 pre-raster, Set 1 FS, Set 2 pool, Set 3 pool-fb; SPIR-V `DescriptorSet` remapped in `vka_spv_remap_sets`. |
 | `vkMergePipelineCaches` | **Planned (M4)** | [vka.h](dm/gfx/vk_android/vka.h) | Needed for Boot #1 per-worker `VkPipelineCache` merging. |
 
 ---

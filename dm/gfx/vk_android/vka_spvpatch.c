@@ -1993,3 +1993,23 @@ done:
     if (!*sites) { free(o.w); return NULL; }
     return o.w;
 }
+
+uint32_t *vka_spv_remap_sets(const uint32_t *w, size_t nw, const uint32_t map[4], int *changed) {
+    if (changed) *changed = 0;
+    if (!w || nw < 5 || w[0] != 0x07230203) return NULL;
+    uint32_t *o = malloc(nw * 4);
+    if (!o) return NULL;
+    memcpy(o, w, nw * 4);
+    int ch = 0;
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = o[i] & 0xffff, len = o[i] >> 16;
+        if (!len || i + len > nw) { free(o); return NULL; }
+        if (op == OpDecorate && len >= 4 && o[i + 2] == DecDescriptorSet) {
+            uint32_t s = o[i + 3];
+            if (s < 4 && map[s] != s) { o[i + 3] = map[s]; ch = 1; }
+        }
+        i += len;
+    }
+    if (changed) *changed = ch;
+    return o;
+}

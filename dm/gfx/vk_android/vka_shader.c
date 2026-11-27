@@ -251,20 +251,43 @@ int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out) {
 // coverage, or the alpha test on when its discard is the module's only one (vka_shader_pfb_pick, vka_pso.c). A module the rewrite refuses is used as it is: its pool
 // reads report nothing (counted, logged)
 static PFN_vkCreateShaderModule g_csm_next; static PFN_vkDestroyShaderModule g_dsm_next;
+static _Thread_local int g_remap_stage = -1;
 typedef struct { VkShaderModule early, late; int kind; } pfb_twin;
 static pfb_twin *g_tw; static size_t g_ntw, g_twcap; static pthread_mutex_t g_twmu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic uint64_t g_pfb_mods, g_pfb_sites, g_pfb_early, g_pfb_blind;
+static VkResult csm_emit(VkDevice d, const VkShaderModuleCreateInfo *ci, const VkAllocationCallbacks *a, VkShaderModule *m) {
+    if (g_remap_stage >= 0 && ci && ci->pCode && ci->codeSize >= 20) {
+        static const uint32_t map_fs[4] = {1, 2, 3, 3};
+        static const uint32_t map_pre[4] = {0, 2, 3, 3};
+        int ch = 0;
+        uint32_t *rm = vka_spv_remap_sets(ci->pCode, ci->codeSize / 4, g_remap_stage == DMSH_VK_STAGE_FS ? map_fs : map_pre, &ch);
+        if (rm) {
+            VkShaderModuleCreateInfo c2 = *ci; c2.pCode = rm;
+            VkResult r = g_csm_next(d, &c2, a, m);
+            free(rm);
+            return r;
+        }
+    }
+    return g_csm_next(d, ci, a, m);
+}
+static VkResult create_stage_module(int stage, const VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
+    int prev = g_remap_stage;
+    g_remap_stage = (V.gpl_indep && stage != DMSH_VK_STAGE_CS) ? stage : -1;
+    VkResult r = vk.vkCreateShaderModule(V.dev, ci, NULL, mod);
+    g_remap_stage = prev;
+    return r;
+}
 static VkResult VKAPI_CALL csm_pfb(VkDevice d, const VkShaderModuleCreateInfo *ci, const VkAllocationCallbacks *a, VkShaderModule *m) {
     unsigned fl = vka_tex_pfb_flags();
-    if (!fl || !ci || !ci->pCode || ci->codeSize < 20) return g_csm_next(d, ci, a, m);
+    if (!fl || !ci || !ci->pCode || ci->codeSize < 20) return csm_emit(d, ci, a, m);
     size_t on = 0; int sites = 0, kind = 0; char err[200] = "";
     uint32_t *o = vka_spv_pool_fb(ci->pCode, ci->codeSize / 4, DMSH_VK_SET_POOL, DMSH_VK_POOL_TEX_BINDING, VKA_POOL_FB_SET, VKA_POOL_FB_BINDING, fl, DMSH_VK_SPEC_ALPHA_FUNC, &on, &sites, &kind, err, sizeof err);
     if (!o) {
         if (err[0]) { uint64_t n = atomic_fetch_add(&g_pfb_blind, 1); if (n < 8) VRED("texture pool reads: a module's pool reads report nothing (%s): a texture it alone reads through the pool is not made", err); }
-        return g_csm_next(d, ci, a, m);
+        return csm_emit(d, ci, a, m);
     }
     VkShaderModuleCreateInfo c2 = *ci; c2.codeSize = on * 4; c2.pCode = o;
-    VkResult r = g_csm_next(d, &c2, a, m);
+    VkResult r = csm_emit(d, &c2, a, m);
     free(o);
     if (r) return r;
     uint64_t nm = atomic_fetch_add(&g_pfb_mods, 1) + 1; atomic_fetch_add(&g_pfb_sites, (uint64_t)sites);
@@ -273,7 +296,7 @@ static VkResult VKAPI_CALL csm_pfb(VkDevice d, const VkShaderModuleCreateInfo *c
         size_t ln = 0; int ls = 0, lk = 0; uint32_t *l = vka_spv_pool_fb(ci->pCode, ci->codeSize / 4, DMSH_VK_SET_POOL, DMSH_VK_POOL_TEX_BINDING, VKA_POOL_FB_SET, VKA_POOL_FB_BINDING, fl & ~(unsigned)VKA_PFB_EARLY,
                                                             DMSH_VK_SPEC_ALPHA_FUNC, &ln, &ls, &lk, err, sizeof err);
         VkShaderModule lm = VK_NULL_HANDLE;
-        if (l) { c2.codeSize = ln * 4; c2.pCode = l; if (g_csm_next(d, &c2, a, &lm)) lm = VK_NULL_HANDLE; free(l); }
+        if (l) { c2.codeSize = ln * 4; c2.pCode = l; if (csm_emit(d, &c2, a, &lm)) lm = VK_NULL_HANDLE; free(l); }
         pthread_mutex_lock(&g_twmu);
         if (lm && g_ntw == g_twcap) { size_t nc = g_twcap ? 2 * g_twcap : 256; pfb_twin *n = realloc(g_tw, nc * sizeof *n); if (n) { g_tw = n; g_twcap = nc; } }
         if (lm && g_ntw < g_twcap) { g_tw[g_ntw++] = (pfb_twin){*m, lm, kind}; lm = VK_NULL_HANDLE; }
@@ -282,8 +305,8 @@ static VkResult VKAPI_CALL csm_pfb(VkDevice d, const VkShaderModuleCreateInfo *c
             if (lm) g_dsm_next(d, lm, a);
             g_dsm_next(d, *m, a); *m = VK_NULL_HANDLE;
             uint32_t *w2 = vka_spv_pool_fb(ci->pCode, ci->codeSize / 4, DMSH_VK_SET_POOL, DMSH_VK_POOL_TEX_BINDING, VKA_POOL_FB_SET, VKA_POOL_FB_BINDING, fl & ~(unsigned)VKA_PFB_EARLY, DMSH_VK_SPEC_ALPHA_FUNC, &ln, &ls, &lk, err, sizeof err);
-            if (!w2) return g_csm_next(d, ci, a, m);
-            c2.codeSize = ln * 4; c2.pCode = w2; r = g_csm_next(d, &c2, a, m); free(w2);
+            if (!w2) return csm_emit(d, ci, a, m);
+            c2.codeSize = ln * 4; c2.pCode = w2; r = csm_emit(d, &c2, a, m); free(w2);
         }
     }
     if (nm == 1 || !(nm & (nm - 1)))
@@ -528,7 +551,7 @@ static VkShaderModule spv_module_(const vka_shlib *L, const dmsh_vk_entry *e, co
     if (fcomp && vka_spv_fout_comps(w, nb / 4, fcomp)) memset(fcomp, 0xf, 8);   // a pixel shader's output components (the colour write mask: vka_draw.c)
     prep_words(e, key, &w, &nb);
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = nb, .pCode = w};
-    VkShaderModule mod = VK_NULL_HANDLE; VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod);
+    VkShaderModule mod = VK_NULL_HANDLE; VkResult r = create_stage_module(e->stage, &ci, &mod);
     free(w);
     if (r) { snprintf(err, errn, "vkCreateShaderModule %d (variant %u of %016llx)", r, m->variant, (unsigned long long)key); *why = err; return VK_NULL_HANDLE; }
     return mod;
@@ -545,7 +568,7 @@ VkShaderModule vka_shader_inst_module(vka_shader *s, uint32_t binding, uint32_t 
     free(w);
     if (!o) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) VLOG("instanced runs: shader %016llx (binding %u) takes no variant: %s", (unsigned long long)s->key, binding, err); return VK_NULL_HANDLE; }
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-    VkShaderModule mod = VK_NULL_HANDLE; VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod);
+    VkShaderModule mod = VK_NULL_HANDLE; VkResult r = create_stage_module(s->e->stage, &ci, &mod);
     free(o);
     if (r) { VRED("instanced runs: variant of %016llx (binding %u): vkCreateShaderModule %d", (unsigned long long)s->key, binding, r); return VK_NULL_HANDLE; }
     return mod;
@@ -565,7 +588,7 @@ vka_shader *vka_shader_remap(vka_shader *s, uint64_t map) {
     size_t on = 0; uint32_t *o = w ? vka_spv_input_remap(w, nb / 4, map, &on, &mv, &cs, err, sizeof err) : NULL;
     free(w);
     VkShaderModule mod = VK_NULL_HANDLE;
-    if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o}; VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod);
+    if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o}; VkResult r = create_stage_module(s->e->stage, &ci, &mod);
              if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
     free(o);
     if (mod && (v = calloc(1, sizeof *v))) {
@@ -611,7 +634,7 @@ VkShaderModule vka_shader_gs_module(vka_shader *s) {
     uint32_t *o = NULL; size_t on = 0; char err[256] = ""; VkShaderModule mod = VK_NULL_HANDLE;
     if (gs_words(s, &o, &on, err, sizeof err) > 0 && o) {
         VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-        VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; }
+        VkResult r = create_stage_module(s->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; }
     }
     free(o);
     if (!mod) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("geometry shader %016llx: module with the claim not made: %s", (unsigned long long)s->key, err); return VK_NULL_HANDLE; }
@@ -639,7 +662,7 @@ VkShaderModule vka_shader_spec_module(vka_shader *s, int gl) {
     size_t on = 0; uint32_t *o = w ? vka_spv_spec_freeze(w, nb / 4, DMSH_VK_SPEC_GL_DEPTH, (uint32_t)gl, &on) : NULL;
     free(w);
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); free(o);
+             VkResult r = create_stage_module(s->e->stage, &ci, &mod); free(o);
              if (r) { mod = VK_NULL_HANDLE; static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("%s shader %016llx: module with its specialization constants folded not made (vkCreateShaderModule %d): its subgroup lanes read 0 on Qualcomm's driver", stage_name(s->e->stage), (unsigned long long)s->key, r); }
              else { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 4) VLOG("%s shader %016llx: specialization constants folded into the module (GL depth %d), so its subgroup lanes read right", stage_name(s->e->stage), (unsigned long long)s->key, gl); } }
     pthread_mutex_lock(&g_mu);
@@ -669,7 +692,7 @@ VkShaderModule vka_shader_gs_link_module(vka_shader *gs, vka_shader *vs, vka_sha
     uint32_t *v = g ? base_words(vs, &vn, err, sizeof err) : NULL, *f = v ? base_words(fs, &fn, err, sizeof err) : NULL;
     if (f) o = vka_spv_gs_link(g, gn, v, vn / 4, f, fn / 4, &copied, &nulled, &on, err, sizeof err);
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
+             VkResult r = create_stage_module(gs->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
     free(g); free(v); free(f); free(o);
     if (mod) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) VLOG("geometry shader %016llx: outputs added for pixel shader %016llx's inputs it does not write: locations %#x copied from vertex shader %016llx, %#x null (vka_spv_gs_link)",
                                                                        (unsigned long long)gs->key, (unsigned long long)fs->key, copied, (unsigned long long)vs->key, nulled); }
@@ -694,7 +717,7 @@ VkShaderModule vka_shader_vin_module(vka_shader *s, uint32_t umask, uint32_t sma
     if (w) prep_words(s->e, s->key, &w, &nb);
     size_t on = 0; uint32_t *o = w ? vka_spv_vin_retype(w, nb / 4, umask, smask, &on, err, sizeof err) : NULL;
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } else own = 1; }
+             VkResult r = create_stage_module(s->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } else own = 1; }
     free(w); free(o);
     if (!mod) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("vertex shader %016llx: inputs %#x (uint) / %#x (int) not retyped: %s; the base module reads them as floats", (unsigned long long)s->key, umask, smask, err);
                 mod = vka_shader_module(s, DMSH_VK_MOD_BASE); }
@@ -719,7 +742,7 @@ VkShaderModule vka_shader_fout_module(vka_shader *s, uint32_t umask, uint32_t sm
     if (w) prep_words(s->e, s->key, &w, &nb);
     size_t on = 0; uint32_t *o = w ? vka_spv_fout_retype(w, nb / 4, umask, smask, &on, err, sizeof err) : NULL;
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } else own = 1; }
+             VkResult r = create_stage_module(s->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } else own = 1; }
     free(w); free(o);
     if (!mod) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pixel shader %016llx: outputs %#x (uint) / %#x (int) not retyped for their integer targets: %s; the base module, whose float outputs those targets do not take", (unsigned long long)s->key, umask, smask, err);
                 mod = vka_shader_module(s, DMSH_VK_MOD_BASE); }
@@ -749,7 +772,7 @@ VkShaderModule vka_shader_img_module(vka_shader *s, uint64_t umask, uint64_t sma
     if (w) prep_words(s->e, s->key, &w, &nb);
     size_t on = 0; uint32_t *o = w ? vka_spv_img_retype(w, nb / 4, 0, umask, smask, &on, err, sizeof err) : NULL;   // (compute: stage 0's binding range)
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
+             VkResult r = create_stage_module(gs->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
     free(w); free(o);
     { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) {
         if (mod) VLOG("compute shader %016llx: images and textures at bindings %#llx (uint) / %#llx (int) retyped for the integer textures bound there (their bits read and written as they are)",
@@ -792,7 +815,7 @@ VkShaderModule vka_shader_tex_module(vka_shader *s, const vka_texmod_key *key) {
     if (w && k.frz >= 0) { o = vka_spv_spec_freeze(w, nb / 4, DMSH_VK_SPEC_GL_DEPTH, (uint32_t)k.frz, &on); if (o) { free(w); w = o; nb = on * 4; } }
     o = w ? vka_spv_img_retype(w, nb / 4, (uint32_t)vka_shader_tex_range(s) * DMSH_VK_STAGE_BINDINGS, k.tex_u, k.tex_s, &on, err, sizeof err) : NULL;
     if (o) { VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
-             VkResult r = vk.vkCreateShaderModule(V.dev, &ci, NULL, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
+             VkResult r = create_stage_module(s->e->stage, &ci, &mod); if (r) { snprintf(err, sizeof err, "vkCreateShaderModule %d", r); mod = VK_NULL_HANDLE; } }
     free(w); free(o);
     { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32) {
         if (mod) VLOG("%s shader %016llx: textures at bindings %#llx (uint) / %#llx (int) of its range retyped for the integer texture views bound there (variant %d; their bits read as they are)",

@@ -123,6 +123,9 @@ typedef struct {
     int fb_loop;                                    // VK_EXT_attachment_feedback_loop_layout + _dynamic_state are on (default off; DM_VK_FB_LOOP=1 turns them on): a draw sampling its own attachment says so (vka_draw.c)
     int cache_ctl;                                  // pipelineCreationCacheControl (core 1.3): a pipeline may be asked for with FAIL_ON_PIPELINE_COMPILE_REQUIRED (vka_pso.c cs_obtain's cache-only try)
     int gpl;                                        // graphics pipeline libraries with fast linking (VK_EXT_graphics_pipeline_library): a pipeline the cache lacks is linked from stage libraries at once, the optimized one made in the background (vka_pso.c)
+    int gpl_indep;                                  // DM_VK_GPL_PRECOMPILE: 4-set VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT (Set 0 pre-raster, Set 1 FS, Set 2 pool, Set 3 pool-fb)
+    int gpl_lto;                                    // DM_VK_GPL_LTO (default 0): retain link-time optimization info in GPL parts & queue optimized full pipeline
+    int topo_unrestricted;                          // VkPhysicalDeviceExtendedDynamicState3PropertiesEXT.dynamicPrimitiveTopologyUnrestricted
     int dyn_state_on;                               // DM_VK_DYNAMIC_STATE (default 1; 0 disables optional EDS2/EDS3 and defaults vin_dyn off)
     uint32_t eds_mask;                              // VKA_EDS_* bitmask of active optional EDS2/EDS3 dynamic states (vka_eds.h)
     uint32_t max_push, max_vin_bindings, subgroup_size, subgroup_min, subgroup_max, subgroup_stages;   // subgroup_stages: VkShaderStageFlags with subgroup operations
@@ -544,8 +547,20 @@ int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out);   // host-vis
 
 // ---------- Pipelines (vka_pso.c) ----------
 #include "vka_gkey.h"   // vka_gkey: what a graphics pipeline is made from beyond its shaders and layout (Vulkan-free: the prewarm list's unit test reads it)
-typedef struct { VkPipelineLayout layout; VkDescriptorSetLayout set0; int push; uint32_t ndesc; } vka_layout;
-int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out);   // the set-0 layout of these stages' records with the pools' set 1
+typedef struct {
+    VkPipelineLayout layout;
+    VkPipelineLayout pre_layout;
+    VkPipelineLayout fs_layout;
+    VkDescriptorSetLayout set0;
+    VkDescriptorSetLayout set1;
+    int push;
+    int indep;
+    uint32_t ndesc;
+    uint32_t fs_ndesc;
+} vka_layout;
+int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out);   // the set-0/set-1 layout of these stages' records with the pools
+int vka_layout_pre_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out);           // standalone pre-raster layout (Set 0 + pools) for GPL precompile
+int vka_layout_fs_of(vka_shader *fs, vka_layout *out);                              // standalone fragment layout (Set 1 + pools) for GPL precompile
 VkPipeline vka_gfx_pipeline(vka_shader *const sh[VKA_NSTAGE], const vka_layout *lay, const vka_gkey *k);
 extern _Thread_local int vka_pso_wait;   // after vka_gfx_pipeline / vka_cs_pipeline_frame returned NULL: 1 when the pipeline is still being made in the background (the draw waits, no failure), 0 when it was refused
 VkPipeline vka_cs_pipeline(vka_shader *cs, const vka_layout *lay);

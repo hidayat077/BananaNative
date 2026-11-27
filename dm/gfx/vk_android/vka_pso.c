@@ -10,6 +10,7 @@
 #include "vka_pwlist.h"
 #include "vka_psogate.h"
 #include "vka_pwbusy.h"
+#include "vka_gpl_stats.h"
 #include "vk_prewarm_seed.h"   // the profile's seed list (dm/games/<id>/vk_prewarm.bin; dm/games/game.py seed): dm_vk_prewarm_seed, dm_vk_prewarm_seed_len (0: none)
 #include "../nvn/nvn_mtl.h"
 #include <stdlib.h>
@@ -64,7 +65,12 @@ static VkShaderStageFlags stage_bit(int vks) {
 }
 enum { MAXB = 6 * DMSH_VK_STAGE_BINDINGS };   // (task and mesh shaders take the tess control and vertex ranges: dmsh_abi_vk.h)
 typedef struct { uint32_t n, pc; struct { uint16_t binding; uint8_t desc, pad; uint16_t count; uint16_t stages; } b[MAXB]; } lkey;   // pc: the push constant's stages (a task / mesh shader's compute form, vka_memu.c)
+typedef struct { VkDescriptorSetLayout s0, s1; } pl_ikey;
 static kmap g_layouts = {.klen = sizeof(lkey)};
+static kmap g_dsl_pre = {.klen = sizeof(lkey)};
+static kmap g_dsl_fs = {.klen = sizeof(lkey)};
+static kmap g_pl_indep = {.klen = sizeof(pl_ikey)};
+static VkDescriptorSetLayout g_empty_dsl;
 static uint64_t g_nlayouts;
 
 // The layout of a set of shaders, remembered by the shaders themselves: building the bindings key (3 KB) and hashing it was a third of the replay's CPU time at 5,500 draws a frame
@@ -88,33 +94,129 @@ int vka_layout_of(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out
     pthread_mutex_unlock(&g_mu);
     return ok;
 }
-static int layout_slow(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out) {
-    lkey k; memset(&k, 0, sizeof k);
+// mode: 0 = all stages (legacy/compute), 1 = pre-raster graphics stages only, 2 = fragment stage only
+static int build_lkey(vka_shader *const sh[VKA_NSTAGE], int compute, int mode, lkey *k, uint32_t *out_ndesc) {
+    memset(k, 0, sizeof *k);
     uint32_t ndesc = 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
         const vka_shader *s = sh[st];
         if (!s || (st == 5) != (compute != 0)) continue;
+        if (mode == 1 && st == 1) continue;
+        if (mode == 2 && st != 1) continue;
         for (unsigned i = 0; i < s->e->bind_count; i++) {
             const dmsh_vk_bind *b = &s->b[i];
             if (b->set != DMSH_VK_SET_DRAW || b->kind == DMSH_VK_KIND_TEX_POOL || b->kind == DMSH_VK_KIND_SAMP_POOL) continue;
-            if (k.n == MAXB) { VRED_ONCE("more than %d set-0 bindings in one pipeline", MAXB); return 0; }
-            k.b[k.n].binding = b->binding; k.b[k.n].desc = b->desc; k.b[k.n].count = b->count ? b->count : 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage);
-            ndesc += k.b[k.n].count; k.n++;
+            if (k->n == MAXB) { VRED_ONCE("more than %d set-0 bindings in one pipeline", MAXB); return 0; }
+            k->b[k->n].binding = b->binding; k->b[k->n].desc = b->desc; k->b[k->n].count = b->count ? b->count : 1; k->b[k->n].stages = (uint16_t)stage_bit(s->e->stage);
+            ndesc += k->b[k->n].count; k->n++;
         }
-        if (s->memu && k.n + 2 <= MAXB) {   // a task / mesh shader drawn through compute (vka_memu.c): the arena, and for its compute form the records and the push constant
-            k.b[k.n].binding = VKA_MEMU_ARENA_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++;
-            if (s->memu == 1) { k.b[k.n].binding = VKA_MEMU_REC_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++;
-                                k.pc |= (uint32_t)stage_bit(s->e->stage); }
+        if (s->memu && k->n + 2 <= MAXB) {   // a task / mesh shader drawn through compute (vka_memu.c): the arena, and for its compute form the records and the push constant
+            k->b[k->n].binding = VKA_MEMU_ARENA_BINDING; k->b[k->n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k->b[k->n].count = 1; k->b[k->n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k->n++;
+            if (s->memu == 1) { k->b[k->n].binding = VKA_MEMU_REC_BINDING; k->b[k->n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k->b[k->n].count = 1; k->b[k->n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k->n++;
+                                k->pc |= (uint32_t)stage_bit(s->e->stage); }
         }
-        if (s->tf_fx && k.n + 5 <= MAXB) {   // transform feedback capture: the four capture buffers and the control block (vk_android_spv.py tf_capture)
-            for (int b = 0; b < 5; b++) { k.b[k.n].binding = b < 4 ? VKA_TF_BUF_BINDING(b) : VKA_TF_CTL_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++; }
+        if (s->tf_fx && k->n + 5 <= MAXB) {   // transform feedback capture: the four capture buffers and the control block (vk_android_spv.py tf_capture)
+            for (int b = 0; b < 5; b++) { k->b[k->n].binding = b < 4 ? VKA_TF_BUF_BINDING(b) : VKA_TF_CTL_BINDING; k->b[k->n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k->b[k->n].count = 1; k->b[k->n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k->n++; }
         }
-        if (s->gs_fx > 0 && k.n < MAXB) {   // the claim words of a geometry shader that writes memory (vka_spv_gs_claim)
-            k.b[k.n].binding = VKA_GS_CLAIM_BINDING; k.b[k.n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k.b[k.n].count = 1; k.b[k.n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k.n++;
+        if (s->gs_fx > 0 && k->n < MAXB) {   // the claim words of a geometry shader that writes memory (vka_spv_gs_claim)
+            k->b[k->n].binding = VKA_GS_CLAIM_BINDING; k->b[k->n].desc = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; k->b[k->n].count = 1; k->b[k->n].stages = (uint16_t)stage_bit(s->e->stage); ndesc++; k->n++;
         }
     }
     // Sorted by binding, so the same set of records gives the same key whatever the order of stages
-    for (uint32_t i = 1; i < k.n; i++) for (uint32_t j = i; j > 0 && k.b[j - 1].binding > k.b[j].binding; j--) { typeof(k.b[0]) t = k.b[j]; k.b[j] = k.b[j - 1]; k.b[j - 1] = t; }
+    for (uint32_t i = 1; i < k->n; i++) for (uint32_t j = i; j > 0 && k->b[j - 1].binding > k->b[j].binding; j--) { typeof(k->b[0]) t = k->b[j]; k->b[j] = k->b[j - 1]; k->b[j - 1] = t; }
+    *out_ndesc = ndesc;
+    return 1;
+}
+typedef struct { VkDescriptorSetLayout dsl; int push; uint32_t ndesc; } dsl_ent;
+static VkDescriptorSetLayout dsl_get(kmap *m, const lkey *k, uint32_t ndesc, int allow_push, int *is_push) {   // caller holds g_mu
+    uint64_t h = fnv(k, sizeof *k, 1469598103934665603ull);
+    dsl_ent *e = km_get(m, k, h);
+    if (e) { if (is_push) *is_push = e->push; return e->dsl; }
+    e = calloc(1, sizeof *e);
+    e->ndesc = ndesc;
+    e->push = allow_push && V.push_desc && ndesc <= V.max_push;
+    VkDescriptorSetLayoutBinding *lb = calloc(k->n ? k->n : 1, sizeof *lb);
+    for (uint32_t i = 0; i < k->n; i++) lb[i] = (VkDescriptorSetLayoutBinding){k->b[i].binding, (VkDescriptorType)k->b[i].desc, k->b[i].count, k->b[i].stages, NULL};
+    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .flags = e->push ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0, .bindingCount = k->n, .pBindings = lb};
+    VkResult r = vk.vkCreateDescriptorSetLayout(V.dev, &li, NULL, &e->dsl);
+    free(lb);
+    if (r) { e->dsl = VK_NULL_HANDLE; VRED_ONCE("descriptor set layout of %u bindings: %d", k->n, r); }
+    km_put(m, k, h, e);
+    if (is_push) *is_push = e->push;
+    return e->dsl;
+}
+static VkDescriptorSetLayout empty_dsl_locked(void) {   // caller holds g_mu
+    if (!g_empty_dsl) {
+        VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        if (vk.vkCreateDescriptorSetLayout(V.dev, &li, NULL, &g_empty_dsl)) g_empty_dsl = VK_NULL_HANDLE;
+    }
+    return g_empty_dsl;
+}
+static VkPipelineLayout pl_indep_get(VkDescriptorSetLayout s0, VkDescriptorSetLayout s1) {   // caller holds g_mu
+    pl_ikey ik = {s0, s1};
+    uint64_t h = fnv(&ik, sizeof ik, 1469598103934665603ull);
+    VkPipelineLayout *hit = km_get(&g_pl_indep, &ik, h);
+    if (hit) return *hit;
+    VkDescriptorSetLayout emp = empty_dsl_locked();
+    VkDescriptorSetLayout sets[4] = {s0 ? s0 : emp, s1 ? s1 : emp, vka_bindless_layout(), vka_pfb_layout()};
+    uint32_t nsets = sets[2] ? (sets[3] ? 4 : 3) : 2;
+    VkPipelineLayoutCreateInfo pi = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .flags = VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT, .setLayoutCount = nsets, .pSetLayouts = sets};
+    VkPipelineLayout pl = VK_NULL_HANDLE;
+    VkResult r = vk.vkCreatePipelineLayout(V.dev, &pi, NULL, &pl);
+    if (r) { pl = VK_NULL_HANDLE; static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("independent-sets pipeline layout: %d", r); }
+    VkPipelineLayout *val = malloc(sizeof *val); *val = pl;
+    km_put(&g_pl_indep, &ik, h, val); g_nlayouts++;
+    return pl;
+}
+static int layout_indep(vka_shader *const sh[VKA_NSTAGE], vka_layout *out) {
+    lkey kpre, kfs; uint32_t nd_pre = 0, nd_fs = 0;
+    if (!build_lkey(sh, 0, 1, &kpre, &nd_pre) || !build_lkey(sh, 0, 2, &kfs, &nd_fs)) return 0;
+    pthread_mutex_lock(&g_mu);
+    int push = 0;
+    VkDescriptorSetLayout s0 = dsl_get(&g_dsl_pre, &kpre, nd_pre, 1, &push);
+    VkDescriptorSetLayout s1 = sh[1] ? dsl_get(&g_dsl_fs, &kfs, nd_fs, 0, NULL) : VK_NULL_HANDLE;
+    out->set0 = s0;
+    out->set1 = s1;
+    out->push = push;
+    out->indep = 1;
+    out->ndesc = nd_pre;
+    out->fs_ndesc = nd_fs;
+    out->pre_layout = s0 ? pl_indep_get(s0, VK_NULL_HANDLE) : VK_NULL_HANDLE;
+    out->fs_layout = s1 ? pl_indep_get(VK_NULL_HANDLE, s1) : VK_NULL_HANDLE;
+    out->layout = (s0 && (!sh[1] || s1)) ? pl_indep_get(s0, s1) : VK_NULL_HANDLE;
+    pthread_mutex_unlock(&g_mu);
+    return out->layout != VK_NULL_HANDLE;
+}
+int vka_layout_pre_of(vka_shader *const sh[VKA_NSTAGE], vka_layout *out) {
+    memset(out, 0, sizeof *out);
+    if (!V.gpl_indep) return 0;
+    lkey kpre; uint32_t nd = 0;
+    if (!build_lkey(sh, 0, 1, &kpre, &nd)) return 0;
+    pthread_mutex_lock(&g_mu);
+    int push = 0;
+    VkDescriptorSetLayout s0 = dsl_get(&g_dsl_pre, &kpre, nd, 1, &push);
+    out->set0 = s0; out->push = push; out->indep = 1; out->ndesc = nd;
+    out->pre_layout = out->layout = s0 ? pl_indep_get(s0, VK_NULL_HANDLE) : VK_NULL_HANDLE;
+    pthread_mutex_unlock(&g_mu);
+    return out->layout != VK_NULL_HANDLE;
+}
+int vka_layout_fs_of(vka_shader *fs, vka_layout *out) {
+    memset(out, 0, sizeof *out);
+    if (!fs || !V.gpl_indep) return 0;
+    vka_shader *sh[VKA_NSTAGE] = {0}; sh[1] = fs;
+    lkey kfs; uint32_t nd = 0;
+    if (!build_lkey(sh, 0, 2, &kfs, &nd)) return 0;
+    pthread_mutex_lock(&g_mu);
+    VkDescriptorSetLayout s1 = dsl_get(&g_dsl_fs, &kfs, nd, 0, NULL);
+    out->set1 = s1; out->indep = 1; out->fs_ndesc = nd;
+    out->fs_layout = out->layout = s1 ? pl_indep_get(VK_NULL_HANDLE, s1) : VK_NULL_HANDLE;
+    pthread_mutex_unlock(&g_mu);
+    return out->layout != VK_NULL_HANDLE;
+}
+static int layout_slow(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout *out) {
+    if (!compute && V.gpl_indep) return layout_indep(sh, out);
+    lkey k; uint32_t ndesc = 0;
+    if (!build_lkey(sh, compute, 0, &k, &ndesc)) return 0;
     uint64_t h = fnv(&k, sizeof k, 1469598103934665603ull);
     pthread_mutex_lock(&g_mu);
     vka_layout *L = km_get(&g_layouts, &k, h);
@@ -134,6 +236,7 @@ static int layout_slow(vka_shader *const sh[VKA_NSTAGE], int compute, vka_layout
         r = vk.vkCreatePipelineLayout(V.dev, &pi, NULL, &L->layout);
     }
     if (r) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("pipeline layout of %u bindings (%u descriptors): %d", k.n, ndesc, r); L->layout = VK_NULL_HANDLE; }
+    L->pre_layout = L->fs_layout = L->layout;
     km_put(&g_layouts, &k, h, L); g_nlayouts++;
     *out = *L;
     pthread_mutex_unlock(&g_mu);
@@ -363,6 +466,7 @@ typedef struct {
     VkPipelineColorBlendAttachmentState cb[8]; VkPipelineColorBlendStateCreateInfo bs; VkDynamicState dyn[40]; VkPipelineDynamicStateCreateInfo dy;
     VkFormat cf[8]; VkPipelineRenderingCreateInfo ri; VkGraphicsPipelineCreateInfo ci; int tess, mesh;   // mesh: a task / mesh pipeline (pstate_fill)
     VkDescriptorSetLayout set0;   // the layout's set 0 (the library probe's independent-sets layout)
+    VkPipelineLayout pre_layout, fs_layout; int indep;
     vka_shader *sh[VKA_NSTAGE];
 } pstate;
 
@@ -489,12 +593,13 @@ static int pstate_fill(pstate *P, vka_shader *const sh[VKA_NSTAGE], const vka_la
     P->ri = (VkPipelineRenderingCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = k->ncolor, .pColorAttachmentFormats = P->cf,
                                             .depthAttachmentFormat = (VkFormat)k->dfmt, .stencilAttachmentFormat = (VkFormat)k->sfmt};
     P->tess = !mesh && (sh[3] || sh[4]); P->mesh = mesh;
+    P->ia.topology = P->tess ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : (k->topo ? (VkPrimitiveTopology)k->topo : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     P->ci = (VkGraphicsPipelineCreateInfo){VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = vka_classic_rp() ? P->ri.pNext : &P->ri, .stageCount = P->ns, .pStages = P->ss, .pVertexInputState = mesh ? NULL : &P->vi,
         .pInputAssemblyState = mesh ? NULL : &P->ia,
         .pTessellationState = P->tess ? &P->ts : NULL, .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pMultisampleState = &P->ms, .pDepthStencilState = &P->ds, .pColorBlendState = &P->bs,
         .pDynamicState = &P->dy, .layout = lay->layout};
     if (vka_classic_rp()) { P->ci.renderPass = vka_rp_compat(P->cf, k->ncolor, (VkFormat)k->dfmt, (VkFormat)k->sfmt, k->samples); P->ci.subpass = 0; }   // DM_VK_CLASSIC_RP
-    P->set0 = lay->set0;
+    P->set0 = lay->set0; P->pre_layout = lay->pre_layout; P->fs_layout = lay->fs_layout; P->indep = lay->indep;
     return 1;
 }
 static const char *stage_name(VkShaderStageFlagBits b) { return b == VK_SHADER_STAGE_VERTEX_BIT ? "vertex" : b == VK_SHADER_STAGE_FRAGMENT_BIT ? "fragment" : b == VK_SHADER_STAGE_GEOMETRY_BIT ? "geometry"
@@ -697,6 +802,7 @@ typedef struct { uint32_t cfmt[8], dfmt, sfmt; uint8_t ncolor, samples, a2c, log
 typedef struct { prekey pre; fskey fs; } prefskey;
 static kmap g_lib[NLIB] = {{.klen = sizeof(vikey)}, {.klen = sizeof(prekey)}, {.klen = sizeof(fskey)}, {.klen = sizeof(fokey)}, {.klen = sizeof(prefskey)}};
 static uint64_t g_nlib[NLIB], g_nlinked, g_nopt; static double g_lib_ms, g_link_ms;
+static vka_gpl_lat g_link_lat;
 static const char *const g_lib_name[NLIB] = {"vertex input", "pre-rasterization", "fragment shader", "fragment output", "pre-rasterization + fragment shader"};
 enum { A_NOCACHE = 1, A_RETAIN = 2, A_NORI = 4, A_COMBINED = 8 };
 static unsigned g_pre_adapt; static int g_pre_probed, g_pre_refused; static _Atomic int g_gpl_off;
@@ -721,7 +827,7 @@ static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPip
     if (hit) return hit == LIB_REFUSED ? VK_NULL_HANDLE : (VkPipeline)hit;
     int shp = kind == L_PRE || kind == L_PREFS;
     VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext, .flags = part};
-    ci->pNext = &li; ci->flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (g_pre_adapt & A_RETAIN ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0);
+    ci->pNext = &li; ci->flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (((g_pre_adapt & A_RETAIN) || V.gpl_lto) ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0);
     uint64_t t0 = now_ns();
     int bs = build_begin(g_lib_name[kind], vs, fs);
     VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, shp && (g_pre_adapt & A_NOCACHE) ? VK_NULL_HANDLE : g_pc, 1, ci, NULL, &p);
@@ -831,7 +937,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
     VkDynamicState dl[NLIB][40]; VkPipelineDynamicStateCreateInfo dy[NLIB];
     for (int i = 0; i < NLIB; i++) dyn_of(P, i, dl[i], &dy[i]);
     VkPipeline part[4]; uint32_t nparts = 0;
-    {   vikey key; memset(&key, 0, sizeof key); key.topo = k->topo; key.vin_static = k->vin_static;
+    {   vikey key; memset(&key, 0, sizeof key); key.topo = ((active_eds_mask(P->mesh) & VKA_EDS_TOPO_UNRESTRICTED) && !P->tess) ? 0 : k->topo; key.vin_static = k->vin_static;
         if (k->vin_static) { memcpy(key.va, k->va, sizeof key.va); memcpy(key.vb, k->vb, sizeof key.vb); }
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pVertexInputState = &P->vi, .pInputAssemblyState = &P->ia, .pDynamicState = &dy[L_VI]};
         if (!(part[nparts++] = lib_make(L_VI, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT, NULL, 0, 0))) return VK_NULL_HANDLE; }
@@ -842,10 +948,12 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
     for (uint32_t i = 0; i < npre; i++) { pk.mod[i] = pre[i].module; pk.stage[i] = pre[i].stage; pk.gl[i] = pre[i].pSpecializationInfo != NULL;
                                           pk.pin[i] = pre[i].pNext ? ((const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *)pre[i].pNext)->requiredSubgroupSize : 0; }
     VkRenderPass rp = P->ci.renderPass;   // (VK_NULL_HANDLE with dynamic rendering; pstate_fill sets it for classic render passes)
-    pk.layout = P->ci.layout; pk.rp = rp; pk.depth_clamp = (uint8_t)P->rs.depthClampEnable; pk.poly_mode = (uint8_t)P->rs.polygonMode; pk.tess = (uint8_t)P->tess; pk.vin_static = (uint8_t)k->vin_static;
+    VkPipelineLayout pre_lay = P->indep ? P->pre_layout : P->ci.layout;
+    VkPipelineLayout fs_lay = P->indep ? P->fs_layout : P->ci.layout;
+    pk.layout = pre_lay; pk.rp = rp; pk.depth_clamp = (uint8_t)P->rs.depthClampEnable; pk.poly_mode = (uint8_t)P->rs.polygonMode; pk.tess = (uint8_t)P->tess; pk.vin_static = (uint8_t)k->vin_static;
     fskey fk; memset(&fk, 0, sizeof fk);
     if (fs) { fk.mod = fs->module; fk.afunc = fs->pSpecializationInfo ? P->afunc : 0; fk.pin = fs->pNext ? ((const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *)fs->pNext)->requiredSubgroupSize : 0; }
-    fk.layout = P->ci.layout; fk.rp = rp; fk.samples = (uint8_t)P->ms.rasterizationSamples; fk.a2c = (uint8_t)P->ms.alphaToCoverageEnable; fk.vin_static = (uint8_t)k->vin_static;
+    fk.layout = fs_lay; fk.rp = rp; fk.samples = (uint8_t)P->ms.rasterizationSamples; fk.a2c = (uint8_t)P->ms.alphaToCoverageEnable; fk.vin_static = (uint8_t)k->vin_static;
     if (g_pre_adapt & A_COMBINED) {
         prefskey key; memset(&key, 0, sizeof key); key.pre = pk; key.fs = fk;
         VkPipelineShaderStageCreateInfo both[5]; uint32_t nb = 0; for (uint32_t i = 0; i < npre; i++) both[nb++] = pre[i]; if (fs) both[nb++] = *fs;
@@ -855,7 +963,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
         if (!(part[nparts++] = lib_make(L_PREFS, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, vs_key, fs_key))) return VK_NULL_HANDLE;
     } else {
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = npre, .pStages = pre, .pTessellationState = P->tess ? &P->ts : NULL,
-                                           .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pDynamicState = &dy[L_PRE], .layout = P->ci.layout, .renderPass = rp};
+                                           .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pDynamicState = &dy[L_PRE], .layout = pre_lay, .renderPass = rp};
         int refused = 0;
         VkGraphicsPipelineCreateInfo ci_probe = ci;   // (lib_make chains its own structure onto ci and restores it)
         if (!(part[nparts++] = lib_make(L_PRE, &pk, sizeof pk, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, &refused, vs_key, 0))) {
@@ -875,7 +983,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
             return VK_NULL_HANDLE;
         }
         VkGraphicsPipelineCreateInfo cf = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = fs ? 1 : 0, .pStages = fs, .pMultisampleState = &P->ms,
-                                           .pDepthStencilState = &P->ds, .pDynamicState = &dy[L_FS], .layout = P->ci.layout, .renderPass = rp};
+                                           .pDepthStencilState = &P->ds, .pDynamicState = &dy[L_FS], .layout = fs_lay, .renderPass = rp};
         if (!(part[nparts++] = lib_make(L_FS, &fk, sizeof fk, &cf, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, 0, fs_key))) return VK_NULL_HANDLE;
     }
     {   fokey key; memset(&key, 0, sizeof key);
@@ -890,7 +998,8 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k) {
     int bs = build_begin("graphics pipeline (no cache)", vs_key, fs_key);
     VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, VK_NULL_HANDLE, 1, &ci, NULL, &p);
     build_end(bs);
-    pthread_mutex_lock(&g_mu); g_link_ms += (now_ns() - t0) / 1e6; if (!r) { g_nlinked++; __atomic_store_n(&g_nlinked_pub, g_nlinked, __ATOMIC_RELAXED); } pthread_mutex_unlock(&g_mu);
+    uint64_t dns = now_ns() - t0;
+    pthread_mutex_lock(&g_mu); g_link_ms += dns / 1e6; if (!r) { vka_gpl_lat_add(&g_link_lat, dns); g_nlinked++; __atomic_store_n(&g_nlinked_pub, g_nlinked, __ATOMIC_RELAXED); } pthread_mutex_unlock(&g_mu);
     if (r) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("graphics pipeline link: %d; the whole pipeline is made instead", r); return VK_NULL_HANDLE; }
     return p;
 }
@@ -1029,10 +1138,12 @@ static void opt_queue(gval *g, vka_shader *const sh[VKA_NSTAGE], const vka_layou
 }
 void vka_gpl_line(char *out, size_t n) {
     pthread_mutex_lock(&g_mu);
-    if (n) snprintf(out, n, "libraries %llu vertex input / %llu pre-rasterization / %llu fragment shader / %llu fragment output / %llu combined, %.0f ms; %llu linked (%.1f ms), %llu optimized in the background, %llu waiting; "
+    double avg_us = 0, p99_us = 0, max_us = 0;
+    vka_gpl_lat_summary(&g_link_lat, &avg_us, &p99_us, &max_us);
+    if (n) snprintf(out, n, "libraries %llu vertex input / %llu pre-rasterization / %llu fragment shader / %llu fragment output / %llu combined, %.0f ms; %llu linked (%.1f ms, avg %.0f us, p99 %.0f us, max %.0f us), %llu optimized in the background, %llu waiting; "
                     "cache-only tries %llu hit / %llu missed (%.0f ms in the misses)%s",
                     (unsigned long long)g_nlib[L_VI], (unsigned long long)g_nlib[L_PRE], (unsigned long long)g_nlib[L_FS], (unsigned long long)g_nlib[L_FO], (unsigned long long)g_nlib[L_PREFS], g_lib_ms,
-                    (unsigned long long)g_nlinked, g_link_ms, (unsigned long long)g_nopt, (unsigned long long)g_opt_waiting, (unsigned long long)g_probe_hit, (unsigned long long)g_probe_miss,
+                    (unsigned long long)g_nlinked, g_link_ms, avg_us, p99_us, max_us, (unsigned long long)g_nopt, (unsigned long long)g_opt_waiting, (unsigned long long)g_probe_hit, (unsigned long long)g_probe_miss,
                     g_probe_miss_ns / 1e6, atomic_load(&g_gpl_off) ? "; OFF for this run (pre-rasterization refused)" : "");
     pthread_mutex_unlock(&g_mu);
 }
@@ -1493,23 +1604,30 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
             if (p) { linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_create_ms += (now_ns() - t1) / 1e6; pthread_mutex_unlock(&g_mu); }
         }
         else if (!prewarm && !async && gpl_on() && !P->mesh) {   // (a mesh pipeline is made whole: the libraries here are cut for vertex input pipelines)
-            // The pipeline cache may already hold the optimized one (made in an earlier run): then it is made at once (a fraction of a millisecond), else linked from parts
-            P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
-            uint64_t t0 = now_ns();
-            int bs = build_begin("graphics pipeline (cache probe)", 0, 0);
-            VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
-            build_end(bs);
-            P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
-            uint64_t dns = now_ns() - t0;
-            if (r == VK_SUCCESS && p) { pthread_mutex_lock(&g_mu); g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g_create_ns += dns; pthread_mutex_unlock(&g_mu); }
-            else {
-                // A miss that took long: the driver compiled before answering COMPILE_REQUIRED (the try then costs a compile and saves nothing)
-                pthread_mutex_lock(&g_mu); g_probe_miss++; g_probe_miss_ns += dns; g_create_ns += dns; pthread_mutex_unlock(&g_mu);
-                p = VK_NULL_HANDLE;
+            if (V.gpl_indep && !V.gpl_lto) {
                 uint64_t t1 = now_ns();
                 p = gpl_link(P, k_rt);
                 if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
-                else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }   // the refused parts' time is the frame's too
+                else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
+            } else {
+                // The pipeline cache may already hold the optimized one (made in an earlier run): then it is made at once (a fraction of a millisecond), else linked from parts
+                P->ci.flags |= VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                uint64_t t0 = now_ns();
+                int bs = build_begin("graphics pipeline (cache probe)", 0, 0);
+                VkResult r = vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &P->ci, NULL, &p);
+                build_end(bs);
+                P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+                uint64_t dns = now_ns() - t0;
+                if (r == VK_SUCCESS && p) { pthread_mutex_lock(&g_mu); g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g_create_ns += dns; pthread_mutex_unlock(&g_mu); }
+                else {
+                    // A miss that took long: the driver compiled before answering COMPILE_REQUIRED (the try then costs a compile and saves nothing)
+                    pthread_mutex_lock(&g_mu); g_probe_miss++; g_probe_miss_ns += dns; g_create_ns += dns; pthread_mutex_unlock(&g_mu);
+                    p = VK_NULL_HANDLE;
+                    uint64_t t1 = now_ns();
+                    p = gpl_link(P, k_rt);
+                    if (p) { uint64_t d2 = now_ns() - t1; linked = 1; pthread_mutex_lock(&g_mu); g_ngfx++; g_frame_made++; g_create_ms += d2 / 1e6; g_create_ns += d2; pthread_mutex_unlock(&g_mu); }
+                    else { uint64_t d2 = now_ns() - t1; pthread_mutex_lock(&g_mu); g_create_ns += d2; pthread_mutex_unlock(&g_mu); }   // the refused parts' time is the frame's too
+                }
             }
         }
         if (!p && !linked) p = full_pipeline(P, sh, prewarm ? " (prewarm)" : async ? " in the background (asynchronous)" : NULL);
@@ -1521,7 +1639,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
     __atomic_store_n(&g->linked, (uint8_t)linked, __ATOMIC_RELEASE); __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE);
     pthread_cond_broadcast(&g_busy_cv);
     pthread_mutex_unlock(&g_mu);
-    if (linked) opt_queue(g, sh, lay, k_rt);
+    if (linked && (!V.gpl_indep || V.gpl_lto)) opt_queue(g, sh, lay, k_rt);
 }
 _Thread_local int vka_pso_wait;   // set by the pipeline calls of a draw or dispatch: the NULL they return is a pipeline still being made on the asynchronous threads (not a refusal), vka.h
 static inline VkPipeline gval_use(gval *g) {

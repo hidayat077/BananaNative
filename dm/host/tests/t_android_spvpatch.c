@@ -697,6 +697,37 @@ int main(void) {
         }
         free(m);
     }
+    {   // DescriptorSet remapping for 4-set independent-sets GPL layouts (vka_spv_remap_sets)
+        size_t sn = sizeof SPV_PFB_FRAG / 4, pfn = 0; int sites = 0, early = 0, ch = 0;
+        static const uint32_t map_fs[4] = {1, 2, 3, 3};
+        uint32_t *rm = vka_spv_remap_sets(SPV_PFB_FRAG, sn, map_fs, &ch);
+        CHECK(rm && ch, "vka_spv_remap_sets remapped SPV_PFB_FRAG");
+        if (rm) {
+            int has_s1 = 0, has_s2 = 0, has_s0 = 0;
+            for (size_t i = 5; i < sn;) { uint32_t op = rm[i] & 0xffff, len = rm[i] >> 16; if (!len) break;
+                if (op == 71 && len >= 4 && rm[i + 2] == 34) { if (rm[i + 3] == 0) has_s0 = 1; if (rm[i + 3] == 1) has_s1 = 1; if (rm[i + 3] == 2) has_s2 = 1; }
+                i += len; }
+            CHECK(!has_s0 && has_s1 && has_s2, "DescriptorSet 0->1 and 1->2 remapped");
+            if (val) CHECK(validate(rm, sn, "remap_sets base"), "remap_sets base valid");
+            free(rm);
+        }
+        uint32_t *pf = vka_spv_pool_fb(SPV_PFB_FRAG, sn, 1, 0, 2, 0, VKA_PFB_EARLY, 1, &pfn, &sites, &early, err, sizeof err);
+        CHECK(pf && sites == 3, "pool_fb on SPV_PFB_FRAG (%s)", err);
+        if (pf) {
+            uint32_t *rm2 = vka_spv_remap_sets(pf, pfn, map_fs, &ch);
+            CHECK(rm2 && ch, "vka_spv_remap_sets remapped pool_fb output");
+            if (rm2) {
+                int has_s3 = 0;
+                for (size_t i = 5; i < pfn;) { uint32_t op = rm2[i] & 0xffff, len = rm2[i] >> 16; if (!len) break;
+                    if (op == 71 && len >= 4 && rm2[i + 2] == 34 && rm2[i + 3] == 3) has_s3 = 1;
+                    i += len; }
+                CHECK(has_s3, "pool_fb DescriptorSet 2->3 remapped");
+                if (val) CHECK(validate(rm2, pfn, "remap_sets pool_fb"), "remap_sets pool_fb valid");
+                free(rm2);
+            }
+            free(pf);
+        }
+    }
     printf("t_android_spvpatch: %s%s\n", g_fail ? "FAILED" : "ok", val ? "" : " (no spirv-val: structure only)");
     return g_fail != 0;
 }

@@ -16,6 +16,7 @@ static void fbl_pass_begin(void);
 #include "vka_memu_abi.h"
 #include "vka_prepass.h"
 #include "vka_wbfollow.h"
+#include "vka_gpl_stats.h"
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -1832,19 +1833,19 @@ void vka_drv_memo_stats(char *b, size_t n) {
     g_pd_delta_w = g_pd_delta_all = 0;
 }
 static VkWriteDescriptorSet g_dw[512]; static uint32_t g_dwn;   // the writes that changed (push_same returns 2)
-static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout) {
+static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout, const VkWriteDescriptorSet *ws, uint32_t nw) {
     int c = bp == VK_PIPELINE_BIND_POINT_COMPUTE;
     if (!g_push_dedup && !g_push_delta) { g_pd[c].n = 0; g_pd_push++; g_pd_push_all++; return 0; }
-    size_t need = 2 + (size_t)g_w.n * 4;
-    int match = g_pd[c].n == need && g_pd[c].w[0] == (uint64_t)layout && g_pd[c].w[1] == g_w.n;
+    size_t need = 2 + (size_t)nw * 4;
+    int match = g_pd[c].n == need && g_pd[c].w[0] == (uint64_t)layout && g_pd[c].w[1] == nw;
     if (!match) {
-        if (need > g_pd[c].cap) { size_t cap = need * 2; uint64_t *nw = realloc(g_pd[c].w, cap * sizeof *nw); if (!nw) { free(g_pd[c].w); g_pd[c].w = NULL; g_pd[c].cap = g_pd[c].n = 0; return 0; } g_pd[c].w = nw; g_pd[c].cap = cap; }
-        g_pd[c].w[0] = (uint64_t)layout; g_pd[c].w[1] = g_w.n;
+        if (need > g_pd[c].cap) { size_t cap = need * 2; uint64_t *nw_buf = realloc(g_pd[c].w, cap * sizeof *nw_buf); if (!nw_buf) { free(g_pd[c].w); g_pd[c].w = NULL; g_pd[c].cap = g_pd[c].n = 0; return 0; } g_pd[c].w = nw_buf; g_pd[c].cap = cap; }
+        g_pd[c].w[0] = (uint64_t)layout; g_pd[c].w[1] = nw;
     }
     int changed = !match, delta_ok = match && g_push_delta;
     g_dwn = 0;
-    for (uint32_t i = 0; i < g_w.n; i++) {
-        const VkWriteDescriptorSet *w = &g_w.w[i];
+    for (uint32_t i = 0; i < nw; i++) {
+        const VkWriteDescriptorSet *w = &ws[i];
         if (w->descriptorCount != 1) return (g_pd[c].n = 0), 0;   // (the walk writes one descriptor per write)
         uint64_t h = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
         uint64_t x0, x1, x2;
@@ -1861,7 +1862,7 @@ static int push_same(VkPipelineBindPoint bp, VkPipelineLayout layout) {
     if (g_push_dedup && !changed) { g_pd_skip++; g_pd_skip_all++; return 1; }
     g_pd_push++; g_pd_push_all++;
     // DM_VK_PUSH_DELTA=1 (live): only changed writes in the same layout/order are pushed; Vulkan keeps the rest until the set is disturbed
-    if (delta_ok && g_dwn) { g_pd_delta_w += g_dwn; g_pd_delta_all += g_w.n; return 2; }
+    if (delta_ok && g_dwn) { g_pd_delta_w += g_dwn; g_pd_delta_all += nw; return 2; }
     return 0;
 }
 static int g_sets_dry, g_dry_pool;   // DM_VK_INSTANCE: bind_sets only builds the writes (g_w) when g_sets_dry is set, and sets_push binds them later
@@ -1871,12 +1872,14 @@ static int g_sets_dry, g_dry_pool;   // DM_VK_INSTANCE: bind_sets only builds th
 // vkUpdateDescriptorSets+376: issue #249, Ocarina of Time in water and at area transitions) and takes the compositor down with it; its push descriptors take the same
 // nulls. A workaround for that driver, made for every driver since it is valid everywhere and reads the same zeros: pushed sets keep their null descriptors.
 // Texel buffers (bound only as null here) and 1D or multisampled images (no placeholder) stay null. DM_VK_SET_NULLS=1 writes null descriptors into sets as before
-static void set_no_nulls(void) {
+static void set_no_nulls(int fs_only, int pre_only) {
     static int on = -1; if (on < 0) on = !VKA_ENV("DM_VK_SET_NULLS", 0);
     if (!on || !V.null_desc) return;   // (without null descriptors stage_writes already wrote placeholders)
     VkImageView placeholder(uint8_t dim, int storage);
     for (uint32_t k = 0; k < g_w.n; k++) {
         VkWriteDescriptorSet *w = &g_w.w[k];
+        int is_fs = vka_binding_is_fs(w->dstBinding);
+        if ((is_fs && !fs_only) || (!is_fs && !pre_only)) continue;
         if (w->pImageInfo && w->descriptorType != VK_DESCRIPTOR_TYPE_SAMPLER && !w->pImageInfo->imageView) {
             VkImageView v = placeholder(g_w.dim[k], w->descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
             if (v) { g_w.ii[k].imageView = v; g_w.ii[k].imageLayout = VK_IMAGE_LAYOUT_GENERAL; w->pImageInfo = &g_w.ii[k]; }
@@ -1889,14 +1892,49 @@ static void set_no_nulls(void) {
 // The writes of g_w bound: pushed (only what changed since the last push) or as a set, and the texture pool set
 static int sets_push(const vka_layout *lay, VkPipelineBindPoint bp, int any_pool) {
     uint64_t t2_ = g_prof ? cntvct() : 0;
-    if (lay->push) { int ps = g_w.n ? push_same(bp, lay->layout) : 1;
+    if (lay->indep) {
+        // Independent-sets layout: Set 0 = pre-raster (push if <= maxPushDescriptors), Set 1 = fragment (allocated set), Set 2 = pool, Set 3 = pool-fb
+        set_no_nulls(1, !lay->push);
+        static VkWriteDescriptorSet w0[512], w1[512];
+        uint32_t n0 = 0, n1 = 0;
+        for (uint32_t i = 0; i < g_w.n; i++) {
+            if (vka_binding_is_fs(g_w.w[i].dstBinding)) w1[n1++] = g_w.w[i];
+            else w0[n0++] = g_w.w[i];
+        }
+        if (lay->push) {
+            int ps = n0 ? push_same(bp, lay->layout, w0, n0) : 1;
+            if (ps == 0) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, n0, w0);
+            else if (ps == 2) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, g_dwn, g_dw);
+        } else {
+            g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0;
+            VkDescriptorSet set0 = set_alloc(lay->set0); if (!set0) return 0;
+            for (uint32_t i = 0; i < n0; i++) w0[i].dstSet = set0;
+            if (n0) vk.vkUpdateDescriptorSets(V.dev, n0, w0, 0, NULL);
+            vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_PRE, 1, &set0, 0, NULL);
+        }
+        if (lay->set1 != VK_NULL_HANDLE) {
+            VkDescriptorSet set1 = set_alloc(lay->set1); if (!set1) return 0;
+            for (uint32_t i = 0; i < n1; i++) w1[i].dstSet = set1;
+            if (n1) vk.vkUpdateDescriptorSets(V.dev, n1, w1, 0, NULL);
+            vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_FS, 1, &set1, 0, NULL);
+        }
+        if (g_prof) g_ps[2] += cntvct() - t2_;
+        if (any_pool) vka_tex_pfb_draw();
+        if (any_pool) {
+            VkDescriptorSet ps[2] = {vka_bindless_set(), vka_pfb_set()};
+            if (ps[0]) vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, VKA_INDEP_SET_POOL, ps[1] ? 2 : 1, ps, 0, NULL);
+            else VRED_ONCE("a shader reads the texture pool and there is no pool set");
+        }
+        return 1;
+    }
+    if (lay->push) { int ps = g_w.n ? push_same(bp, lay->layout, g_w.w, g_w.n) : 1;
                      if (ps == 0) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_w.n, g_w.w);
                      else if (ps == 2) vk.vkCmdPushDescriptorSetKHR(g_cb, bp, lay->layout, 0, g_dwn, g_dw); }
     else {
         g_pd[bp == VK_PIPELINE_BIND_POINT_COMPUTE].n = 0;   // set 0 bound as a set: the last push is no longer what the draws see
         VkDescriptorSet set = set_alloc(lay->set0); if (!set) return 0;
         for (uint32_t i = 0; i < g_w.n; i++) g_w.w[i].dstSet = set;
-        set_no_nulls();
+        set_no_nulls(1, 1);
         if (g_w.n) vk.vkUpdateDescriptorSets(V.dev, g_w.n, g_w.w, 0, NULL);
         vk.vkCmdBindDescriptorSets(g_cb, bp, lay->layout, 0, 1, &set, 0, NULL);
     }
@@ -3020,7 +3058,8 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
             if (istart) {
                 vk.vkCmdBindPipeline(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ip); DY.pipe = ip; VB.valid = 0;
                 g_w.bi[i_wv].range = wv; g_w.bi[i_wp].range = wp;
-                vk.vkCmdPushDescriptorSetKHR(g_cb, VK_PIPELINE_BIND_POINT_GRAPHICS, lay.layout, 0, g_w.n, g_w.w); g_pd[0].n = 0;
+                g_pd[0].n = 0;
+                if (!sets_push(&lay, VK_PIPELINE_BIND_POINT_GRAPHICS, g_dry_pool)) { g_skipped++; return; }
                 RUN.open = 1; RUN.ipipe = ip; RUN.wv = i_wv; RUN.wp = i_wp; RUN.win_v = wv; RUN.win_p = wp; RUN.n = 1;
                 RUN.table = (uint32_t *)i_ta.ptr; RUN.args = (uint32_t *)i_aa.ptr; RUN.table[0] = 0;
             } else if (!sets_push(&lay, VK_PIPELINE_BIND_POINT_GRAPHICS, g_dry_pool)) { g_skipped++; return; }
