@@ -193,6 +193,15 @@ int main(void) {
     CHECK(vka_svar_manifest_prune_stale(dir, title, mkeep) == 1, "pruned 1 stale variant manifest");
     CHECK(access(mpath, F_OK) == 0 && access(mstale, F_OK) != 0, "kept active manifest and removed stale");
 
+    // Regression test for DMSH_VK_STAGE_* indexing in tex_u/tex_s (FS=4 vs TCS=1).
+    uint64_t tu_fs_only[5] = {0, 0, 0, 0, 0x2ull}, ts_zero[5] = {0};
+    uint64_t tu_tcs_only[5] = {0, 0x8ull, 0, 0, 0};
+    CHECK(vka_svar_is_fs_retyped(1, 0, 0, 0, tu_fs_only, ts_zero, 0) == 1, "tex-only FS (index 4) flagged as fs_retyped");
+    CHECK(vka_svar_is_fs_retyped(1, 1 /* VKA_FS_RETYPE */, 0x1u, 0, tu_fs_only, ts_zero, 0) == 1, "tex + fout FS flagged as fs_retyped");
+    CHECK(vka_svar_is_pre_retyped(0, 0, 0, tu_fs_only, ts_zero) == 0, "FS tex mask (index 4) must not mark pre_retyped");
+    CHECK(vka_svar_is_fs_retyped(1, 0, 0, 0, tu_tcs_only, ts_zero, 0) == 0, "TCS tex mask (index 1) must not mark fs_retyped");
+    CHECK(vka_svar_is_pre_retyped(0, 0, 0, tu_tcs_only, ts_zero) == 1, "TCS tex mask (index 1) marks pre_retyped");
+
     // Corruption test on variant manifest payload.
     FILE *mcf = fopen(mpath, "r+b");
     if (mcf) { fseek(mcf, -1, SEEK_END); int ch = fgetc(mcf); fseek(mcf, -1, SEEK_END); fputc(ch ^ 0xff, mcf); fclose(mcf); }

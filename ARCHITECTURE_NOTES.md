@@ -140,6 +140,7 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
 - **Read-Only Base Cache + Lightweight Delta Retype `VkPipelineCache` ([vka_gpl_cache.h](dm/gfx/vk_android/vka_gpl_cache.h), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
   - Boot #1 base `vk_gpl_cache_*.bin` stays strictly **read-only** in-game (`save_now()` never calls `vkGetPipelineCacheData` on it), eliminating 180+ MB RAM spikes and write amplification.
   - Runtime-retyped/specialized graphics stage libraries (`L_PRE`, `L_FS`, `L_PREFS`) and compute pipelines (`cs_img`) route through `g_pc_retype`, persisted atomically as `vk_gpl_retype_cache_<TitleID>_<dmsh_hash>_<driver_uuid>.bin` (`VKA_GPL_CACHE_F_DELTA`).
+  - Stage indexing rule (`vka_svar_is_fs_retyped()`, `vka_svar_is_pre_retyped()`): `k->tex_u[5]` / `k->tex_s[5]` follow `DMSH_VK_STAGE_*` (`VS=0, TCS=1, TES=2, GS=3, FS=4`), whereas `P->sh[]` follows NVN stage order (`FS=1`), ensuring `tex`-only FS retypes (`tex_u[4] | tex_s[4]`) and `tex + fout` manifests record exact FS masks cleanly.
 - **Startup Rehydration ([vka_shader.c](dm/gfx/vk_android/vka_shader.c), [vka_pso.c](dm/gfx/vk_android/vka_pso.c)):**
   - `vka_retype_variants_startup()` runs after loading Boot #2+ or finishing Boot #1: loads the manifest + delta cache, probes `g_pc_retype` (`VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`) or compiles missing/driver-swapped variants via a RAM/maps-guarded worker pool (`vka_shader_precomp_variant()`), merges into `g_pc_retype`, and saves atomically.
 - **Modified / Added Files:**

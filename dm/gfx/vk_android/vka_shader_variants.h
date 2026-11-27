@@ -260,4 +260,20 @@ static inline int vka_svar_manifest_load(const char *path, uint64_t expected_dms
     if (why) *why = NULL;
     return 1;
 }
+
+// tex_u/tex_s are indexed by DMSH_VK_STAGE_* (VS=0, TCS=1, TES=2, GS=3, FS=4), NOT NVN stage index (P->sh[1]=FS).
+static inline int vka_svar_is_pre_retyped(int is_mesh, uint32_t vin_u, uint32_t vin_s, const uint64_t tex_u[5], const uint64_t tex_s[5]) {
+    if (is_mesh) return 0;
+    if ((vin_u | vin_s) != 0) return 1;
+    if (!tex_u || !tex_s) return 0;
+    return ((tex_u[0] | tex_s[0]) | (tex_u[1] | tex_s[1]) | (tex_u[2] | tex_s[2]) | (tex_u[3] | tex_s[3])) != 0;
+}
+
+static inline int vka_svar_is_fs_retyped(int has_fs, int is_fout_retype, uint32_t fout_u, uint32_t fout_s,
+                                         const uint64_t tex_u[5], const uint64_t tex_s[5], uint32_t afunc) {
+    if (!has_fs) return 0;
+    if (is_fout_retype && (fout_u | fout_s) != 0) return 1;
+    if (tex_u && tex_s && (tex_u[4] | tex_s[4]) != 0) return 1;
+    return afunc != 0;
+}
 #endif

@@ -2052,8 +2052,8 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k, int cache_only) {
     fskey fk; memset(&fk, 0, sizeof fk);
     if (fs) { fk.mod = fs->module; fk.afunc = fs->pSpecializationInfo ? P->afunc : 0; fk.pin = fs->pNext ? ((const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *)fs->pNext)->requiredSubgroupSize : 0; }
     fk.layout = fs_lay; fk.rp = rp; fk.samples = (uint8_t)P->ms.rasterizationSamples; fk.a2c = (uint8_t)P->ms.alphaToCoverageEnable; fk.vin_static = (uint8_t)k->vin_static;
-    int pre_retyped = !P->mesh && ((k->vin_u | k->vin_s) != 0 || (k->tex_u[0] | k->tex_s[0]) != 0 || (k->tex_u[2] | k->tex_s[2]) != 0 || (k->tex_u[3] | k->tex_s[3]) != 0 || (k->tex_u[4] | k->tex_s[4]) != 0);
-    int fs_retyped = P->sh[1] && ((k->fs_variant == VKA_FS_RETYPE && (P->fu | P->fsm)) || (k->tex_u[1] | k->tex_s[1]) != 0 || fk.afunc != 0);
+    int pre_retyped = vka_svar_is_pre_retyped(P->mesh, k->vin_u, k->vin_s, k->tex_u, k->tex_s);
+    int fs_retyped = vka_svar_is_fs_retyped(P->sh[1] != NULL, k->fs_variant == VKA_FS_RETYPE, P->fu, P->fsm, k->tex_u, k->tex_s, fk.afunc);
     VkPipelineCache pre_pc = (g_pc_retype && pre_retyped) ? g_pc_retype : VK_NULL_HANDLE;
     VkPipelineCache fs_pc = (g_pc_retype && fs_retyped) ? g_pc_retype : VK_NULL_HANDLE;
     if (g_pre_adapt & A_COMBINED) {
@@ -2062,8 +2062,30 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k, int cache_only) {
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = nb, .pStages = both, .pTessellationState = P->tess ? &P->ts : NULL,
                                            .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pMultisampleState = &P->ms, .pDepthStencilState = &P->ds, .pDynamicState = &dy[L_PREFS], .layout = P->ci.layout,
                                            .renderPass = rp};
-        VkPipelineCache comb_pc = (pre_retyped || fs_retyped) ? g_pc_retype : VK_NULL_HANDLE;
+        VkPipelineCache comb_pc = (g_pc_retype && (pre_retyped || fs_retyped)) ? g_pc_retype : VK_NULL_HANDLE;
         if (!(part[nparts++] = lib_make(L_PREFS, &key, sizeof key, &ci, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, NULL, vs_key, fs_key, cache_only, comb_pc))) return VK_NULL_HANDLE;
+        if (!cache_only && pre_retyped && P->sh[0] && ((k->vin_u | k->vin_s) != 0 || (k->tex_u[DMSH_VK_STAGE_VS] | k->tex_s[DMSH_VK_STAGE_VS]) != 0)) {
+            vka_svar_rec vr = {0};
+            vr.shader_hash = P->sh[0]->key;
+            vr.stage = DMSH_VK_STAGE_VS;
+            vr.lib_variant = (k->gs_fx == 2 && P->sh[0]->tf_fx) ? DMSH_VK_MOD_TF : DMSH_VK_MOD_BASE;
+            vr.vin_u = k->vin_u; vr.vin_s = k->vin_s;
+            vr.tex_u = k->tex_u[DMSH_VK_STAGE_VS]; vr.tex_s = k->tex_s[DMSH_VK_STAGE_VS];
+            vr.flags = pk.gl[0] ? VKA_SVAR_F_GL_DEPTH : 0;
+            svar_record(&vr);
+        }
+        if (!cache_only && fs_retyped) {
+            vka_svar_rec vr = {0};
+            vr.shader_hash = P->sh[1]->key;
+            vr.stage = DMSH_VK_STAGE_FS;
+            vr.lib_variant = (uint8_t)(k->fs_variant == VKA_FS_RETYPE ? DMSH_VK_MOD_BASE : k->fs_variant);
+            vr.fout_u = P->fu; vr.fout_s = P->fsm;
+            vr.tex_u = k->tex_u[DMSH_VK_STAGE_FS]; vr.tex_s = k->tex_s[DMSH_VK_STAGE_FS];
+            vr.alpha_func = (uint8_t)fk.afunc;
+            vr.samples = fk.samples;
+            vr.flags = (P->pfb_late ? VKA_SVAR_F_PFB_LATE : 0) | (fk.a2c ? VKA_SVAR_F_A2C : 0);
+            svar_record(&vr);
+        }
     } else {
         VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri0, .stageCount = npre, .pStages = pre, .pTessellationState = P->tess ? &P->ts : NULL,
                                            .pViewportState = &P->vp, .pRasterizationState = &P->rs, .pDynamicState = &dy[L_PRE], .layout = pre_lay, .renderPass = rp};
@@ -2085,13 +2107,13 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k, int cache_only) {
             }
             return VK_NULL_HANDLE;
         }
-        if (!cache_only && pre_retyped && P->sh[0] && ((k->vin_u | k->vin_s) != 0 || (k->tex_u[0] | k->tex_s[0]) != 0)) {
+        if (!cache_only && pre_retyped && P->sh[0] && ((k->vin_u | k->vin_s) != 0 || (k->tex_u[DMSH_VK_STAGE_VS] | k->tex_s[DMSH_VK_STAGE_VS]) != 0)) {
             vka_svar_rec vr = {0};
             vr.shader_hash = P->sh[0]->key;
             vr.stage = DMSH_VK_STAGE_VS;
             vr.lib_variant = (k->gs_fx == 2 && P->sh[0]->tf_fx) ? DMSH_VK_MOD_TF : DMSH_VK_MOD_BASE;
             vr.vin_u = k->vin_u; vr.vin_s = k->vin_s;
-            vr.tex_u = k->tex_u[0]; vr.tex_s = k->tex_s[0];
+            vr.tex_u = k->tex_u[DMSH_VK_STAGE_VS]; vr.tex_s = k->tex_s[DMSH_VK_STAGE_VS];
             vr.flags = pk.gl[0] ? VKA_SVAR_F_GL_DEPTH : 0;
             svar_record(&vr);
         }
@@ -2104,7 +2126,7 @@ static VkPipeline gpl_link(pstate *P, const vka_gkey *k, int cache_only) {
             vr.stage = DMSH_VK_STAGE_FS;
             vr.lib_variant = (uint8_t)(k->fs_variant == VKA_FS_RETYPE ? DMSH_VK_MOD_BASE : k->fs_variant);
             vr.fout_u = P->fu; vr.fout_s = P->fsm;
-            vr.tex_u = k->tex_u[1]; vr.tex_s = k->tex_s[1];
+            vr.tex_u = k->tex_u[DMSH_VK_STAGE_FS]; vr.tex_s = k->tex_s[DMSH_VK_STAGE_FS];
             vr.alpha_func = (uint8_t)fk.afunc;
             vr.samples = fk.samples;
             vr.flags = (P->pfb_late ? VKA_SVAR_F_PFB_LATE : 0) | (fk.a2c ? VKA_SVAR_F_A2C : 0);
