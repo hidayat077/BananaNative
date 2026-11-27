@@ -286,7 +286,162 @@ static pthread_mutex_t g_merge_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic int g_pre_active, g_pre_compiled, g_pre_total, g_pre_skip, g_pre_stop, g_pre_checkpoint_want, g_pre_active_workers;
 static _Atomic uint64_t g_pre_t0_ns;
 static uint8_t *g_pw_load; static size_t g_pw_load_len; static uint32_t g_pw_load_n;   // the loaded records, read by Boot #1 / prewarm threads (not changed after pw_load)
+enum { L_VI, L_PRE, L_FS, L_FO, L_PREFS, NLIB };
 static void vka_boot_precompile_run(const vka_shlib *L);
+static int vkf_int_class(uint32_t f);
+static void precomp_fill_dyn(VkDynamicState *out_dyn, VkPipelineDynamicStateCreateInfo *out_dy, int part);
+static void precomp_pw_variants(const vka_shlib *L, int gl_depth) {
+    if (!g_pw_load || !g_pw_load_len || !g_pc) return;
+    enum { SEEN_CAP = 8192 };   // power of two >= 2x max deduplicated variants
+    typedef struct { uint64_t key, m1, m2; uint8_t kind, used; } vseen;
+    vseen *seen = calloc(SEEN_CAP, sizeof *seen);
+    if (!seen) return;
+    uint32_t n_seen = 0, n_built = 0;
+    VkDynamicState dl_pre[40], dl_fs[40];
+    VkPipelineDynamicStateCreateInfo dy_pre, dy_fs;
+    precomp_fill_dyn(dl_pre, &dy_pre, L_PRE);
+    precomp_fill_dyn(dl_fs, &dy_fs, L_FS);
+    VkPipelineCreateFlags lto_flag = V.gpl_lto ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0;
+    VkPipelineRenderingCreateInfo ri0 = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+
+    for (size_t o = 0; o + sizeof(pwrec) <= g_pw_load_len;) {
+        pwrec r; memcpy(&r, g_pw_load + o, sizeof r);
+        const uint8_t *kb = g_pw_load + o + sizeof r;
+        o += vka_pw_size(&r);
+        if (r.kind == VKA_PW_CS && r.klen == VKA_PW_CS_MASKS && r.key[0]) {
+            uint64_t m[2]; memcpy(m, kb, sizeof m);
+            if (!(m[0] | m[1])) continue;
+            uint64_t h = (r.key[0] ^ m[0] * 0x9E3779B97F4A7C15ull ^ m[1] * 0xBF58476D1CE4E5B9ull) & (SEEN_CAP - 1u);
+            while (seen[h].used && !(seen[h].kind == 4 && seen[h].key == r.key[0] && seen[h].m1 == m[0] && seen[h].m2 == m[1])) h = (h + 1u) & (SEEN_CAP - 1u);
+            if (seen[h].used || n_seen >= 4096) continue;
+            seen[h] = (vseen){r.key[0], m[0], m[1], 4, 1}; n_seen++;
+            const dmsh_vk_entry *e = vka_shlib_find(L, r.key[0]);
+            if (!e) continue;
+            VkShaderModule mod = vka_shader_precomp_cs_img(L, e, m[0], m[1]);
+            if (!mod) continue;
+            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+            vka_shader *sh[VKA_NSTAGE] = {0}; sh[5] = &tmp;
+            vka_layout lay;
+            if (vka_layout_of(sh, 1, &lay)) {
+                uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_CS) : 0;
+                VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
+                int spill = 0; for (unsigned i = 0; i < e->bind_count; i++) if (tmp.b[i].kind == DMSH_VK_KIND_SHARED_SPILL) spill = 1;
+                VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .flags = spill ? VK_PIPELINE_CREATE_DISPATCH_BASE_BIT : 0, .layout = lay.layout,
+                    .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = mod, .pName = "main"}};
+                VkPipeline p = VK_NULL_HANDLE;
+                if (vk.vkCreateComputePipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
+            }
+            vk.vkDestroyShaderModule(V.dev, mod, NULL);
+        } else if (r.kind == VKA_PW_GFX) {
+            vka_gkey k; memset(&k, 0, sizeof k); memcpy(&k, kb, r.klen < sizeof k ? r.klen : sizeof k);
+            if (k.vin_static != (uint32_t)!V.vin_dyn) continue;
+            if (k.fs_variant == VKA_FS_RETYPE && r.key[1]) {
+                const dmsh_vk_entry *e = vka_shlib_find(L, r.key[1]);
+                if (e && e->stage == DMSH_VK_STAGE_FS) {
+                    uint32_t fu = 0, fsm = 0;
+                    for (uint32_t i = 0; i < k.ncolor && i < 8; i++) {
+                        int c = vkf_int_class(k.cfmt[i]);
+                        if (c && (e->fout_mask >> i & 1) && (e->fout_types >> (2 * i) & 3) == DMSH_VK_TYPE_FLOAT) { if (c == 1) fu |= 1u << i; else fsm |= 1u << i; }
+                    }
+                    if (fu | fsm) {
+                        uint64_t h = (r.key[1] ^ ((uint64_t)fu << 32 | fsm) * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
+                        while (seen[h].used && !(seen[h].kind == 1 && seen[h].key == r.key[1] && seen[h].m1 == fu && seen[h].m2 == fsm)) h = (h + 1u) & (SEEN_CAP - 1u);
+                        if (!seen[h].used && n_seen < 4096) {
+                            seen[h] = (vseen){r.key[1], fu, fsm, 1, 1}; n_seen++;
+                            VkShaderModule mod = vka_shader_precomp_fout(L, e, fu, fsm);
+                            if (mod) {
+                                vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+                                vka_layout lay;
+                                if (vka_layout_fs_of(&tmp, &lay)) {
+                                    uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_FS) : 0;
+                                    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
+                                    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT};
+                                    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+                                    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, .maxDepthBounds = 1.0f};
+                                    VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = mod, .pName = "main"};
+                                    VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
+                                        .stageCount = 1, .pStages = &st, .pMultisampleState = &ms, .pDepthStencilState = &ds, .pDynamicState = &dy_fs, .layout = lay.fs_layout};
+                                    VkPipeline p = VK_NULL_HANDLE;
+                                    if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
+                                }
+                                vk.vkDestroyShaderModule(V.dev, mod, NULL);
+                            }
+                        }
+                    }
+                }
+            }
+            if (k.alpha_func != 0 && r.key[1]) {
+                const dmsh_vk_entry *e = vka_shlib_find(L, r.key[1]);
+                if (e && e->stage == DMSH_VK_STAGE_FS && (e->flags & DMSH_VK_F_ALPHA_TEST)) {
+                    uint64_t h = (r.key[1] ^ (uint64_t)k.alpha_func * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
+                    while (seen[h].used && !(seen[h].kind == 2 && seen[h].key == r.key[1] && seen[h].m1 == k.alpha_func)) h = (h + 1u) & (SEEN_CAP - 1u);
+                    if (!seen[h].used && n_seen < 4096) {
+                        seen[h] = (vseen){r.key[1], k.alpha_func, 0, 2, 1}; n_seen++;
+                        vka_precomp_sh ps;
+                        if (vka_shader_precomp_open(L, (uint32_t)(e - L->ent), &ps)) {
+                            VkShaderModule mod = ps.pfb_late ? ps.pfb_late : ps.mods[DMSH_VK_MOD_BASE];
+                            if (mod) {
+                                vka_shader tmp = {.key = e->key, .e = e, .b = ps.b, .lib = L};
+                                vka_layout lay;
+                                if (vka_layout_fs_of(&tmp, &lay)) {
+                                    uint32_t afunc = k.alpha_func;
+                                    VkSpecializationMapEntry ae = {DMSH_VK_SPEC_ALPHA_FUNC, 0, sizeof afunc};
+                                    VkSpecializationInfo aspec = {1, &ae, sizeof afunc, &afunc};
+                                    uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_FS) : 0;
+                                    VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
+                                    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT};
+                                    VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT, .alphaToCoverageEnable = ps.pfb_late ? VK_TRUE : VK_FALSE};
+                                    VkPipelineDepthStencilStateCreateInfo ds = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, .maxDepthBounds = 1.0f};
+                                    VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = mod, .pName = "main", .pSpecializationInfo = &aspec};
+                                    VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
+                                        .stageCount = 1, .pStages = &st, .pMultisampleState = &ms, .pDepthStencilState = &ds, .pDynamicState = &dy_fs, .layout = lay.fs_layout};
+                                    VkPipeline p = VK_NULL_HANDLE;
+                                    if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
+                                }
+                            }
+                            vka_shader_precomp_destroy(&ps);
+                        }
+                    }
+                }
+            }
+            if ((k.vin_u | k.vin_s) && r.key[0]) {
+                const dmsh_vk_entry *e = vka_shlib_find(L, r.key[0]);
+                if (e && e->stage == DMSH_VK_STAGE_VS) {
+                    uint64_t h = (r.key[0] ^ ((uint64_t)k.vin_u << 32 | k.vin_s) * 0x9E3779B97F4A7C15ull) & (SEEN_CAP - 1u);
+                    while (seen[h].used && !(seen[h].kind == 3 && seen[h].key == r.key[0] && seen[h].m1 == k.vin_u && seen[h].m2 == k.vin_s)) h = (h + 1u) & (SEEN_CAP - 1u);
+                    if (!seen[h].used && n_seen < 4096) {
+                        seen[h] = (vseen){r.key[0], k.vin_u, k.vin_s, 3, 1}; n_seen++;
+                        VkShaderModule mod = vka_shader_precomp_vin(L, e, k.vin_u, k.vin_s);
+                        if (mod) {
+                            vka_shader tmp = {.key = e->key, .e = e, .b = vka_shlib_binds(L, e), .lib = L};
+                            vka_shader *sh[VKA_NSTAGE] = {0}; sh[0] = &tmp;
+                            vka_layout lay;
+                            if (vka_layout_pre_of(sh, &lay)) {
+                                VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1};
+                                VkPipelineRasterizationStateCreateInfo rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .lineWidth = 1.0f};
+                                VkBool32 gl_true = VK_TRUE;
+                                VkSpecializationMapEntry me = {DMSH_VK_SPEC_GL_DEPTH, 0, sizeof gl_true};
+                                VkSpecializationInfo spec = {1, &me, sizeof gl_true, &gl_true};
+                                int use_gl = gl_depth && (e->flags & DMSH_VK_F_GL_DEPTH);
+                                uint32_t pin = (e->flags & DMSH_VK_F_SUBGROUP) ? vka_shader_sg_pin(DMSH_VK_STAGE_VS) : 0;
+                                VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
+                                VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = &ri0, .flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT};
+                                VkPipelineShaderStageCreateInfo st = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = mod, .pName = "main", .pSpecializationInfo = use_gl ? &spec : NULL};
+                                VkGraphicsPipelineCreateInfo ci = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &li, .flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | lto_flag,
+                                    .stageCount = 1, .pStages = &st, .pViewportState = &vp, .pRasterizationState = &rs, .pDynamicState = &dy_pre, .layout = lay.pre_layout};
+                                VkPipeline p = VK_NULL_HANDLE;
+                                if (vk.vkCreateGraphicsPipelines(V.dev, g_pc, 1, &ci, NULL, &p) == VK_SUCCESS && p) { vk.vkDestroyPipeline(V.dev, p, NULL); n_built++; }
+                            }
+                            vk.vkDestroyShaderModule(V.dev, mod, NULL);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    free(seen);
+    if (n_built > 0) VLOG("boot precompile: pre-compiled %u retyped/specialized variant(s) from prewarm seed", n_built);
+}
 
 __attribute__((visibility("default"))) int nxhost_precompile_status(int *compiled, int *total, uint64_t *elapsed_ms) {
     int act = atomic_load_explicit(&g_pre_active, memory_order_acquire);
@@ -874,6 +1029,8 @@ void vka_pso_builds_log(void) {
     }
     if (!n) VLOG("  being made now: no pipeline");
 }
+static void record_compile_outcome(const VkPipelineCreationFeedback *fb_all, const VkPipelineCreationFeedback *fb_st, uint32_t nst,
+                                   int has_cache, uint64_t dur_ns, const char *what, uint64_t vs, uint64_t fs);
 // The whole pipeline (optimized), with creation feedback (core in 1.3) for the line of a slow one: whether the pipeline cache had it and each stage's share. how: NULL = on the
 // frame path (counted as the frame's), else where it was made (" in the background", " (prewarm)")
 static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], const char *how) {
@@ -889,6 +1046,7 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
     build_end(bslot);
     P->ci.pNext = fbi.pNext;
     uint64_t dns = now_ns() - t0; double ms_ = dns / 1e6;
+    if (!how && !r && p) record_compile_outcome(&fb_all, fb_st, P->ns, g_pc != VK_NULL_HANDLE, dns, "whole graphics pipeline", pre0 ? pre0->key : 0, sh[1] ? sh[1]->key : 0);
     pthread_mutex_lock(&g_mu);
     if (r) { p = VK_NULL_HANDLE; g_nfail++; } else { g_ngfx++; g_made++; if (!how) g_frame_made++; }
     g_create_ms += ms_; if (!how) g_create_ns += dns;   // made in the background or by prewarm: not the frame's time
@@ -934,7 +1092,6 @@ static VkPipeline full_pipeline(pstate *P, vka_shader *const sh[VKA_NSTAGE], con
 // path (cold3gpl 70 ms a pipeline against 59 without GPL). The first refusal now runs a probe (pre_probe): the same library made with one thing changed at a time, each
 // result logged; a change that makes it is adopted for the run (g_pre_adapt), and with none, GPL turns itself off after DM_VK_GPL_GIVEUP refusals (default 3) with no
 // pre-rasterization library made, so a miss costs the whole pipeline only
-enum { L_VI, L_PRE, L_FS, L_FO, L_PREFS, NLIB };
 typedef struct { uint8_t topo; uint32_t vin_static; uint8_t va[sizeof(((vka_gkey *)0)->va)], vb[sizeof(((vka_gkey *)0)->vb)]; } vikey;
 // rp: with classic render passes (DM_VK_CLASSIC_RP) the shader parts are made against the pipeline's render pass (vka_rp_compat), which must be the same for every part
 // of one link; the fragment output's key holds the formats and samples that pick it
@@ -945,6 +1102,25 @@ typedef struct { prekey pre; fskey fs; } prefskey;
 static kmap g_lib[NLIB] = {{.klen = sizeof(vikey)}, {.klen = sizeof(prekey)}, {.klen = sizeof(fskey)}, {.klen = sizeof(fokey)}, {.klen = sizeof(prefskey)}};
 static uint64_t g_nlib[NLIB], g_nlinked, g_nopt; static double g_lib_ms, g_link_ms;
 static vka_gpl_lat g_link_lat;
+static _Atomic uint64_t g_ir3_miss, g_ram_rehydrate;
+
+static void record_compile_outcome(const VkPipelineCreationFeedback *fb_all, const VkPipelineCreationFeedback *fb_st, uint32_t nst,
+                                   int has_cache, uint64_t dur_ns, const char *what, uint64_t vs, uint64_t fs) {
+    int valid = (fb_all->flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) != 0;
+    int hit = (fb_all->flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) != 0;
+    int all_st_valid = nst > 0, all_st_hit = nst > 0;
+    for (uint32_t i = 0; i < nst; i++) {
+        if (!(fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT)) all_st_valid = 0;
+        if (!(fb_st[i].flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT)) all_st_hit = 0;
+    }
+    if (vka_classify_compile_feedback(valid, hit, all_st_valid, all_st_hit, has_cache, dur_ns)) {
+        atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed);
+    } else {
+        uint64_t m = atomic_fetch_add_explicit(&g_ir3_miss, 1, memory_order_relaxed) + 1;
+        if (m <= 32) VLOG("ir3_compiler_miss #%llu (%s, vs %016llx fs %016llx, %.1f ms)",
+                          (unsigned long long)m, what, (unsigned long long)vs, (unsigned long long)fs, dur_ns / 1e6);
+    }
+}
 static const char *const g_lib_name[NLIB] = {"vertex input", "pre-rasterization", "fragment shader", "fragment output", "pre-rasterization + fragment shader"};
 enum { A_NOCACHE = 1, A_RETAIN = 2, A_NORI = 4, A_COMBINED = 8 };
 static unsigned g_pre_adapt; static int g_pre_probed, g_pre_refused; static _Atomic int g_gpl_off;
@@ -968,14 +1144,24 @@ static VkPipeline lib_make(int kind, const void *key, size_t klen, VkGraphicsPip
     pthread_mutex_unlock(&g_mu);
     if (hit) return hit == LIB_REFUSED ? VK_NULL_HANDLE : (VkPipeline)hit;
     int shp = kind == L_PRE || kind == L_PREFS;
-    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, .pNext = shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext, .flags = part};
+    VkPipelineCreationFeedback fb_all = {0}, fb_st[5]; memset(fb_st, 0, sizeof fb_st);
+    uint32_t nst = (kind == L_PRE || kind == L_FS || kind == L_PREFS) && ci->stageCount <= 5 ? ci->stageCount : 0;
+    VkPipelineCreationFeedbackCreateInfo fbi = {VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO,
+        .pNext = shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext, .pPipelineCreationFeedback = &fb_all,
+        .pipelineStageCreationFeedbackCount = nst, .pPipelineStageCreationFeedbacks = fb_st};
+    const void *orig_next = ci->pNext;
+    VkGraphicsPipelineLibraryCreateInfoEXT li = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+        .pNext = nst ? &fbi : (shp && (g_pre_adapt & A_NORI) ? NULL : ci->pNext), .flags = part};
     ci->pNext = &li; ci->flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | (((g_pre_adapt & A_RETAIN) || V.gpl_lto) ? VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : 0);
     uint64_t t0 = now_ns();
     int bs = build_begin(g_lib_name[kind], vs, fs);
-    VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, shp && (g_pre_adapt & A_NOCACHE) ? VK_NULL_HANDLE : g_pc, 1, ci, NULL, &p);
+    int use_cache = !(shp && (g_pre_adapt & A_NOCACHE));
+    VkPipeline p = VK_NULL_HANDLE; VkResult r = vk.vkCreateGraphicsPipelines(V.dev, use_cache ? g_pc : VK_NULL_HANDLE, 1, ci, NULL, &p);
     build_end(bs);
-    ci->pNext = li.pNext;
-    double ms_ = (now_ns() - t0) / 1e6;
+    ci->pNext = orig_next;
+    uint64_t dns = now_ns() - t0;
+    double ms_ = dns / 1e6;
+    if (!r && p && nst) record_compile_outcome(&fb_all, fb_st, nst, use_cache && g_pc != VK_NULL_HANDLE, dns, g_lib_name[kind], vs, fs);
     pthread_mutex_lock(&g_mu);
     if (r) p = VK_NULL_HANDLE; else g_nlib[kind]++;
     g_lib_ms += ms_;
@@ -1326,6 +1512,7 @@ static void vka_boot_precompile_run(const vka_shlib *L) {
 
     int skipped_by_user = atomic_load_explicit(&g_pre_skip, memory_order_relaxed);
     int stopped_early = atomic_load_explicit(&g_pre_stop, memory_order_relaxed);
+    if (!skipped_by_user && !stopped_early) precomp_pw_variants(L, !vka_depth_zero());
     uint32_t done_now = vka_gpl_cache_bit_count(g_gpl_bitset, total);
     int complete = !skipped_by_user && !stopped_early && (done_now == total);
 
@@ -1613,11 +1800,31 @@ void vka_gpl_line(char *out, size_t n) {
     double avg_us = 0, p99_us = 0, max_us = 0;
     vka_gpl_lat_summary(&g_link_lat, &avg_us, &p99_us, &max_us);
     if (n) snprintf(out, n, "libraries %llu vertex input / %llu pre-rasterization / %llu fragment shader / %llu fragment output / %llu combined, %.0f ms; %llu linked (%.1f ms, avg %.0f us, p99 %.0f us, max %.0f us), %llu optimized in the background, %llu waiting; "
-                    "cache-only tries %llu hit / %llu missed (%.0f ms in the misses)%s",
+                    "ir3_miss %llu, rehydrate %llu; cache-only tries %llu hit / %llu missed (%.0f ms in the misses)%s",
                     (unsigned long long)g_nlib[L_VI], (unsigned long long)g_nlib[L_PRE], (unsigned long long)g_nlib[L_FS], (unsigned long long)g_nlib[L_FO], (unsigned long long)g_nlib[L_PREFS], g_lib_ms,
-                    (unsigned long long)g_nlinked, g_link_ms, avg_us, p99_us, max_us, (unsigned long long)g_nopt, (unsigned long long)g_opt_waiting, (unsigned long long)g_probe_hit, (unsigned long long)g_probe_miss,
+                    (unsigned long long)g_nlinked, g_link_ms, avg_us, p99_us, max_us, (unsigned long long)g_nopt, (unsigned long long)g_opt_waiting,
+                    (unsigned long long)atomic_load_explicit(&g_ir3_miss, memory_order_relaxed),
+                    (unsigned long long)atomic_load_explicit(&g_ram_rehydrate, memory_order_relaxed),
+                    (unsigned long long)g_probe_hit, (unsigned long long)g_probe_miss,
                     g_probe_miss_ns / 1e6, atomic_load(&g_gpl_off) ? "; OFF for this run (pre-rasterization refused)" : "");
     pthread_mutex_unlock(&g_mu);
+}
+void vka_pso_telemetry_line(char *out, size_t n) {
+    if (!out || !n) return;
+    vka_gpl_telemetry t = {0};
+    pthread_mutex_lock(&g_mu);
+    double avg_us = 0, p99_us = 0, max_us = 0;
+    vka_gpl_lat_summary(&g_link_lat, &avg_us, &p99_us, &max_us);
+    t.gpl_fast_link_count = g_link_lat.count;
+    t.gpl_fast_link_avg_us = avg_us;
+    t.gpl_fast_link_p99_us = p99_us;
+    t.gpl_fast_link_max_us = (uint64_t)max_us;
+    pthread_mutex_unlock(&g_mu);
+    t.ir3_compiler_miss = atomic_load_explicit(&g_ir3_miss, memory_order_relaxed);
+    t.pipeline_ram_rehydrate_count = atomic_load_explicit(&g_ram_rehydrate, memory_order_relaxed);
+    t.frontend_shader_translate_count = vka_shader_frontend_xlate_count();
+    vka_shader_retype_counts(&t.retype_fout, &t.retype_vin, &t.retype_tex, &t.retype_cs_img);
+    vka_gpl_telemetry_format(&t, out, n);
 }
 
 // ---------- The prewarm list (2026-11-03) ----------
@@ -2044,7 +2251,7 @@ static gval *gfx_obtain(const gkey_full *fk, uint64_t h, size_t len, vka_shader 
             uint64_t dns = now_ns() - t0;
             if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
             pthread_mutex_lock(&g_mu);
-            if (p) { g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; } else { g_probe_miss++; g_probe_miss_ns += dns; }
+            if (p) { g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed); } else { g_probe_miss++; g_probe_miss_ns += dns; }
             g_create_ns += dns;
             pthread_mutex_unlock(&g_mu);
         }
@@ -2089,7 +2296,7 @@ static void gfx_build(gval *g, size_t len, vka_shader *const sh[VKA_NSTAGE], con
                 build_end(bs);
                 P->ci.flags &= ~VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
                 uint64_t dns = now_ns() - t0;
-                if (r == VK_SUCCESS && p) { pthread_mutex_lock(&g_mu); g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g_create_ns += dns; pthread_mutex_unlock(&g_mu); }
+                if (r == VK_SUCCESS && p) { pthread_mutex_lock(&g_mu); g_ngfx++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g_create_ns += dns; pthread_mutex_unlock(&g_mu); atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed); }
                 else {
                     // A miss that took long: the driver compiled before answering COMPILE_REQUIRED (the try then costs a compile and saves nothing)
                     pthread_mutex_lock(&g_mu); g_probe_miss++; g_probe_miss_ns += dns; g_create_ns += dns; pthread_mutex_unlock(&g_mu);
@@ -2199,7 +2406,7 @@ static VkPipeline cs_obtain(vka_shader *cs, const vka_layout *lay, int prewarm, 
             if (r != VK_SUCCESS) p = VK_NULL_HANDLE;
             pthread_mutex_lock(&g_mu);
             g_create_ns += dns;
-            if (p) { g_ncs++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g->p = p; g->busy = 0; pthread_cond_broadcast(&g_busy_cv); }
+            if (p) { g_ncs++; g_made++; g_frame_made++; g_probe_hit++; g_create_ms += dns / 1e6; g->p = p; g->busy = 0; pthread_cond_broadcast(&g_busy_cv); atomic_fetch_add_explicit(&g_ram_rehydrate, 1, memory_order_relaxed); }
             else { g_probe_miss++; g_probe_miss_ns += dns; }
             pthread_mutex_unlock(&g_mu);
             if (p) { pw_note_cs(cs, umask, smask); return p; }
@@ -2219,22 +2426,23 @@ static void cs_build(gval *g, vka_shader *cs, const vka_layout *lay, VkShaderMod
     VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rsg = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO, .requiredSubgroupSize = pin};
     int spill = 0;   // shared memory in the spill buffer (vka_draw.c spill_dispatch): dispatched in parts with a base workgroup
     for (unsigned i = 0; i < cs->e->bind_count; i++) if (cs->b[i].kind == DMSH_VK_KIND_SHARED_SPILL) spill = 1;
-    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .flags = spill ? VK_PIPELINE_CREATE_DISPATCH_BASE_BIT : 0, .layout = lay->layout,
+    VkPipelineCreationFeedback fb_all = {0}, fb_st = {0};
+    VkPipelineCreationFeedbackCreateInfo fbi = {VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO, .pPipelineCreationFeedback = &fb_all,
+                                                .pipelineStageCreationFeedbackCount = 1, .pPipelineStageCreationFeedbacks = &fb_st};
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .pNext = &fbi, .flags = spill ? VK_PIPELINE_CREATE_DISPATCH_BASE_BIT : 0, .layout = lay->layout,
         .stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = pin ? &rsg : NULL, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = csm, .pName = "main"}};
     VkPipeline p = VK_NULL_HANDLE; VkResult r; int over = 0;
-    // Shared memory past the device's limit is invalid usage (the driver may refuse, crash or run it with less). The translator keeps a program's shared memory past
-    // DMSH_VK_SHARED_MAX in a storage buffer (DMSH_VK_KIND_SHARED_SPILL), and e->shared is then what stays in workgroup memory; a program still over this device's
-    // limit (a library built before the spill, or a device under DMSH_VK_SHARED_MAX) is not made and its dispatches are skipped. docs/reference/shaders.md "Compute
-    // programs over the device's shared memory". DM_VK_CS_SHARED_OVER=1 makes them anyway (an A/B: what the driver does with them)
     uint32_t smax = V.props.limits.maxComputeSharedMemorySize;
     if (smax && cs->e->shared > smax && !VKA_ENV("DM_VK_CS_SHARED_OVER", 0)) {
         r = VK_ERROR_FEATURE_NOT_PRESENT; over = 1;
         static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) VRED("compute program %016llx takes %u bytes of shared memory, the device at most %u: not made, its dispatches are skipped (the first 16 are logged; the count is in the pipeline line)", (unsigned long long)cs->key, cs->e->shared, smax);
     } else if (!csm) { r = VK_ERROR_INITIALIZATION_FAILED; }
     else { int bs = build_begin("compute pipeline", cs->key, 0); r = vk.vkCreateComputePipelines(V.dev, g_pc, 1, &ci, NULL, &p); build_end(bs); }
+    uint64_t dns = now_ns() - t0;
+    if (!prewarm && !r && p) record_compile_outcome(&fb_all, &fb_st, 1, g_pc != VK_NULL_HANDLE, dns, "compute pipeline", cs->key, 0);
     pthread_mutex_lock(&g_mu);
     if (over) { p = VK_NULL_HANDLE; g_ncs_over++; } else if (r) { p = VK_NULL_HANDLE; g_nfail++; } else { g_ncs++; g_made++; if (!prewarm && !async) g_frame_made++; }
-    { uint64_t dns = now_ns() - t0; g_create_ms += dns / 1e6; if (!prewarm && !async) g_create_ns += dns; }
+    { g_create_ms += dns / 1e6; if (!prewarm && !async) g_create_ns += dns; }
     __atomic_store_n(&g->p, p, __ATOMIC_RELEASE); __atomic_store_n(&g->busy, 0, __ATOMIC_RELEASE); pthread_cond_broadcast(&g_busy_cv);
     pthread_mutex_unlock(&g_mu);
     if (r && !over) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16) VRED("compute pipeline %016llx: %d; its dispatches are skipped", (unsigned long long)cs->key, r); }

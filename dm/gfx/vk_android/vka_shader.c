@@ -31,6 +31,8 @@ static _Atomic unsigned g_layer_gen; static time_t g_layer_mt, g_layer_polled; s
 static char g_lib_path[1024];                       // the library loaded (vka_shader_lib_path)
 static int g_kept;                                  // the library is one a sample kept (sampled-keep.json beside it, lib_load): the layer verifies the shaders played (vka_prog_shaders)
 static _Atomic int g_check_due;                     // DM_VK_SHLIB_CHECK: the check is to run (lib_ready)
+static _Atomic uint64_t g_frontend_xlate_req, g_frontend_xlate_loaded;
+static _Atomic uint64_t g_retype_fout, g_retype_vin, g_retype_tex, g_retype_cs_img;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 
 // How each stage runs the subgroup operations of a library built for sg lanes (DMSH_VK_F_SUBGROUP shaders). A module built for 64 lanes splits ballots and shuffles into
@@ -729,6 +731,7 @@ VkShaderModule vka_shader_vin_module(vka_shader *s, uint32_t umask, uint32_t sma
         return w; }
     struct vka_vinmod *v = malloc(sizeof *v); *v = (struct vka_vinmod){s->vin, umask, smask, mod}; s->vin = v;
     pthread_mutex_unlock(&g_mu);
+    if (own) atomic_fetch_add_explicit(&g_retype_vin, 1, memory_order_relaxed);
     return mod;
 }
 // The base pixel module with the float outputs of umask / smask retyped for integer attachments (vka_spvpatch.c vka_spv_fout_retype): made once per pair of masks, as the vertex ones
@@ -755,6 +758,7 @@ VkShaderModule vka_shader_fout_module(vka_shader *s, uint32_t umask, uint32_t sm
     struct vka_vinmod *v = malloc(sizeof *v);
     if (v) { *v = (struct vka_vinmod){s->fout, umask, smask, mod}; s->fout = v; }
     pthread_mutex_unlock(&g_mu);
+    if (own) atomic_fetch_add_explicit(&g_retype_fout, 1, memory_order_relaxed);
     return mod;
 }
 // A compute module with the float storage images at bindings of umask / smask retyped as uint / int images (vka_spvpatch.c vka_spv_img_retype), for integer textures bound
@@ -787,6 +791,7 @@ VkShaderModule vka_shader_img_module(vka_shader *s, uint64_t umask, uint64_t sma
     struct vka_imgmod *v = malloc(sizeof *v);
     if (v) { *v = (struct vka_imgmod){s->img, umask, smask, mod}; s->img = v; }
     pthread_mutex_unlock(&g_mu);
+    if (mod) atomic_fetch_add_explicit(&g_retype_cs_img, 1, memory_order_relaxed);
     return mod;
 }
 // A graphics stage's module with its float textures and images at the bindings of tex_u / tex_s (of its binding range) retyped as uint / int (vka_spv_img_retype), for
@@ -830,6 +835,7 @@ VkShaderModule vka_shader_tex_module(vka_shader *s, const vka_texmod_key *key) {
     struct vka_texmod *v = malloc(sizeof *v);
     if (v) { v->next = s->tex; v->k = k; v->mod = mod; s->tex = v; }
     pthread_mutex_unlock(&g_mu);
+    if (mod) atomic_fetch_add_explicit(&g_retype_tex, 1, memory_order_relaxed);
     return mod;
 }
 int vka_shader_fout_retyped(vka_shader *s, uint32_t umask, uint32_t smask) {
@@ -922,6 +928,7 @@ static vka_shader *layer_make(const vka_shlib *LY, uint64_t key) {
     }
     vka_shader *s = make_new(own, key);
     if (!s) { vka_shlib_close(own); free(own); return NULL; }
+    if (!s->bad) atomic_fetch_add_explicit(&g_frontend_xlate_loaded, 1, memory_order_relaxed);
     return sh_settle(key, &g_ly_tag, ch, s, own);
 }
 
@@ -1077,6 +1084,75 @@ void vka_shader_precomp_destroy(vka_precomp_sh *sh) {
     memset(sh, 0, sizeof *sh);
 }
 
+VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask) {
+    if (!L || !e || e->stage != DMSH_VK_STAGE_FS || !(umask | smask)) return VK_NULL_HANDLE;
+    const dmsh_vk_module *m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+    if (!m) return VK_NULL_HANDLE;
+    char err[256] = ""; size_t nb = 0, on = 0;
+    uint32_t *w = lib_words(L, e, m, &nb, err, sizeof err);
+    if (!w) return VK_NULL_HANDLE;
+    prep_words(e, e->key, &w, &nb);
+    uint32_t *o = vka_spv_fout_retype(w, nb / 4, umask, smask, &on, err, sizeof err);
+    free(w);
+    if (!o) return VK_NULL_HANDLE;
+    VkShaderModule mod = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
+    if (create_stage_module(e->stage, &ci, &mod)) mod = VK_NULL_HANDLE;
+    free(o);
+    return mod;
+}
+
+VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask) {
+    if (!L || !e || e->stage != DMSH_VK_STAGE_VS || !(umask | smask)) return VK_NULL_HANDLE;
+    const dmsh_vk_module *m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+    if (!m) return VK_NULL_HANDLE;
+    char err[256] = ""; size_t nb = 0, on = 0;
+    uint32_t *w = lib_words(L, e, m, &nb, err, sizeof err);
+    if (!w) return VK_NULL_HANDLE;
+    prep_words(e, e->key, &w, &nb);
+    uint32_t *o = vka_spv_vin_retype(w, nb / 4, umask, smask, &on, err, sizeof err);
+    free(w);
+    if (!o) return VK_NULL_HANDLE;
+    VkShaderModule mod = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
+    if (create_stage_module(e->stage, &ci, &mod)) mod = VK_NULL_HANDLE;
+    free(o);
+    return mod;
+}
+
+VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask) {
+    if (!L || !e || e->stage != DMSH_VK_STAGE_CS || !(umask | smask)) return VK_NULL_HANDLE;
+    int want_shfl = g_shuffle_lds > 0 && !((e->flags & DMSH_VK_F_SUBGROUP) && one_lane_base() && runs_one_lane(e->key, e->stage));
+    const dmsh_vk_module *m = want_shfl ? vka_shlib_module(L, e, DMSH_VK_MOD_SHUFFLE_LDS) : NULL;
+    if (!m) m = vka_shlib_module(L, e, DMSH_VK_MOD_BASE);
+    if (!m) return VK_NULL_HANDLE;
+    char err[256] = ""; size_t nb = 0, on = 0;
+    uint32_t *w = lib_words(L, e, m, &nb, err, sizeof err);
+    if (!w) return VK_NULL_HANDLE;
+    prep_words(e, e->key, &w, &nb);
+    uint32_t *o = vka_spv_img_retype(w, nb / 4, 0, umask, smask, &on, err, sizeof err);
+    free(w);
+    if (!o) return VK_NULL_HANDLE;
+    VkShaderModule mod = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = on * 4, .pCode = o};
+    if (create_stage_module(e->stage, &ci, &mod)) mod = VK_NULL_HANDLE;
+    free(o);
+    return mod;
+}
+
+uint64_t vka_shader_frontend_xlate_count(void) {
+    uint64_t req = atomic_load_explicit(&g_frontend_xlate_req, memory_order_relaxed);
+    uint64_t ld = atomic_load_explicit(&g_frontend_xlate_loaded, memory_order_relaxed);
+    return req > ld ? req : ld;
+}
+
+void vka_shader_retype_counts(uint64_t *fout, uint64_t *vin, uint64_t *tex, uint64_t *cs_img) {
+    if (fout) *fout = atomic_load_explicit(&g_retype_fout, memory_order_relaxed);
+    if (vin) *vin = atomic_load_explicit(&g_retype_vin, memory_order_relaxed);
+    if (tex) *tex = atomic_load_explicit(&g_retype_tex, memory_order_relaxed);
+    if (cs_img) *cs_img = atomic_load_explicit(&g_retype_cs_img, memory_order_relaxed);
+}
+
 // ---------- Programs ----------
 // By serial (a new serial at every nvnProgramSetShaders; mtl_prog_release drops it): the program's stage keys resolved to shaders, each at the NVN stage its entry names
 typedef struct { uint64_t serial; vka_progsh ps; } prent;
@@ -1229,6 +1305,7 @@ static void layer_request(const prog_t *p, const vka_shlib *LY) {
     if ((nk || np) && vka_lrq_push(&g_lrq, root, r)) {   // (r is the writer's now)
         for (unsigned i = 0; i < nk; i++) vka_keyset_add(&g_req, ks[i]);
         for (unsigned i = 0; i < np; i++) vka_keyset_add(&g_pairs, vka_lreq_pair_id(pv[i], pp[i]));
+        if (nk) atomic_fetch_add_explicit(&g_frontend_xlate_req, nk, memory_order_relaxed);
         r = NULL;
     } else if (nk || np) {
         atomic_store(&g_req_refused, 1);

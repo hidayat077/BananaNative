@@ -110,6 +110,47 @@ static void test_topo_unrestricted_and_gpl_stats(void) {
     CHECK(p99 >= 1085.0 && p99 <= 1100.0, "p99 latency over wrapped ring (%g)", p99);
 }
 
+static void test_m5_retype_suppression_and_telemetry(void) {
+    const uint8_t ckind[8] = {0, 1, 2, 1, 0, 0, 0, 0};   // 0=float, 1=uint, 2=sint, 3=uint
+    const uint8_t fcomp[8] = {0xf, 0xf, 0xf, 0x0, 0xf, 0xf, 0xf, 0xf};
+    uint32_t fu = 99, fsm = 99;
+    // Target 0: float (ignored); Target 1: uint + chmask!=0 -> fu|=2; Target 2: sint + chmask=0 -> suppressed; Target 3: fcomp=0 -> suppressed
+    uint32_t chmask = (0xfu << 0) | (0xfu << 4) | (0x0u << 8) | (0xfu << 12);
+    vka_fout_retype_masks(4, ckind, 0x0f, 0x0000 /* all float */, chmask, fcomp, &fu, &fsm);
+    CHECK(fu == (1u << 1) && fsm == 0, "masked-off sint/fcomp=0 suppressed (fu=%#x fsm=%#x)", fu, fsm);
+
+    // Non-zero mask on target 2 triggers sint retype; already-uint FS output (fout_types!=0 on target 1) does not trigger retype
+    chmask |= (0x1u << 8);
+    vka_fout_retype_masks(4, ckind, 0x0f, (2u << 2) /* target 1 already uint */, chmask, fcomp, &fu, &fsm);
+    CHECK(fu == 0 && fsm == (1u << 2), "already-uint skipped, active sint flagged (fu=%#x fsm=%#x)", fu, fsm);
+
+    // Feedback classification: valid driver feedback + fallback heuristic
+    CHECK(vka_classify_compile_feedback(1, 1, 0, 0, 1, 20000000ull) == 1, "valid cache hit -> rehydrate");
+    CHECK(vka_classify_compile_feedback(1, 0, 1, 1, 1, 100000ull) == 0, "valid cache miss -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 1, 1, 1, 20000000ull) == 1, "all stages hit -> rehydrate");
+    CHECK(vka_classify_compile_feedback(0, 0, 1, 0, 1, 100000ull) == 0, "stage miss -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 400000ull) == 1, "fast cached fallback (<5ms) -> rehydrate");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 1, 20000000ull) == 0, "slow cached fallback (>=5ms) -> ir3 miss");
+    CHECK(vka_classify_compile_feedback(0, 0, 0, 0, 0, 100000ull) == 0, "no cache -> ir3 miss");
+
+    // Telemetry line formatting
+    vka_gpl_telemetry t = {
+        .ir3_compiler_miss = 0,
+        .gpl_fast_link_count = 42,
+        .gpl_fast_link_avg_us = 180.0,
+        .gpl_fast_link_p99_us = 390.0,
+        .gpl_fast_link_max_us = 410,
+        .pipeline_ram_rehydrate_count = 15,
+        .frontend_shader_translate_count = 0,
+        .retype_fout = 0, .retype_vin = 1, .retype_tex = 0, .retype_cs_img = 0,
+    };
+    char buf[320];
+    int len = vka_gpl_telemetry_format(&t, buf, sizeof buf);
+    CHECK(len > 0 && strstr(buf, "ir3_compiler_miss=0") && strstr(buf, "gpl_fast_link_count=42") &&
+          strstr(buf, "gpl_fast_link_max_us=410") && strstr(buf, "pipeline_ram_rehydrate_count=15") &&
+          strstr(buf, "frontend_shader_translate_count=0"), "telemetry line: %s", buf);
+}
+
 int main(void) {
     test_zero_mask_identity();
     test_full_eds_deduplication();
@@ -117,6 +158,7 @@ int main(void) {
     test_vin_static_preserved();
     test_dirty_tracker();
     test_topo_unrestricted_and_gpl_stats();
+    test_m5_retype_suppression_and_telemetry();
     printf("t_android_eds: %s\n", fails ? "FAILED" : "ok");
     return fails != 0;
 }

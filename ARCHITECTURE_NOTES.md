@@ -67,7 +67,7 @@ Phase 0 codebase audit for implementing zero in-game `ir3` shader compilation on
 | `VK_EXT_extended_dynamic_state3` | **Added (M2)** | [vka_dev.c](dm/gfx/vk_android/vka_dev.c), [vka_eds.h](dm/gfx/vk_android/vka_eds.h) | Gated by `DM_VK_EDS3` (default `1` on Turnip, `0` elsewhere). Covers 9 feature bits (`depthClampEnable`, `polygonMode`, `rasterizationSamples`, `sampleMask`, `alphaToCoverageEnable`, `logicOpEnable`, `colorBlendEnable`, `colorBlendEquation`, `colorWriteMask`). |
 | `VK_EXT_graphics_pipeline_library` | **Enabled** | [vka_dev.c](dm/gfx/vk_android/vka_dev.c), [vka_pso.c](dm/gfx/vk_android/vka_pso.c) | 4-part GPL (`L_VI`, `L_PRE`, `L_FS`, `L_FO`), `RETAIN_LTO` off by default. |
 | `VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT` | **Added (M3)** | [vka_pso.c](dm/gfx/vk_android/vka_pso.c), [vka_shader.c](dm/gfx/vk_android/vka_shader.c), [vka_draw.c](dm/gfx/vk_android/vka_draw.c) | 4-set layout (`DM_VK_GPL_PRECOMPILE=1` on Turnip): Set 0 pre-raster, Set 1 FS, Set 2 pool, Set 3 pool-fb; SPIR-V `DescriptorSet` remapped in `vka_spv_remap_sets`. |
-| `vkMergePipelineCaches` | **Planned (M4)** | [vka.h](dm/gfx/vk_android/vka.h) | Needed for Boot #1 per-worker `VkPipelineCache` merging. |
+| `vkMergePipelineCaches` | **Enabled (M4)** | [vka.h](dm/gfx/vk_android/vka.h), [vka_pso.c](dm/gfx/vk_android/vka_pso.c) | Merges Boot #1 per-worker `VkPipelineCache` instances into master `g_pc` before handle destruction. |
 
 ---
 
@@ -104,3 +104,14 @@ All runtime SPIR-V patching paths that can cause late `VkShaderModule` / `ir3` c
   - `vka_precompile_target_workers()` steps down to 2 workers after 45 s (thermal) and throttles/stops cleanly if `MemAvailable < 600 MiB` or `/proc/self/maps >= 75%` of `vm.max_map_count`.
   - In-game cache saves are debounced (`>= 50` new entries and `>= 30 s` via `vka_precompile_debounce_due()`), with forced flush on `mtl_drain()`.
 - **Non-Blocking Progress UI:** `nxhost_precompile_status()` / `nxhost_precompile_skip()` (`vk_android.h` → `nxlaunch.c` → `Native.java`) drive a 200 ms polled overlay in `GameActivity.java` with an optional **Skip / Play Now** button.
+
+---
+
+## 7. Milestone 5: Retype Leak Closure & Separated Telemetry
+
+- **Dynamic Write-Mask Suppression (`vka_eds.h`, `vka_draw.c`):**
+  - `vka_fout_retype_masks()` skips `VKA_FS_RETYPE` whenever a color attachment's effective write mask (`chmask & fcomp`) is `0`, letting EDS3 `vkCmdSetColorWriteMaskEXT` handle masked-off channels with zero SPIR-V rewriting.
+- **Boot #1 Pre-Compile of Seeded Retypes & Alpha-Test Specializations (`vka_shader.c`, `vka_pso.c`):**
+  - `precomp_pw_variants()` scans loaded prewarm seed records (`vk_prewarm.bin` / `.keys`) at the end of Boot #1 and pre-compiles known `VKA_FS_RETYPE` (`vka_shader_precomp_fout`), `alpha_func != 0` specializations, `vin_u`/`vin_s` (`vka_shader_precomp_vin`), and compute image retypes (`vka_shader_precomp_cs_img`) directly into `g_pc` before the final atomic checkpoint save.
+- **Separated Runtime Telemetry (`vka_gpl_stats.h`, `vka_pso.c`, `vka_exec.c`, `vka_ctl.c`):**
+  - Periodic replay logs (`shader telemetry:`) and `ctl: stats` emit `vka_gpl_telemetry_format()` with separated counters: `ir3_compiler_miss` (via `VkPipelineCreationFeedback` + `vka_classify_compile_feedback`), `gpl_fast_link_count`, `gpl_fast_link_avg_us`, `gpl_fast_link_p99_us`, `gpl_fast_link_max_us`, `pipeline_ram_rehydrate_count`, `frontend_shader_translate_count`, and per-path retype counts (`fout`, `vin`, `tex`, `cs_img`).

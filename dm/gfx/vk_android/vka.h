@@ -555,6 +555,11 @@ typedef struct {
 } vka_precomp_sh;
 int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
 void vka_shader_precomp_destroy(vka_precomp_sh *sh);
+VkShaderModule vka_shader_precomp_fout(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
+VkShaderModule vka_shader_precomp_vin(const vka_shlib *L, const dmsh_vk_entry *e, uint32_t umask, uint32_t smask);
+VkShaderModule vka_shader_precomp_cs_img(const vka_shlib *L, const dmsh_vk_entry *e, uint64_t umask, uint64_t smask);
+uint64_t vka_shader_frontend_xlate_count(void);
+void vka_shader_retype_counts(uint64_t *fout, uint64_t *vin, uint64_t *tex, uint64_t *cs_img);
 int vka_static(VkDeviceSize n, VkDeviceSize align, vka_span *out);   // host-visible memory for the process's life (c1 bytes, the support and zero buffers)
 
 // ---------- Pipelines (vka_pso.c) ----------
@@ -581,6 +586,7 @@ VkPipeline vka_cs_pipeline_img(vka_shader *cs, const vka_layout *lay, uint64_t u
 void vka_pso_save(int force);         // the VkPipelineCache and the prewarm list to the app's files (DM_TEMP): due DM_VK_PCACHE_SAVE_S after the last save, on the saver thread; force 1 = now, on the caller's; 2 = after a slow pipeline (due DM_VK_PCACHE_SAVE_SLOW_S)
 void vka_pso_prepare(void);
 void vka_pso_pause(int on);
+void vka_pso_telemetry_line(char *out, size_t n);
 void vka_pso_waits(uint64_t *save_ns, uint64_t *pw_wait_ns);   // cumulative: time saving the cache (saver thread), the frame path's waits for a prewarm thread making the same pipeline
 double vka_gpu_span_ms(uint64_t f);   // frame f's submissions from first part's start to last part's end (vka_exec.c); -1 = not in yet
 

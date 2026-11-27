@@ -90,4 +90,25 @@ static inline void vka_dyn_dirty_all(uint64_t *dirty) { *dirty = VKA_DYN_ALL; }
 static inline int vka_dyn_is_dirty(uint64_t dirty, uint64_t bit) { return (dirty & bit) != 0; }
 static inline void vka_dyn_clear(uint64_t *dirty, uint64_t bit) { *dirty &= ~bit; }
 
+// Computes UINT (fu) / SINT (fsm) fragment output retype masks for float outputs targeting integer attachments.
+// Targets whose effective color write mask (((chmask >> (4 * i)) & 0xf) & fcomp[i]) is 0 are skipped so
+// vkCmdSetColorWriteMaskEXT (EDS3) handles masked-off channels dynamically without triggering SPIR-V retyping.
+// ckind[i]: 0 = float/absent, 1 = uint, 2 = sint. fout_types: 2 bits per target (0 = DMSH_VK_TYPE_FLOAT).
+static inline void vka_fout_retype_masks(uint32_t ncolor, const uint8_t ckind[8], uint8_t fout_mask, uint16_t fout_types,
+                                         uint32_t chmask, const uint8_t fcomp[8], uint32_t *fu, uint32_t *fsm) {
+    uint32_t u = 0, s = 0;
+    if (ncolor > 8) ncolor = 8;
+    for (uint32_t i = 0; i < ncolor; i++) {
+        uint8_t ck = ckind[i];
+        if (ck != 1 && ck != 2) continue;
+        if (!((fout_mask >> i) & 1u)) continue;
+        if (((fout_types >> (2u * i)) & 3u) != 0u) continue;
+        uint32_t m = (chmask >> (4u * i)) & 0xfu;
+        if (!(m & (fcomp ? fcomp[i] : 0xfu))) continue;
+        if (ck == 1) u |= 1u << i; else s |= 1u << i;
+    }
+    if (fu) *fu = u;
+    if (fsm) *fsm = s;
+}
+
 #endif
