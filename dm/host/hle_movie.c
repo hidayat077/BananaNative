@@ -1043,7 +1043,16 @@ HLE_FORCE("_ZN5movie7Decoder15GetOutputBufferEiPNS_6BufferE", "movie decoder: ge
     int w, h, stride, slice; md_dims(d, &w, &h, &stride, &slice);
     size_t need = (size_t)stride * slice * 3 / 2, cap = G.cap(buf);
     uint8_t *p = G.data(buf);
-    if (!p || cap < need) { LOG("[RED] movie: client output buffer is %zu bytes, a frame needs %zu", cap, need); G.set_range(buf, 0, 0); return 0x100b; }
+    if (!p || cap < need) {
+        // SDK 12's NativeTexture mode is not the mode value older SDKs used (Dread's decoder says 2). A client whose Buffer is too small for a byte frame often holds the NVNtexture
+        // object itself, as in native-texture mode (8 bytes of capacity). Ask the NVN reader instead of trusting the mode number: it validates the object without writing to it.
+        int tw = 0, th = 0; int tf = p ? nvn_host_write_texture(p, NULL, 0, 0, 0, &tw, &th) : -1;
+        if (tf >= 0) {
+            static int noted; if (!noted++) LOG("movie: client buffer of %zu bytes holds an NVNtexture (format %#x, %dx%d): native-texture output", cap, tf, tw, th);
+            return md_out_tex(d, i, buf);
+        }
+        LOG("[RED] movie: client output buffer is %zu bytes, a frame needs %zu", cap, need); G.set_range(buf, 0, 0); return 0x100b;
+    }
     if (d->out[i].pic && d->out[i].frm) {
         float f = md_lb_factor();
         if (f < 1) {   // NV12: the luma rows, then the interleaved chroma rows (half as many), each letterboxed (md_lb_factor)

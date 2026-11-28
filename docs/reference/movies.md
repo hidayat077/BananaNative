@@ -361,3 +361,11 @@ A decoder hands out as many outputs as it has slots, and while every slot is tak
 - Unity's `Hidden/VideoDecode` samples luma as `.w` of an `R8` texture with the swizzle `(0, 0, 0, R)` (Unity's Alpha8) and chroma from an `RG8` texture at half size; both are CPU-written block-linear textures ([nvn-objects.md](nvn-objects.md)).
 - **Check:** to check the movie path apart from the decoder, fill the frames with a gradient in `hle_movie.c`; it should appear on screen.
 - **Found on:** [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md).
+
+### An SDK 12 movie buffer held a texture object instead of NV12 bytes
+
+- **Symptom:** (Android) hundreds of `[RED] movie: client output buffer is 8 bytes, a frame needs 1382400` lines; the movie stays black. The decoder is AVC / NV12 and the client got the right `GetOutputBufferSize`.
+- **Cause:** the host selected native-texture output only when the decoder's `mode` argument equalled the value SDK 11 used (`2`). Dying Light's SDK 12 player passes `1` for the same native-texture output: its `movie::Buffer` carries the NVNtexture object (8 bytes of capacity) plus `SetNvnDev` / `SetNvnSync`, but the host tried to copy NV12 bytes into it and refused.
+- **Fix:** general, in `h_movie_GetOut` (`dm/host/hle_movie.c`): when the client buffer is too small for a byte frame, ask the NVN reader whether its data is a texture object (`nvn_host_write_texture` with no source, which validates without writing), and if so take the existing native-texture output path. The mode number is no longer the only signal.
+- **Check:** awaiting a phone run of Dying Light to confirm the movie plays.
+- **Found on:** [Dying Light: Platinum Edition](../../dm/games/01008C8012920000/README.md) (`01008C8012920000`, 2026-11-28).
