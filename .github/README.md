@@ -44,6 +44,7 @@ The [games table](../dm/games/README.md#games) lists every title the app knows a
 | [Animal Crossing: New Horizons](../dm/games/01006F8002326000/README.md) | 3.0.3 | `01006F8002326000` |
 | [Pokémon Legends: Arceus](../dm/games/01001F5010DFA000/README.md) | 1.1.1 | `01001F5010DFA000` |
 | [Dying Light: Platinum Edition](../dm/games/01008C8012920000/README.md) | 1.0.5 (base) | `01008C8012920000` |
+| [Super Mario Bros. Wonder](../dm/games/010015100B514000/README.md) | 1.2.1 | `010015100B514000` |
 
 ## Licence and credits
 
