@@ -967,6 +967,17 @@ static void buf_update(const void *data, uint64_t dst, uint64_t n) {   // inline
 
 // ---------- Clears ----------
 static float srgb_enc(float c) { c = c < 0 ? 0 : c > 1 ? 1 : c; return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1 / 2.4f) - 0.055f; }
+// The channels an NVN colour format actually stores: a clear whose mask covers them all is a whole clear
+// on that format (an R8 texture cleared with mask 0x1), which the Vulkan whole-channel paths can do. A mask
+// that leaves out a stored channel still needs a draw with colorWriteMask and is refused below.
+static unsigned fmt_chmask(unsigned f) {
+    if (f >= NVN_FORMAT_R8 && f <= NVN_FORMAT_R32I) return 0x1;
+    if (f >= NVN_FORMAT_RG8 && f <= NVN_FORMAT_RG32I) return 0x3;
+    if (f >= NVN_FORMAT_RGB8 && f <= NVN_FORMAT_RGB32I) return 0x7;
+    if (f >= NVN_FORMAT_RGBA8 && f <= NVN_FORMAT_RGBA32I) return 0xf;
+    if (f == NVN_FORMAT_R11G11B10F || f == NVN_FORMAT_RGB9E5F) return 0x7;
+    return 0xf;   // packed / SRGB formats write every channel the Vulkan image stores
+}
 static VkClearColorValue color_value(const vka_fmt *f, const float rgba[4]) {
     VkClearColorValue v;
     for (int i = 0; i < 4; i++) {
@@ -1043,7 +1054,8 @@ static void clear_color(const p_clear_color *c) {
     vka_img *im = vka_tex_get(t, g_cb); vka_fmt f;
     if (!im || !vka_fmt_of(hv && v->set_format ? v->format : t->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("color clear of a depth texture (format %#x)", t->d.format); return; }
-    if ((c->mask & 0xf) != 0xf) { VRED_ONCE("color clear with channel mask %#x is not on Vulkan yet (needs a pipeline): skipped", c->mask); return; }
+    unsigned chm = fmt_chmask(hv && v->set_format ? v->format : t->d.format);
+    if ((c->mask & 0xf) != chm) { VRED_ONCE("color clear with channel mask %#x is not on Vulkan yet (needs a pipeline): skipped", c->mask); return; }
     vka_tex_own(im, g_cb);   // (zero-shared: memory of its own before the clear, which may also become the next pass's loadOp)
     uint32_t lv, l0, nl; rt_range(im, v, hv, &lv, &l0, &nl);
     if (lv >= im->levels || !nl) return;
@@ -1141,7 +1153,8 @@ static void clear_tex(const p_clear_tex *c) {
     vka_img *im = vka_tex_get(c->tex, g_cb); vka_fmt f;
     if (!im || !vka_fmt_of(c->has_view && c->view.set_format ? c->view.format : c->tex->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("ClearTexture of a depth / stencil texture (format %#x)", c->tex->d.format); return; }
-    if ((c->mask & 0xf) != 0xf) { if (c->mask & 0xf) VRED_ONCE("ClearTexture with channel mask %#x is not on Vulkan yet: skipped", c->mask); return; }
+    unsigned chm = fmt_chmask(c->has_view && c->view.set_format ? c->view.format : c->tex->d.format);
+    if ((c->mask & 0xf) != chm) { if (c->mask & 0xf) VRED_ONCE("ClearTexture with channel mask %#x is not on Vulkan yet: skipped", c->mask); return; }
     vka_tex_own(im, g_cb);
     uint32_t lv = c->has_view && c->view.set_levels ? c->view.base_level : 0, l0 = (c->has_view && c->view.set_layers ? c->view.min_layer : 0) + (uint32_t)c->r.zoffset, nl = c->r.depth > 0 ? (uint32_t)c->r.depth : 1;
     if (!vka_img_lv(im, &lv)) return;

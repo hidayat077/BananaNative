@@ -9,6 +9,7 @@
 
 #define VKA_NTEX (DMSH_SEPTEX_SLOT0 + DMSH_C2_SEP_SLOTS)   // texture slots of a stage: combined 0-127, separate 128-255 (nvn_obj.h NVN_SEPTEX_SLOT0)
 #define VKA_NSTAGE 8                                         // NVN stages: 0 vertex, 1 fragment, 2 geometry, 3 tess control, 4 tess evaluation, 5 compute, 6 task, 7 mesh (NVN2)
+#define VKA_MAX_DESCS 4096                                    // per-draw descriptor/writes capacity in the replay (vka_walk callers); NOT the device's maxPushDescriptors
 
 typedef struct { uint64_t addr, size; } vka_range;
 // What the draw path keeps of the NVN bindings, by NVN stage (the stage field of the bind records, as hle_nvn.c records them)

@@ -1535,7 +1535,7 @@ VkImageView placeholder(uint8_t dim, int storage) {
 static uint64_t g_pt_last, g_pt[9], g_ps[6], g_pt_n, g_pt_tot; static int g_pt_ph;
 static inline uint64_t cntvct(void) { uint64_t v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return v; }
 // ---------- Set 0 from the walk ----------
-typedef struct { VkWriteDescriptorSet w[512]; VkDescriptorBufferInfo bi[512]; VkDescriptorImageInfo ii[512]; VkBufferView bv[512]; uint64_t ad[512]; uint8_t dim[512]; uint32_t n; } writes_t;   // ad: a guest buffer's address (0 = other); dim: the shape the shader declares (set_no_nulls)
+typedef struct { VkWriteDescriptorSet w[VKA_MAX_DESCS]; VkDescriptorBufferInfo bi[VKA_MAX_DESCS]; VkDescriptorImageInfo ii[VKA_MAX_DESCS]; VkBufferView bv[VKA_MAX_DESCS]; uint64_t ad[VKA_MAX_DESCS]; uint8_t dim[VKA_MAX_DESCS]; uint32_t n; } writes_t;   // ad: a guest buffer's address (0 = other); dim: the shape the shader declares (set_no_nulls)
 static writes_t g_w;
 // A texture or image read by a shader that declares it in another numeric class (float / uint / sint) than the view the game binds: logged once per shader, stage and binding
 // (the first 64), with the texture. Such a binding is read through a view of the shader's class of the same texel size (vka_tex.c class_twin) unless its module is retyped
@@ -1553,7 +1553,7 @@ static void class_note(const vka_shader *sh, int st, const vka_res *r, int tid, 
     static const char *cn[3] = {"float", "uint", "sint"}; char why[320]; vka_tex_id_desc(tid, why, sizeof why);
     VLOG("class: shader %016llx stage %d binding %u declares a %s %s, texture ID %d is %s (%s)", (unsigned long long)sh->key, st, r->binding, cn[want], storage ? "image" : "texture", tid, cn[have], why);
 }
-static vka_res g_res[512];   // the NaN scan's own walk (DM_VK_NANSCAN_FS)
+static vka_res g_res[VKA_MAX_DESCS];   // the NaN scan's own walk (DM_VK_NANSCAN_FS)
 // One stage's results as descriptor writes. 0 = the draw cannot run (logged)
 static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const vka_res *r, int n, int pool, c0_at *c0) {
     uint64_t tgen = 0, mgen = 0, tw_gen = 0;
@@ -1572,7 +1572,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
             m->base_instance == (uint32_t)d->b.base_instance &&
             m->samples == (uint32_t)d->b.samples && m->tex_base == (uint32_t)d->b.tex_base &&
             m->samp_base == (uint32_t)d->b.samp_base && m->alpha_ref == aref_u32 && m->alpha_func == afunc &&
-            m->pool == pool && g_w.n + (uint32_t)m->nw <= 512) {
+            m->pool == pool && g_w.n + (uint32_t)m->nw <= VKA_MAX_DESCS) {
             tgen = vka_tex_tabpool_gen();
             sgen = vka_tex_sreg_gen();
             mgen = vka_mem_gen();
@@ -1611,7 +1611,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
     }
     uint32_t fbl_prev = V.fb_loop ? vka_tex_fb_loop_take() : 0;
     for (int i = 0; i < n; i++) {
-        if (g_w.n == 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
+        if (g_w.n >= VKA_MAX_DESCS) { VRED_ONCE("more than %d descriptors in one draw", VKA_MAX_DESCS); return 0; }
         uint32_t k = g_w.n;
         VkWriteDescriptorSet *w = &g_w.w[k]; VkDescriptorBufferInfo *bi = &g_w.bi[k]; VkDescriptorImageInfo *ii = &g_w.ii[k];
         g_w.ad[k] = r[i].what == VKA_R_BUF ? r[i].addr : 0; g_w.dim[k] = r[i].dim;
@@ -1740,7 +1740,7 @@ static int stage_writes(const vka_dstate *d, int st, const vka_shader *sh, const
     return 1;
 }
 // Each stage's bindings, walked once a draw or dispatch (walk_all): the images first used are made from them (make_images), then set 0 is written from them (bind_sets)
-static struct { int n[VKA_NSTAGE], pool[VKA_NSTAGE]; uint8_t has_write[VKA_NSTAGE]; char why[VKA_NSTAGE][200]; vka_res r[VKA_NSTAGE][512]; } g_wk;
+static struct { int n[VKA_NSTAGE], pool[VKA_NSTAGE]; uint8_t has_write[VKA_NSTAGE]; char why[VKA_NSTAGE][200]; vka_res r[VKA_NSTAGE][VKA_MAX_DESCS]; } g_wk;
 static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
     uint64_t t0_ = g_prof ? cntvct() : 0;
     for (int st = 0; st < VKA_NSTAGE; st++) {
@@ -1755,7 +1755,7 @@ static void walk_all(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE]) {
         }
         g_wk_hit[st] = 0;
         g_wk.pool[st] = 0;
-        g_wk.n[st] = vka_walk(&d->b, st, s->e, s->b, s->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, g_wk.r[st], 512, &g_wk.pool[st], g_wk.why[st], sizeof g_wk.why[st]);
+        g_wk.n[st] = vka_walk(&d->b, st, s->e, s->b, s->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, g_wk.r[st], VKA_MAX_DESCS, &g_wk.pool[st], g_wk.why[st], sizeof g_wk.why[st]);
         uint8_t hw = 0;
         const vka_res *rr = g_wk.r[st];
         for (int i = 0; i < g_wk.n[st]; i++) {
@@ -1832,7 +1832,7 @@ void vka_drv_memo_stats(char *b, size_t n) {
              g_pd_delta_all ? 100.0 * g_pd_delta_w / (double)g_pd_delta_all : 0.0);
     g_pd_delta_w = g_pd_delta_all = 0;
 }
-static VkWriteDescriptorSet g_dw[512]; static uint32_t g_dwn;   // the writes that changed (push_same returns 2)
+static VkWriteDescriptorSet g_dw[VKA_MAX_DESCS]; static uint32_t g_dwn;   // the writes that changed (push_same returns 2)
 static void write_sig(const VkWriteDescriptorSet *w, uint64_t *h, uint64_t *x0, uint64_t *x1, uint64_t *x2) {
     *h = (uint64_t)w->dstBinding | (uint64_t)w->dstArrayElement << 16 | (uint64_t)w->descriptorType << 32 | (uint64_t)w->descriptorCount << 48;
     if (w->pBufferInfo) { *x0 = (uint64_t)w->pBufferInfo->buffer; *x1 = w->pBufferInfo->offset; *x2 = w->pBufferInfo->range; }
@@ -1932,7 +1932,7 @@ static int sets_push(const vka_layout *lay, VkPipelineBindPoint bp, int any_pool
     if (lay->indep) {
         // Independent-sets layout: Set 0 = pre-raster (push if <= maxPushDescriptors), Set 1 = fragment (allocated set), Set 2 = pool, Set 3 = pool-fb
         set_no_nulls(1, !lay->push);
-        static VkWriteDescriptorSet w0[512], w1[512];
+        static VkWriteDescriptorSet w0[VKA_MAX_DESCS], w1[VKA_MAX_DESCS];
         uint32_t n0 = 0, n1 = 0;
         for (uint32_t i = 0; i < g_w.n; i++) {
             if (vka_binding_is_fs(g_w.w[i].dstBinding)) w1[n1++] = g_w.w[i];
@@ -2031,7 +2031,7 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
     }
     if (g_prof) g_ps[1] += cntvct() - t1_;
     if (sh[2] && sh[2]->gs_fx > 0 && bp == VK_PIPELINE_BIND_POINT_GRAPHICS) {   // the claim words, zeroed (vka_spv_gs_claim); bound also when the draw takes no claim (the layout has them)
-        if (g_w.n == 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
+        if (g_w.n >= VKA_MAX_DESCS) { VRED_ONCE("more than %d descriptors in one draw", VKA_MAX_DESCS); return 0; }
         VkDeviceSize n = 4 * (VkDeviceSize)(g_claim_words ? g_claim_words : 1); vka_span cs;
         if (!vka_scratch(n, V.sb_align, &cs)) return 0;
         memset(cs.ptr, 0, (size_t)n);
@@ -2041,7 +2041,7 @@ static int bind_sets(const vka_dstate *d, vka_shader *const sh[VKA_NSTAGE], cons
     }
     if (g_tf_cap && bp == VK_PIPELINE_BIND_POINT_GRAPHICS) {   // the capture buffers and the control block (vk_android_spv.py tf_capture)
         vka_span cs;
-        if (g_w.n + 5 > 512) { VRED_ONCE("more than 512 descriptors in one draw"); return 0; }
+        if (g_w.n + 5 > VKA_MAX_DESCS) { VRED_ONCE("more than %d descriptors in one draw", VKA_MAX_DESCS); return 0; }
         if (!vka_scratch(sizeof g_tf.ctl, V.sb_align, &cs)) return 0;
         memcpy(cs.ptr, g_tf.ctl, sizeof g_tf.ctl);
         for (int b = 0; b < 5; b++) {
@@ -3016,7 +3016,7 @@ static void draw_body(vka_dstate *d, const p_set_rt *rt, int has_rt, const p_sci
     }
     uint64_t tstats = 0;   // DM_VK_TEX_STATS: this draw's fragment shader, its inputs' level 0 scanned and logged
     if (sh[1] && !d->rast_discard && ((vka_nan_on() >= 2 && vka_nan_probe(sh[1]->key)) || (vka_texstats_probe(sh[1]->key) && (tstats = sh[1]->key)))) {   // DM_VK_NANSCAN_FS: this draw's sampled textures, scanned before it
-        char why[8]; int n = vka_walk(&d->b, 1, sh[1]->e, sh[1]->b, sh[1]->lib->h->ssbo_align, 0, rd_cb, NULL, g_res, 512, NULL, why, sizeof why), m = 0;
+        char why[8]; int n = vka_walk(&d->b, 1, sh[1]->e, sh[1]->b, sh[1]->lib->h->ssbo_align, 0, rd_cb, NULL, g_res, VKA_MAX_DESCS, NULL, why, sizeof why), m = 0;
         static vka_img *ims[64]; static int bs[64], ts[64];
         for (int i = 0; i < n && m < 64; i++) if (g_res[i].what == VKA_R_TEX && g_res[i].tid) { ims[m] = vka_tex_id_img(g_res[i].tid, g_cb); bs[m] = g_res[i].binding; ts[m++] = g_res[i].tid;
             static _Atomic int nd; if (tstats ? vka_texstats_desc_new(tstats, (int)g_res[i].binding, g_res[i].tid) : atomic_fetch_add(&nd, 1) < 32) { char why[320]; vka_tex_id_desc(g_res[i].tid, why, sizeof why); vka_img *im = ims[m - 1];

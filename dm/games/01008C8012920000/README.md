@@ -22,3 +22,7 @@ Base game 1.0.5, SDK 12.3.3, NVN, Techland's own engine with FMOD. The profile w
 - `depth_mode` is unset (gl); set it to `zero` only if disassembly shows `nvnDeviceSetDepthMode` with near = 0.
 - The DLC folders are part of the base package; whether the launcher should expose them as add-on content has not been checked.
 - Anything about rendering, frame rate, audio and input is unknown until the game boots.
+
+- **Resolved (general):** the two compute dispatches with 608 / 612 descriptors were skipped by the replay's fixed 512-writes cap ([A long descriptor array hit a fixed 512-writes cap on the Vulkan replay](../../../docs/reference/rendering.md#a-long-descriptor-array-hit-a-fixed-512-writes-cap-on-the-vulkan-replay-android)); awaiting a phone run to confirm.
+
+- **Resolved (general):** the `ClearTexture` with mask `0x1` was refused because the replay required `0xf` for every format ([A channel mask covering the format's channels was refused as a partial clear on the Vulkan replay](../../../docs/reference/rendering.md#a-channel-mask-covering-the-formats-channels-was-refused-as-a-partial-clear-on-the-vulkan-replay)); awaiting a phone run. A mask that leaves out a stored channel is still not supported.

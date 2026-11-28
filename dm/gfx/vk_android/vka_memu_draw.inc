@@ -47,7 +47,7 @@ int vka_memu_on(void) { return V.memu; }
 int vka_memu_has(const uint8_t *p) { return vka_memu_order_find(&MB.o, p) >= 0; }   // the batch still has an entry for a meeting of record p
 static memu_ent *memu_find(void) { return g_memu_cur; }   // the entry of the draw being replayed (vka_memu_cur), NULL none
 static void memu_write(uint32_t binding, VkBuffer b, VkDeviceSize off, VkDeviceSize range) {
-    if (g_w.n == 512) return;
+    if (g_w.n >= VKA_MAX_DESCS) { VRED_ONCE("more than %d descriptors in one draw", VKA_MAX_DESCS); return; }
     uint32_t k = g_w.n++;
     g_w.bi[k] = (VkDescriptorBufferInfo){b, off, range};
     g_w.w[k] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = binding, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &g_w.bi[k]};
@@ -56,7 +56,7 @@ static void memu_bind_arena(void) { memu_write(VKA_MEMU_ARENA_BINDING, MB.arena,
 // A compute form's dispatch: its stage's bindings walked with the replay state of its draw, the arena and the records, its record's index, its indirect arguments
 static void memu_dispatch(const vka_dstate *d, int st, vka_shader *cs, const vka_layout *lay, VkPipeline p, int idx, uint32_t argw) {
     vka_res *r = g_wk.r[5]; int pool = 0; char why[200];
-    int n = vka_walk(&d->b, st, cs->e, cs->b, cs->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, r, 512, &pool, why, sizeof why);
+    int n = vka_walk(&d->b, st, cs->e, cs->b, cs->lib->h->ssbo_align, V.sb_align, rd_cb, NULL, r, VKA_MAX_DESCS, &pool, why, sizeof why);
     if (n < 0) { static _Atomic int k; if (atomic_fetch_add(&k, 1) < 8) VRED("%s shader through compute %016llx: %s; skipped", st == 6 ? "task" : "mesh", (unsigned long long)cs->key, why); return; }
     for (int i = 0; i < n; i++) if ((r[i].what == VKA_R_TEX || r[i].what == VKA_R_IMG) && r[i].tid && (vka_tex_id_pending_rec(r[i].tid, r[i].dim) || (r[i].what == VKA_R_IMG && vka_tex_id_storage_pending(r[i].tid))))
         vka_tex_id_view(r[i].tid, g_cb, r[i].dim, wbf_view_of_binding(r[i].what == VKA_R_IMG, r[i].flags, DMSH_VK_BF_RW), NULL);   // (images first used: made now, outside the pass)

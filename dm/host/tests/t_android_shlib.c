@@ -353,13 +353,13 @@ static void test_real(void) {
     }
     s.samples = 1;
     unsigned n = L.h->entry_count, refused = 0, nvpass = 0, decoded = 0, maxd[8] = {0}, nts = 0, nms = 0, nprim = 0, nmsg = 0; uint64_t spv = 0;
-    static vka_res res[4096];
+    static vka_res res[VKA_MAX_DESCS];
     for (unsigned i = 0; i < n; i++) {
         const dmsh_vk_entry *e = &L.ent[i];
         CHECK(vka_shlib_find(&L, e->key) == e, "lookup of entry %u", i);
         int nvn = vka_nvn_stage(e->stage);
         char why[200] = ""; int pool = 0;
-        int k = vka_walk(&s, nvn, e, vka_shlib_binds(&L, e), L.h->ssbo_align, 64, rd_zero, NULL, res, 4096, &pool, why, sizeof why);
+        int k = vka_walk(&s, nvn, e, vka_shlib_binds(&L, e), L.h->ssbo_align, 64, rd_zero, NULL, res, VKA_MAX_DESCS, &pool, why, sizeof why);
         if (k < 0) { refused++; if (refused < 4) printf("  %016llx refused: %s\n", (unsigned long long)e->key, why); continue; }
         CHECK(nvn >= 0, "%016llx: stage %u", (unsigned long long)e->key, e->stage);
         if (nvn < 0) continue;

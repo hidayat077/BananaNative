@@ -1887,3 +1887,19 @@ Digimon Story Cyber Sleuth: Complete Edition (Media.Vision's MVGL engine, SDK 6.
 - **Fix:** general, in `dm/gfx/vk_android/vka_draw.c` (`draw_body`) and `dm/gfx/vk_android/vka_tbuf.c` (`tbuf_view_fmt`, `tbuf_dim_cls`): skip enabling Vulkan blending when all written channels use identity `ONE`/`ZERO` (`ADD`/`SUB`) and use `wmask` for `colorWriteMask`; promote 32-bit `UINT`/`SINT` buffer-texture views to `SFLOAT` when the shader samples them as floats and key `tbm_ent`/`tpm_ent` caches on the shader numeric class.
 - **Check:** phone run (`b71f8f0a`, Adreno 650, Turnip v27.0.0-R3, 2026-11-26, 20,565 frames / 10 min 24 s) rendered the title screen, opening crawl, and in-game scenes cleanly with no NaN blob, black vignette, or popup rainbow static.
 - **Found on:** [LEGO Star Wars: The Skywalker Saga](../../dm/games/010042D00D900000/README.md#found-on-this-game) (`010042D00D900000`, 2026-11-26).
+
+### A long descriptor array hit a fixed 512-writes cap on the Vulkan replay (Android)
+
+- **Symptom:** (Android) `[RED] vk: shader <key>: more than 512 descriptors; skipped` and the dispatch's work missing, with no other red line. Dying Light's two compute shaders have 608 and 612 expanded descriptors from a 301-element combined-image-sampler array in c2 and a 301-element storage-image array.
+- **Cause:** `vka_draw.c` sized the per-draw write/result arrays at 512 and passed 512 to `vka_walk` (`vka_bind.c`), copying the device's `maxPushDescriptors` limit into the replay's own capacity. The device limit is not exceeded: the layout (`vka_pso.c`) already chooses the pool-backed descriptor set when a draw has more than `maxPushDescriptors` entries, but the walk never reached that path because its result array was full.
+- **Fix:** general, a shared `VKA_MAX_DESCS` (4096, the capacity the library walk test already used) in `vka_bind.h`, used for every per-draw result/write array, walk limit and cap guard in `vka_draw.c` and `vka_memu_draw.inc`, with the library test using the same constant. The existing descriptor-set path then binds all 608/612 writes.
+- **Check:** walk capacity test in `dm/host/tests/t_android_shlib.c` and a phone run where the two `[RED]` lines disappear.
+- **Found on:** [Dying Light: Platinum Edition](../../dm/games/01008C8012920000/README.md) (`01008C8012920000`, 2026-11-28).
+
+### A channel mask covering the format's channels was refused as a partial clear on the Vulkan replay
+
+- **Symptom:** (Android) `[RED] vk: ClearTexture with channel mask 0x1 is not on Vulkan yet: skipped` (or the `ClearColor` equivalent), leaving the target with stale content.
+- **Cause:** the replay treated every mask other than `0xf` as a partial clear needing a `colorWriteMask` draw, but NVN's mask names the channels the *format* stores: `0x1` on an R8 texture clears every channel that texture has, which Vulkan's whole-channel clear paths can do.
+- **Fix:** general, `fmt_chmask` in `dm/gfx/vk_android/vka_exec.c` maps the NVN colour format to the channels it stores, and the clear guards in `clear_color` / `clear_tex` accept a mask covering them. A mask that leaves out a stored channel is still refused, because Vulkan's clear commands have no per-channel write mask.
+- **Open:** a true partial colour clear still needs a drawn triangle with `colorWriteMask` (as Metal's `clear_tex_tri` does); no game in this tree has been shown to need one yet.
+- **Found on:** [Dying Light: Platinum Edition](../../dm/games/01008C8012920000/README.md) (`01008C8012920000`, 2026-11-28).
