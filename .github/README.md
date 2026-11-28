@@ -42,6 +42,8 @@ The [games table](../dm/games/README.md#games) lists every title the app knows a
 | [No Man's Sky](../dm/games/0100853015E86000/README.md) | v5308416 (7.10.0) | `0100853015E86000` |
 | [Super Mario Odyssey](../dm/games/0100000000010000/README.md) | 1.4.1 | `0100000000010000` |
 | [Animal Crossing: New Horizons](../dm/games/01006F8002326000/README.md) | 3.0.3 | `01006F8002326000` |
+| [The Legend of Zelda: Link's Awakening](../dm/games/01006BB00C6F0000/README.md) | 1.1.0 | `01006BB00C6F0000` |
+| [Pokémon Legends: Arceus](../dm/games/01001F5010DFA000/README.md) | 1.1.1 | `01001F5010DFA000` |
 
 ## Licence and credits
 
