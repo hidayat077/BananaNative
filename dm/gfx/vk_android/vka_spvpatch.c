@@ -2024,7 +2024,6 @@ uint32_t *vka_spv_nan_out(const uint32_t *w, size_t nw, size_t *out_nw, int *cha
     if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
     uint32_t bound = w[3], t_f32 = 0, t_bool = 0, t_vec[5] = {0}, t_bvec[5] = {0}, t_null[5] = {0}, p_out[5] = {0};
     uint32_t *out_n = calloc(bound, 1); vec_t o = {0}; size_t *sites = NULL, ns = 0, first_fn = nw;
-    uint32_t *isn_id = NULL, *sel_id = NULL; uint8_t *site_n = NULL;
     if (!out_n) { snprintf(err, errn, "out of memory"); return NULL; }
     for (size_t i = 5; i < nw;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
@@ -2058,36 +2057,35 @@ uint32_t *vka_spv_nan_out(const uint32_t *w, size_t nw, size_t *out_nw, int *cha
         i += len;
     }
     if (!ns) { free(out_n); free(sites); return NULL; }
-    uint32_t nb = bound, mk_null[5] = {0}, mk_bvec[5] = {0};
-    isn_id = calloc(ns, 4); sel_id = calloc(ns, 4); site_n = calloc(ns, 1);
-    if (!isn_id || !sel_id || !site_n) goto oom;
+    uint32_t nb = bound, mk_null[5] = {0}, mk_bvec[5] = {0}, isn[5] = {0}, sel[5] = {0}; uint32_t nsite[5] = {0};
     for (size_t k = 0; k < ns; k++) {
-        uint32_t n = out_n[w[sites[k] + 1]]; site_n[k] = (uint8_t)n;
-        if (!n || (n > 1 && !t_vec[n])) goto oom;
+        uint32_t n = out_n[w[sites[k] + 1]]; if (!n) continue;
         if (!t_null[n]) t_null[n] = mk_null[n] = nb++;
-        if (n > 1 && !t_bvec[n]) t_bvec[n] = mk_bvec[n] = nb++;
-        isn_id[k] = nb++; sel_id[k] = nb++;   // every store needs its own result ids: reusing one defines the same id twice
+        if (!t_bvec[n]) t_bvec[n] = mk_bvec[n] = nb++;
+        isn[n] = nb++; sel[n] = nb++; nsite[n]++;
     }
     if (!put_n(&o, w, 5)) goto oom;
     for (size_t i = 5; i < nw;) {
         uint32_t len = w[i] >> 16;
         if (i == first_fn) {
-            for (int n = 2; n <= 4; n++) if (mk_bvec[n]) { uint32_t x[4] = {4u << 16 | OpTypeVector, mk_bvec[n], t_bool, n}; if (!put_n(&o, x, 4)) goto oom; }
-            for (int n = 1; n <= 4; n++) if (mk_null[n]) { uint32_t x[3] = {3u << 16 | OpConstantNull, n == 1 ? t_f32 : t_vec[n], mk_null[n]}; if (!put_n(&o, x, 3)) goto oom; }
+            for (int n = 1; n <= 4; n++) {
+                if (mk_bvec[n]) { uint32_t x[5] = {5u << 16 | OpTypeVector, mk_bvec[n], t_bool, n, 0}; if (!put_n(&o, x, 4)) goto oom; }
+                if (mk_null[n]) { uint32_t x[3] = {3u << 16 | OpConstantNull, n == 1 ? t_f32 : t_vec[n], mk_null[n]}; if (!put_n(&o, x, 3)) goto oom; }
+            }
         }
         size_t k = 0; while (k < ns && sites[k] != i) k++;
         if (k < ns) {
-            uint32_t n = site_n[k], val = w[i + 2];
-            uint32_t a[4] = {4u << 16 | OpIsNan, n == 1 ? t_bool : t_bvec[n], isn_id[k], val};
-            uint32_t b[6] = {6u << 16 | OpSelect, n == 1 ? t_f32 : t_vec[n], sel_id[k], isn_id[k], t_null[n], val};
-            uint32_t st[3] = {3u << 16 | OpStore, w[i + 1], sel_id[k]};
+            uint32_t n = out_n[w[i + 1]], val = w[i + 2];
+            uint32_t a[4] = {4u << 16 | OpIsNan, n == 1 ? t_bool : t_bvec[n], isn[n], val};
+            uint32_t b[6] = {6u << 16 | OpSelect, n == 1 ? t_f32 : t_vec[n], sel[n], isn[n], t_null[n], val};
+            uint32_t st[3] = {3u << 16 | OpStore, w[i + 1], sel[n]};
             if (!put_n(&o, a, 4) || !put_n(&o, b, 6) || !put_n(&o, st, 3)) goto oom;
         } else if (!put_n(&o, w + i, len)) goto oom;
         i += len;
     }
-    free(sites); free(out_n); free(isn_id); free(sel_id); free(site_n);
+    free(sites); free(out_n);
     o.w[3] = nb; *out_nw = o.n; *changed = 1;
     return o.w;
 oom:
-    free(sites); free(out_n); free(isn_id); free(sel_id); free(site_n); free(o.w); snprintf(err, errn, "out of memory"); return NULL;
+    free(sites); free(out_n); free(o.w); snprintf(err, errn, "out of memory"); return NULL;
 }
