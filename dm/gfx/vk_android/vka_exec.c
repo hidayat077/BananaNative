@@ -1055,7 +1055,7 @@ static void clear_color(const p_clear_color *c) {
     if (!im || !vka_fmt_of(hv && v->set_format ? v->format : t->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("color clear of a depth texture (format %#x)", t->d.format); return; }
     unsigned chm = fmt_chmask(hv && v->set_format ? v->format : t->d.format);
-    if ((c->mask & 0xf) != chm) { VRED_ONCE("color clear with channel mask %#x is not on Vulkan yet (needs a pipeline): skipped", c->mask); return; }
+    if ((c->mask & chm) != chm) { VRED_ONCE("color clear with channel mask %#x is not on Vulkan yet (needs a pipeline): skipped", c->mask); return; }
     vka_tex_own(im, g_cb);   // (zero-shared: memory of its own before the clear, which may also become the next pass's loadOp)
     uint32_t lv, l0, nl; rt_range(im, v, hv, &lv, &l0, &nl);
     if (lv >= im->levels || !nl) return;
@@ -1154,7 +1154,7 @@ static void clear_tex(const p_clear_tex *c) {
     if (!im || !vka_fmt_of(c->has_view && c->view.set_format ? c->view.format : c->tex->d.format, &f)) return;
     if (f.kind >= 3) { VRED_ONCE("ClearTexture of a depth / stencil texture (format %#x)", c->tex->d.format); return; }
     unsigned chm = fmt_chmask(c->has_view && c->view.set_format ? c->view.format : c->tex->d.format);
-    if ((c->mask & 0xf) != chm) { if (c->mask & 0xf) VRED_ONCE("ClearTexture with channel mask %#x is not on Vulkan yet: skipped", c->mask); return; }
+    if ((c->mask & chm) != chm) { if (c->mask & 0xf) VRED_ONCE("ClearTexture with channel mask %#x is not on Vulkan yet: skipped", c->mask); return; }
     vka_tex_own(im, g_cb);
     uint32_t lv = c->has_view && c->view.set_levels ? c->view.base_level : 0, l0 = (c->has_view && c->view.set_layers ? c->view.min_layer : 0) + (uint32_t)c->r.zoffset, nl = c->r.depth > 0 ? (uint32_t)c->r.depth : 1;
     if (!vka_img_lv(im, &lv)) return;
