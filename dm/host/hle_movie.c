@@ -79,7 +79,7 @@ typedef struct {
     int w, h, fmt_sent, started, in_eos;          // in_eos: an end-of-stream packet was sent; no input until Flush / Stop (h_movie_AcqIn)
     uint8_t *in[MD_NIN]; int infree[MD_NIN], ninfree;                     // queue of free input indices
     int inown[MD_NIN]; uint64_t instale[MD_NIN];                          // inown: acquired by the client and not sent yet; instale: when a Flush / Stop found it held (the client may still send it), 0 if not
-    struct { int used, pic, cli, rnd; int64_t pts; uint32_t flags; uint8_t *frm; size_t cap, bytes; } out[MD_NOUT];   // pic: frm holds a decoded picture (audio: bytes of PCM); cli: acquired by the client and not released; rnd: written into the client's texture, waiting for the client's release (md_rendered); cap: bytes in frm
+    struct { int used, pic, cli, rnd; int64_t pts; uint32_t flags; uint8_t *frm; size_t cap, bytes; uint8_t *cli_data; size_t cli_cap; } out[MD_NOUT];   // pic: frm holds a decoded picture (audio: bytes of PCM); cli: acquired by the client and not released; rnd: written into the client's texture, waiting for the client's release (md_rendered); cap: bytes in frm
     int tex_rel;                                                          // the client released a slot written into its texture itself: rendered slots wait for its release (md_rendered)
     int outq[MD_NOUT], noutq;                                             // queue of ready output indices
     struct { int in, off, size; int64_t pts; uint32_t flags; } pend[MD_NIN]; int npend;   // input packets waiting to be decoded (in arrival order)
@@ -706,7 +706,7 @@ static void md_free(void **self) {
     dm_host_lock(&d->dmu); md_job(d, MDJ_QUIT); pthread_mutex_unlock(&d->dmu);
     pthread_join(d->wk, NULL);
     for (int i = 0; i < MD_NIN; i++) free(d->in[i]);
-    for (int k = 0; k < MD_NOUT; k++) free(d->out[k].frm);
+    for (int k = 0; k < MD_NOUT; k++) { free(d->out[k].frm); free(d->out[k].cli_data); }
     free(d->bgra); free(d->lb); free(d->vhdr[0]); free(d->vhdr[1]); free(d->hold);
     pthread_mutex_destroy(&d->pkm); pthread_cond_destroy(&d->pkc);
     pthread_mutex_destroy(&d->mu); pthread_mutex_destroy(&d->dmu); pthread_mutex_destroy(&d->wmu); pthread_cond_destroy(&d->wcv); free(d);
@@ -1051,12 +1051,13 @@ HLE_FORCE("_ZN5movie7Decoder15GetOutputBufferEiPNS_6BufferE", "movie decoder: ge
             static int noted; if (!noted++) LOG("movie: client buffer of %zu bytes holds an NVNtexture (format %#x, %dx%d): native-texture output", cap, tf, tw, th);
             return md_out_tex(d, i, buf);
         }
-        static int noted; if (!noted++) {
-            uint64_t w[2] = {0, 0}; if (p) memcpy(w, p, sizeof w);
-            LOG("movie: GetOutputBuffer index %d: buffer %p cap %zu size %zu data %p words %016llx %016llx", i, buf, cap, G.size(buf), (void *)p,
-                (unsigned long long)w[0], (unsigned long long)w[1]);
-        }
-        LOG("[RED] movie: client output buffer is %zu bytes, a frame needs %zu", cap, need); G.set_range(buf, 0, 0); return 0x100b;
+        // SDK 12's player hands the decoder an empty Buffer (capacity 8, size 0) instead of allocating one: fill it as we do the input buffers,
+        // so the client reads Data() / Size() from memory the decoder owns for this slot.
+        if (d->out[i].cli_cap < need) { free(d->out[i].cli_data); d->out[i].cli_data = malloc(need); d->out[i].cli_cap = d->out[i].cli_data ? need : 0; }
+        if (!d->out[i].cli_data) { LOG("[RED] movie: cannot allocate a %zu-byte output buffer", need); G.set_range(buf, 0, 0); return 0x100b; }
+        p = d->out[i].cli_data;
+        G.set_data(buf, p, need);
+        static int noted; if (!noted++) LOG("movie: GetOutputBuffer index %d: the client's %zu-byte buffer was filled with a %zu-byte host allocation", i, cap, need);
     }
     if (d->out[i].pic && d->out[i].frm) {
         float f = md_lb_factor();
