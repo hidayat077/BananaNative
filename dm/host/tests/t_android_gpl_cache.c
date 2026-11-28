@@ -110,6 +110,52 @@ static size_t spv_test_vin_extract_signed(spv_test_b *b) {
     return b->n;
 }
 
+// Input vec4<float> @3 -> load -> store into an SC_FUNCTION local -> load -> bitcast to vec4<uint>.
+static size_t spv_test_vin_local(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, 3);
+    SPV(21, 1, 32, 0); SPV(23, 2, 1, 4); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(32, 5, 1, 4); SPV(59, 5, 6, 1);
+    SPV(32, 10, 7, 4); SPV(33, 7, 3); SPV(54, 3, 8, 0, 7);
+    SPV(59, 10, 11, 7);   // Function-scope local declared inside the function
+    SPV(61, 4, 12, 6); SPV(62, 11, 12); SPV(61, 4, 14, 11); SPV(124, 2, 15, 14);
+    SPV0(56);
+    return b->n;
+}
+
+// Sampled texture @68 -> OpImageSampleExplicitLod -> SC_FUNCTION local -> load -> extract -> bitcast.
+static size_t spv_test_tex_local(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 7, 34, 0); SPV(71, 7, 33, 68);
+    SPV(21, 1, 32, 0); SPV(23, 2, 1, 4); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(25, 5, 3, 2, 0, 0, 0, 1, 0); SPV(32, 6, 0, 5); SPV(59, 6, 7, 0);
+    SPV(32, 10, 7, 4); SPV(33, 8, 4); SPV(43, 1, 12, 0); SPV(54, 4, 13, 0, 8);
+    SPV(59, 10, 11, 7);   // Function-scope local declared inside the function
+    SPV(61, 5, 14, 7); SPV(88, 4, 15, 14, 12);
+    SPV(62, 11, 15); SPV(61, 4, 16, 11); SPV(81, 3, 17, 16, 0); SPV(124, 1, 18, 17);
+    SPV0(56);
+    return b->n;
+}
+
+// A value also consumed by real float math is not integer bits (vk_android_spv.py:308-345).
+static size_t spv_test_vin_float_used(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, 2);
+    SPV(21, 1, 32, 0); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(32, 5, 1, 4); SPV(59, 5, 6, 1);
+    SPV(33, 7, 3); SPV(54, 3, 8, 0, 7);
+    SPV(61, 4, 10, 6); SPV(124, 1, 11, 10); SPV(133, 4, 12, 10, 10);   // OpFMul on %10
+    SPV0(56);
+    return b->n;
+}
+static size_t spv_test_tex_float_used(spv_test_b *b) {
+    SPV(17, 1); SPV(14, 0, 1); SPV(71, 7, 34, 0); SPV(71, 7, 33, 68);
+    SPV(21, 1, 32, 0); SPV(22, 3, 32); SPV(23, 4, 3, 4);
+    SPV(25, 5, 3, 2, 0, 0, 0, 1, 0); SPV(32, 6, 0, 5); SPV(59, 6, 7, 0);
+    SPV(33, 8, 4); SPV(43, 1, 9, 0); SPV(54, 4, 10, 0, 8);
+    SPV(61, 5, 11, 7); SPV(87, 4, 12, 11, 9); SPV(124, 1, 13, 12);
+    SPV(133, 4, 14, 12, 12);   // OpFMul on the sampled value
+    SPV0(56);
+    return b->n;
+}
+
 // Output vec4<float> at loc 5; int constant; bitcast/convert to float; composite construct; store.
 static size_t spv_test_fout(spv_test_b *b, uint32_t int_ty, uint32_t cast_op) {
     SPV(17, 1); SPV(14, 0, 1); SPV(71, 6, 30, 5);   // annotations before types/variables
@@ -426,9 +472,8 @@ int main(void) {
 
     // 5. tex negatives: filtered sample, out-of-range binding, non-zero descriptor set.
     spv_test_init(&sb);
-    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 4, 1, 87), 64, 0, 1, 0, &hint) == 0,
-          "tex negative: filtered sample ignored");
-    CHECK(!hint.tex_u && !hint.tex_s, "tex negative: filtered sample masks zero");
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 4, 1, 87), 64, 0, 1, 0, &hint) == 1 &&
+          hint.tex_u == (1ull << 4), "OpImageSampleImplicitLod is a texel read like vka_spvpatch.c");
     spv_test_init(&sb);
     CHECK(vka_spv_infer_retype(sb.w, spv_test_tex(&sb, 0, 64 + 64, 2, 95), 64, 0, 1, 0, &hint) == 0,
           "tex negative: binding outside stage range ignored");
@@ -484,6 +529,20 @@ int main(void) {
           "CompositeExtract of bitcasted vin: hint found");
     CHECK(hint.vin_s == (1u << 4) && hint.vin_u == 0, "CompositeExtract promoted to signed, got u=%#x s=%#x",
           hint.vin_u, hint.vin_s);
+
+    // Translator-pattern regressions: SC_FUNCTION locals, explicit LOD, and float-use rejection.
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin_local(&sb), 0, 1, 0, 0, &hint) == 1 &&
+          hint.vin_u == (1u << 3) && hint.vin_s == 0, "vin via SC_FUNCTION local inferred");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex_local(&sb), 64, 0, 1, 0, &hint) == 1 &&
+          hint.tex_u == (1ull << 4) && hint.tex_s == 0, "tex via sample-explicit + SC_FUNCTION local inferred");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_vin_float_used(&sb), 0, 1, 0, 0, &hint) == 0 &&
+          !hint.vin_u && !hint.vin_s, "vin also used by OpFMul rejected");
+    spv_test_init(&sb);
+    CHECK(vka_spv_infer_retype(sb.w, spv_test_tex_float_used(&sb), 64, 0, 1, 0, &hint) == 0 &&
+          !hint.tex_u && !hint.tex_s, "tex fetch also used by OpFMul rejected");
 
     // Corruption test on variant manifest payload.
     FILE *mcf = fopen(mpath, "r+b");

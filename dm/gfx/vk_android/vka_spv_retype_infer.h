@@ -25,8 +25,11 @@ enum {
     VSI_OpAccessChain = 65, VSI_OpInBoundsAccessChain = 66, VSI_OpVectorShuffle = 79,
     VSI_OpCompositeConstruct = 80, VSI_OpCompositeExtract = 81, VSI_OpCompositeInsert = 82,
     VSI_OpCopyObject = 83, VSI_OpSampledImage = 86, VSI_OpImageSampleImplicitLod = 87,
-    VSI_OpImageSampleExplicitLod = 88, VSI_OpImageFetch = 95, VSI_OpImageRead = 98,
-    VSI_OpImageWrite = 99, VSI_OpImage = 100, VSI_OpConvertSToF = 111, VSI_OpConvertUToF = 112,
+    VSI_OpImageSampleExplicitLod = 88, VSI_OpImageFetch = 95, VSI_OpImageGather = 96,
+    VSI_OpImageRead = 98, VSI_OpImageWrite = 99, VSI_OpImage = 100,
+    VSI_OpConvertFToU = 109, VSI_OpConvertFToS = 110, VSI_OpConvertSToF = 111, VSI_OpConvertUToF = 112,
+    VSI_OpFNegate = 127, VSI_OpFAdd = 129, VSI_OpFSub = 131, VSI_OpFMul = 133, VSI_OpFDiv = 136,
+    VSI_OpFRem = 137, VSI_OpFMod = 141, VSI_OpVectorTimesScalar = 142, VSI_OpDot = 148,
     VSI_OpBitcast = 124, VSI_OpSDiv = 135, VSI_OpSRem = 138, VSI_OpSMod = 139,
     VSI_OpSGreaterThan = 173, VSI_OpSGreaterThanEqual = 175, VSI_OpSLessThan = 177,
     VSI_OpSLessThanEqual = 179, VSI_OpShiftRightArithmetic = 195, VSI_OpSelect = 169,
@@ -36,14 +39,29 @@ enum {
     VSI_OpDecorate = 71, VSI_OpMemberDecorate = 72, VSI_OpDecorateId = 332,
     VSI_OpDecorateString = 5632, VSI_OpMemberDecorateString = 5633,
     VSI_DecLocation = 30, VSI_DecBinding = 33, VSI_DecDescriptorSet = 34,
-    VSI_SCUniformConstant = 0, VSI_SCInput = 1, VSI_SCOutput = 3,
-    VSI_NONE = 0xffu
+    VSI_SCUniformConstant = 0, VSI_SCInput = 1, VSI_SCOutput = 3, VSI_SCFunction = 7,
+    VSI_NONE = 0xffu, VSI_AMBIG = 0xfeu
 };
 
 static inline int vka_spv_signed_consumer(uint32_t op) {
     return op == VSI_OpSDiv || op == VSI_OpSRem || op == VSI_OpSMod || op == VSI_OpConvertSToF ||
            op == VSI_OpShiftRightArithmetic || op == VSI_OpSLessThan || op == VSI_OpSGreaterThan ||
            op == VSI_OpSLessThanEqual || op == VSI_OpSGreaterThanEqual;
+}
+
+// vka_spvpatch.c:551-557's texel_read_op(): reads whose result is the texel vector.
+static inline int vka_spv_texel_read_op(uint32_t op) {
+    return op == VSI_OpImageFetch || op == VSI_OpImageRead || op == VSI_OpImageSampleImplicitLod ||
+           op == VSI_OpImageSampleExplicitLod || op == VSI_OpImageGather;
+}
+
+// Genuine float arithmetic / conversion / comparison. The propagation ops (Bitcast,
+// CopyObject, Composite*, Select, Store) are handled before this test and are not listed.
+static inline int vka_spv_float_consumer(uint32_t op) {
+    return op == VSI_OpFNegate || op == VSI_OpFAdd || op == VSI_OpFSub || op == VSI_OpFMul ||
+           op == VSI_OpFDiv || op == VSI_OpFRem || op == VSI_OpFMod || op == VSI_OpVectorTimesScalar ||
+           op == VSI_OpDot || op == VSI_OpConvertFToU || op == VSI_OpConvertFToS ||
+           (op >= 180 && op <= 191) || op == VSI_OpExtInst;   // OpFOrdEqual .. OpFUnordGreaterThanEqual
 }
 
 // w: SPIR-V words, nw: word count, tex_base: first binding of the stage's 64-binding range.
@@ -57,10 +75,10 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
     uint32_t bound = w[3];
     if (!bound || bound > (1u << 20)) return 0;
 
-    // One heap block: six uint32_t tables for 4-byte alignment, then fifteen uint8_t tables.
+    // One heap block: six uint32_t tables for 4-byte alignment, then eighteen uint8_t tables.
     // Never a stack VLA, and one free() on every path.
     size_t nb = bound;
-    void *buf = malloc(nb * (6 * sizeof(uint32_t) + 15));
+    void *buf = malloc(nb * (6 * sizeof(uint32_t) + 18));
     if (!buf) goto done;
     uint32_t *loc = (uint32_t *)buf, *bind = loc + nb, *set = bind + nb, *si_img = set + nb;
     uint32_t *ptr_ty = si_img + nb, *rt = ptr_ty + nb;
@@ -69,6 +87,7 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
     uint8_t *p_fout = p_vin + nb, *p_tex = p_fout + nb, *v_vin = p_tex + nb;
     uint8_t *tex_obj = v_vin + nb, *tex_fetch = tex_obj + nb, *c_vin = tex_fetch + nb;
     uint8_t *c_tex = c_vin + nb, *c_sgn = c_tex + nb, *ff_int = c_sgn + nb;
+    uint8_t *loc_vin = ff_int + nb, *loc_tex = loc_vin + nb, *local_ptr = loc_tex + nb;
     for (size_t i = 0; i < nb; i++) {
         // vka_spvpatch.c:568 leaves an undecorated DescriptorSet as ~0u and vka_spvpatch.c:600
         // requires set == 0: an undecorated binding is NOT set 0, so keep ~0u here too.
@@ -80,6 +99,8 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
         v_vin[i] = tex_obj[i] = tex_fetch[i] = VSI_NONE;
         c_vin[i] = c_tex[i] = ff_int[i] = VSI_NONE;
         c_sgn[i] = 0;
+        loc_vin[i] = loc_tex[i] = VSI_NONE;
+        local_ptr[i] = 0;
     }
 
 #define VSI_LEN_OK(I, LEN) do { \
@@ -155,10 +176,12 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
         i += len;
     }
 
-    uint32_t vu = 0, vs = 0, fu = 0, fs = 0;
-    uint64_t tu = 0, ts = 0;
+    uint32_t vu = 0, vs = 0, fu = 0, fs = 0, vin_float_used = 0;
+    uint64_t tu = 0, ts = 0, tex_float_used = 0;
 
     // Pass 2: function bodies, in instruction order (SSA definitions precede their uses).
+    // The second iteration carries SC_FUNCTION local provenance back across branches/loops.
+    for (int pass = 0; pass < 2; pass++) {
     for (size_t i = first_fn; i < nw;) {
         uint32_t op = w[i] & 0xffffu, len = w[i] >> 16;
         VSI_LEN_OK(i, len);
@@ -168,28 +191,35 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
             if (p_vin[s] != VSI_NONE) p_vin[d] = p_vin[s];
             if (p_fout[s] != VSI_NONE) p_fout[d] = p_fout[s];
             if (p_tex[s] != VSI_NONE) p_tex[d] = p_tex[s];
+            if (local_ptr[s]) local_ptr[d] = 1;
             if (v_vin[s] != VSI_NONE) v_vin[d] = v_vin[s];
             if (tex_obj[s] != VSI_NONE) tex_obj[d] = tex_obj[s];
             if (tex_fetch[s] != VSI_NONE) tex_fetch[d] = tex_fetch[s];
             if (c_vin[s] != VSI_NONE) { c_vin[d] = c_vin[s]; c_sgn[d] = c_sgn[s]; }
             if (c_tex[s] != VSI_NONE) { c_tex[d] = c_tex[s]; c_sgn[d] = c_sgn[s]; }
             if (ff_int[s] != VSI_NONE) ff_int[d] = ff_int[s];
+        } else if (op == VSI_OpVariable && len >= 4 && w[i + 1] < bound && w[i + 2] < bound &&
+                   w[i + 3] == VSI_SCFunction && ptr_sc[w[i + 1]] == VSI_SCFunction) {
+            local_ptr[w[i + 2]] = 1;   // a Function-scope local pointer
         } else if ((op == VSI_OpAccessChain || op == VSI_OpInBoundsAccessChain) && len >= 4 &&
                    w[i + 1] < bound && w[i + 2] < bound && w[i + 3] < bound) {
             uint32_t s = w[i + 3], d = w[i + 2];
             if (p_vin[s] != VSI_NONE) p_vin[d] = p_vin[s];
             if (p_fout[s] != VSI_NONE) p_fout[d] = p_fout[s];
             if (p_tex[s] != VSI_NONE) p_tex[d] = p_tex[s];
+            if (local_ptr[s]) local_ptr[d] = 1;
         } else if (op == VSI_OpLoad && len >= 4 && w[i + 2] < bound && w[i + 3] < bound) {
             uint32_t s = w[i + 3], d = w[i + 2];
             if (p_vin[s] != VSI_NONE) v_vin[d] = p_vin[s];
             if (p_tex[s] != VSI_NONE) tex_obj[d] = p_tex[s];
+            if (local_ptr[s]) {   // vk_android_spv.py:323-328: SC_FUNCTION locals carry provenance too
+                if (loc_vin[s] != VSI_NONE && loc_vin[s] != VSI_AMBIG) v_vin[d] = loc_vin[s];
+                if (loc_tex[s] != VSI_NONE && loc_tex[s] != VSI_AMBIG) tex_fetch[d] = loc_tex[s];
+            }
         } else if ((op == VSI_OpSampledImage || op == VSI_OpImage) && len >= 4 &&
                    w[i + 2] < bound && w[i + 3] < bound) {
             if (tex_obj[w[i + 3]] != VSI_NONE) tex_obj[w[i + 2]] = tex_obj[w[i + 3]];
-        } else if ((op == VSI_OpImageFetch || op == VSI_OpImageRead) && len >= 5 &&
-                   w[i + 2] < bound && w[i + 3] < bound) {
-            // Unfiltered fetch only: OpImageSampleImplicitLod / ExplicitLod / Dref are not candidates.
+        } else if (vka_spv_texel_read_op(op) && len >= 5 && w[i + 2] < bound && w[i + 3] < bound) {
             if (tex_obj[w[i + 3]] != VSI_NONE) tex_fetch[w[i + 2]] = tex_obj[w[i + 3]];
         } else if ((op == VSI_OpCompositeExtract || op == VSI_OpVectorShuffle) && len >= 5 &&
                    w[i + 2] < bound && w[i + 3] < bound) {
@@ -245,9 +275,21 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
             if (want_fout && sty < bound && ity[sty] && fty[rty])
                 ff_int[d] = (uint8_t)(isgn[sty] ? 2 : 1);
         } else if (op == VSI_OpStore && len >= 3 && w[i + 1] < bound && w[i + 2] < bound) {
-            if (want_fout && p_fout[w[i + 1]] != VSI_NONE && ff_int[w[i + 2]] != VSI_NONE) {
-                if (ff_int[w[i + 2]] == 2) fs |= 1u << p_fout[w[i + 1]];
-                else fu |= 1u << p_fout[w[i + 1]];
+            uint32_t dst = w[i + 1], src = w[i + 2];
+            if (local_ptr[dst]) {   // conflicting tags from different locations/bindings clear the slot
+                if (v_vin[src] != VSI_NONE) loc_vin[dst] = (loc_vin[dst] == VSI_NONE || loc_vin[dst] == v_vin[src]) ? v_vin[src] : VSI_AMBIG;
+                if (tex_fetch[src] != VSI_NONE) loc_tex[dst] = (loc_tex[dst] == VSI_NONE || loc_tex[dst] == tex_fetch[src]) ? tex_fetch[src] : VSI_AMBIG;
+            }
+            if (want_fout && p_fout[dst] != VSI_NONE && ff_int[src] != VSI_NONE) {
+                if (ff_int[src] == 2) fs |= 1u << p_fout[dst];
+                else fu |= 1u << p_fout[dst];
+            }
+        } else if (vka_spv_float_consumer(op)) {
+            // vk_android_spv.py:308-345: a value also used by float math is not integer bits.
+            for (uint32_t k = 3; k < len; k++) if (w[i + k] < bound) {
+                uint32_t id = w[i + k];
+                if (v_vin[id] != VSI_NONE && v_vin[id] != VSI_AMBIG) vin_float_used |= 1u << v_vin[id];
+                if (tex_fetch[id] != VSI_NONE && tex_fetch[id] != VSI_AMBIG) tex_float_used |= 1ull << tex_fetch[id];
             }
         } else if (vka_spv_signed_consumer(op)) {
             for (uint32_t k = 3; k < len; k++) if (w[i + k] < bound) {
@@ -258,7 +300,10 @@ static inline int vka_spv_infer_retype(const uint32_t *w, size_t nw, uint32_t te
         }
         i += len;
     }
+    }
 
+    vu &= ~vin_float_used; vs &= ~vin_float_used;
+    tu &= ~tex_float_used; ts &= ~tex_float_used;
     out->vin_u = vu & ~vs;
     out->vin_s = vs;
     out->fout_u = fu & ~fs;

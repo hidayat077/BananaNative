@@ -561,8 +561,10 @@ typedef struct {
     int tf_fx;
     int gs_fx;
     VkShaderModule retype_mod;            // Boot #1 inferred SPIR-V retype module (VK_NULL_HANDLE: none)
+    VkShaderModule retype_pfb_late;       // its twin without EarlyFragmentTests; destroyed by retype_mod's hook
     vka_spv_retype_hint retype_hint;      // the inference that made retype_mod, for telemetry
 } vka_precomp_sh;
+int vka_shader_infer_hint(const vka_shader *s, vka_spv_retype_hint *out);   // diagnostics only: infer from base words
 int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *out);
 void vka_shader_precomp_destroy(vka_precomp_sh *sh);
 const dmsh_vk_bind *vka_shader_precomp_binds(const vka_shlib *L, const dmsh_vk_entry *e);

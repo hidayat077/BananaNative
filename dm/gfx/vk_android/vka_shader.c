@@ -567,7 +567,11 @@ static void infer_precomp_retype(const vka_shlib *L, const dmsh_vk_entry *e, uin
         base = (uint32_t)rg * DMSH_VK_STAGE_BINDINGS;
     }
     vka_spv_retype_hint h;
-    if (!vka_spv_infer_retype(raw, nb / 4, base, st == DMSH_VK_STAGE_VS, 1, st == DMSH_VK_STAGE_FS, &h)) return;
+    // No fout inference: vk_android_build.py ps_variants() already precompiles OpBitcast-based
+    // int_outputs() into MOD_UINT / MOD_UINT_MIXED, while runtime fout_masks() only retypes
+    // fout_types == FLOAT outputs. OpBitcast fout inference only yields false positives and
+    // poisons tex-retyped FS modules. want_fout stays functional in the scanner for tests.
+    if (!vka_spv_infer_retype(raw, nb / 4, base, st == DMSH_VK_STAGE_VS, 1, 0, &h)) return;
     out->retype_hint = h;
     size_t onb = nb;
     uint32_t *w = malloc(nb);
@@ -587,8 +591,36 @@ static void infer_precomp_retype(const vka_shlib *L, const dmsh_vk_entry *e, uin
     if (!w || !onb) { free(w); return; }
     VkShaderModule mod = VK_NULL_HANDLE;
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = onb, .pCode = w};
-    if (!create_stage_module(st, &ci, &mod)) out->retype_mod = mod;
+    if (!create_stage_module(st, &ci, &mod)) {
+        out->retype_mod = mod;
+        if (st == DMSH_VK_STAGE_FS && vka_shader_pfb_has_twin(mod)) {
+            VkShaderModule late = vka_shader_pfb_pick(mod, 1, 0);
+            if (late && late != mod) out->retype_pfb_late = late;
+        }
+    }
     free(w);
+}
+
+// Diagnostics only: re-infer a shader's static hints from its base words (at most a few
+// calls per run, from vka_pso.c's bounded shard-miss log). vin/tex only, never fout.
+int vka_shader_infer_hint(const vka_shader *s, vka_spv_retype_hint *out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof *out);
+    if (!s || !s->e || !s->lib) return 0;
+    const dmsh_vk_module *m = vka_shlib_module(s->lib, s->e, DMSH_VK_MOD_BASE);
+    if (!m) return 0;
+    char err[256] = ""; size_t nb = 0;
+    uint32_t *w = lib_words(s->lib, s->e, m, &nb, err, sizeof err);
+    if (!w) return 0;
+    int st = s->e->stage, r;
+    uint32_t base = 0;
+    if (st != DMSH_VK_STAGE_CS) {
+        int rg = st == DMSH_VK_STAGE_TS ? DMSH_VK_STAGE_TCS : (st == DMSH_VK_STAGE_MS ? DMSH_VK_STAGE_VS : st);
+        base = (uint32_t)rg * DMSH_VK_STAGE_BINDINGS;
+    }
+    r = vka_spv_infer_retype(w, nb / 4, base, st == DMSH_VK_STAGE_VS, 1, 0, out);
+    free(w);
+    return r;
 }
 
 static VkShaderModule spv_module_(const vka_shlib *L, const dmsh_vk_entry *e, const dmsh_vk_module *m, uint64_t key, const char **why, char *err, size_t errn, uint8_t *fcomp, vka_precomp_sh *infer_out) {
@@ -1157,6 +1189,7 @@ int vka_shader_precomp_open(const vka_shlib *L, uint32_t idx, vka_precomp_sh *ou
 
 void vka_shader_precomp_destroy(vka_precomp_sh *sh) {
     if (!sh) return;
+    // dsm_pfb destroys retype_pfb_late with retype_mod; never destroy the twin separately.
     if (sh->retype_mod) vk.vkDestroyShaderModule(V.dev, sh->retype_mod, NULL);
     for (int i = 0; i < 6; i++) {
         // dsm_pfb destroys pfb_late when mods[0] is destroyed; never destroy pfb_late separately.
