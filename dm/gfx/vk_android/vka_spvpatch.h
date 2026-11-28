@@ -36,8 +36,6 @@ int vka_spv_fout_comps(const uint32_t *w, size_t nw, uint8_t comp[8]);
 // A module whose GLSL.std.450 InverseSqrt of a scalar float is preceded by NMax with the smallest normal float: Vulkan returns Inf for InverseSqrt(0) and the next
 // 0*Inf is NaN, where Maxwell's RSQ gives a finite value. A malloc'd copy (*out_nw words; *changed), NULL with err empty when there is nothing to change
 uint32_t *vka_spv_safe_rsqrt(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn);
-// Replace NaN written to fragment Output variables with zero (Vulkan lets it spread through bloom, Maxwell did not).
-uint32_t *vka_spv_nan_out(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn);
 // Texture-use feedback for the texture pool (vka_spvpatch.c vka_spv_pool_fb): before each read of the pool (a one-index access chain into the sampled-image array at set
 // `set` binding `tex_binding`) the module sets bit (id & 31) of word id >> 5 of a storage buffer at set `fb_set` binding `fb_binding`, id the index's low 20 bits: an atomic
 // OR when a load finds the bit clear. flags: VKA_PFB_VTX_STORES (the device has vertexPipelineStoresAndAtomics: vertex, tessellation and geometry modules may take it),
