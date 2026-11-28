@@ -697,6 +697,33 @@ int main(void) {
         }
         free(m);
     }
+    {   // A scalar float divide by zero is Inf, and the next 0*Inf is NaN; the divisor is clamped (vka_spv_safe_fdiv)
+        const uint32_t *src = SPV_TRI_VERT; size_t sn = sizeof SPV_TRI_VERT / 4;
+        uint32_t *m = malloc(sn * 4 + 5 * 4); size_t mn = sn;
+        memcpy(m, src, sn * 4);
+        size_t at = 0; uint32_t bound = m[3];
+        for (size_t i = 5; i < sn;) { uint32_t len = m[i] >> 16; if (!len) break; if ((m[i] & 0xffff) == 62) { at = i; break; } i += len; }
+        CHECK(at != 0, "test module has a store to inject the divide before");
+        if (at) {
+            memmove(m + at + 5, m + at, (sn - at) * 4);
+            uint32_t div[] = {5u << 16 | 136, 6, bound, 0x3a, 0x39};   // float 1.0 / 0.5
+            memcpy(m + at, div, sizeof div); m[3] = bound + 1; mn = sn + 5;
+            size_t cn = 0; int ch = 0; uint32_t *r = vka_spv_safe_fdiv(m, mn, &cn, &ch, err, sizeof err);
+            CHECK(r && ch && !err[0], "scalar divide clamped: %s", err);
+            if (r) {
+                CHECK(count_op(r, cn, 136) == 1, "one divide remains");
+                CHECK(count_op(r, cn, 184) == 2, "two less-than comparisons added");
+                CHECK(count_op(r, cn, 169) == 3, "three selects added");
+                CHECK(count_op(r, cn, 127) == 2, "two negates added");
+                CHECK(r[3] == bound + 10, "bound grew by two constants and seven result ids");
+                if (val) CHECK(validate(r, cn, "safe fdiv"), "safe fdiv module valid");
+                free(r);
+            }
+            uint32_t *same = vka_spv_safe_fdiv(src, sn, &cn, &ch, err, sizeof err);
+            CHECK(!same && ch == 0 && !err[0], "a module without a scalar divide is left alone: %s", err);
+        }
+        free(m);
+    }
     {   // DescriptorSet remapping for 4-set independent-sets GPL layouts (vka_spv_remap_sets)
         size_t sn = sizeof SPV_PFB_FRAG / 4, pfn = 0; int sites = 0, early = 0, ch = 0;
         static const uint32_t map_fs[4] = {1, 2, 3, 3};

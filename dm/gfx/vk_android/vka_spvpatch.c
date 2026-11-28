@@ -2013,3 +2013,75 @@ uint32_t *vka_spv_remap_sets(const uint32_t *w, size_t nw, const uint32_t map[4]
     if (changed) *changed = ch;
     return o;
 }
+
+// Vulkan's 1/0 is Inf, and the game's next 0*Inf is NaN; Maxwell's divider gave a large finite value. Dying Light's depth linearisation
+// (and its ray/AABB math) divides 1.0 by an Fma of a decoded depth, which can be exactly zero. Guard every scalar float OpFDiv: before
+// it compute abs(denominator), replace |d| below the smallest normal float by the smallest normal with the same sign, then divide by
+// that. A degenerate divisor then gives a large finite quotient instead of Inf -> NaN. Vector divisions are left alone: the failing
+// case here is scalar, and a vector operand would need a constant composite of the same shape (as in vka_spv_safe_rsqrt).
+// New types/constants go before the first OpFunction (after the global variables, which do not use them); result ids are unique per site.
+uint32_t *vka_spv_safe_fdiv(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn) {
+    enum { OpTypeBool = 20, OpConstant = 43, OpFunction = 54, OpFNegate = 127, OpFDiv = 136,
+           OpFOrdLessThan = 184, OpSelect = 169 };
+    *changed = 0; if (err) err[0] = 0;
+    if (nw < 5 || w[0] != 0x07230203 || w[3] > 0x3fffffff) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3], ftype = 0, bt = 0, fzero = 0, ftiny = 0; size_t first_fn = nw;
+    size_t *sites = NULL, ns = 0; uint32_t *ids = NULL; vec_t o = {0};
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || len > nw - i) { snprintf(err, errn, "bad instruction at word %zu", i); goto oom; }
+        if (op == OpTypeFloat && len >= 3 && w[i + 2] == 32) ftype = w[i + 1];
+        else if (op == OpTypeBool && len == 2) bt = w[i + 1];
+        else if (op == OpConstant && len == 4 && w[i + 1] == ftype) {
+            if (w[i + 3] == 0) fzero = w[i + 2];
+            else if (w[i + 3] == 0x00800000u) ftiny = w[i + 2];
+        } else if (op == OpFunction && first_fn == nw) first_fn = i;
+        i += len;
+    }
+    if (!ftype || first_fn == nw) goto none;
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if (len == 5 && (w[i] & 0xffff) == OpFDiv && w[i + 1] == ftype && w[i + 2] < bound && w[i + 4] < bound) {
+            size_t *p = realloc(sites, (ns + 1) * sizeof *sites); if (!p) goto oom; sites = p; sites[ns++] = i;
+        }
+        i += len;
+    }
+    if (!ns) goto none;
+    uint32_t nb = bound, mk_bt = !bt ? nb++ : 0, mk_zero = !fzero ? nb++ : 0, mk_tiny = !ftiny ? nb++ : 0;
+    if (!bt) bt = mk_bt; if (!fzero) fzero = mk_zero; if (!ftiny) ftiny = mk_tiny;
+    ids = calloc(ns * 7, 4); if (!ids) goto oom;
+    for (size_t k = 0; k < ns * 7; k++) ids[k] = nb++;
+    if (!put_n(&o, w, 5)) goto oom;
+    size_t si = 0;
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if (i == first_fn) {
+            if (mk_bt) { uint32_t x[2] = {2u << 16 | OpTypeBool, bt}; if (!put_n(&o, x, 2)) goto oom; }
+            if (mk_zero) { uint32_t x[4] = {4u << 16 | OpConstant, ftype, fzero, 0}; if (!put_n(&o, x, 4)) goto oom; }
+            if (mk_tiny) { uint32_t x[4] = {4u << 16 | OpConstant, ftype, ftiny, 0x00800000u}; if (!put_n(&o, x, 4)) goto oom; }
+        }
+        if (si < ns && sites[si] == i) {
+            uint32_t d = w[i + 4], num = w[i + 3], res = w[i + 2], *r = ids + si * 7;
+            uint32_t a[] = {5u << 16 | OpFOrdLessThan, bt,    r[0], d,    fzero};   // d < 0
+            uint32_t b[] = {4u << 16 | OpFNegate,       ftype, r[1], d};             // -d
+            uint32_t c[] = {6u << 16 | OpSelect,        ftype, r[2], r[0], r[1], d}; // |d|
+            uint32_t e[] = {5u << 16 | OpFOrdLessThan, bt,    r[3], r[2], ftiny};   // |d| < smallest normal
+            uint32_t f[] = {6u << 16 | OpSelect,        ftype, r[4], r[3], ftiny, r[2]}; // max(|d|, smallest normal)
+            uint32_t g[] = {4u << 16 | OpFNegate,       ftype, r[5], r[4]};          // -max
+            uint32_t h[] = {6u << 16 | OpSelect,        ftype, r[6], r[0], r[5], r[4]}; // same sign as d
+            uint32_t q[] = {5u << 16 | OpFDiv,          ftype, res,  num,  r[6]};
+            if (!put_n(&o, a, 5) || !put_n(&o, b, 4) || !put_n(&o, c, 6) || !put_n(&o, e, 5)
+                || !put_n(&o, f, 6) || !put_n(&o, g, 4) || !put_n(&o, h, 6) || !put_n(&o, q, 5)) goto oom;
+            si++;
+        } else if (!put_n(&o, w + i, len)) goto oom;
+        i += len;
+    }
+    free(sites); free(ids);
+    o.w[3] = nb; *out_nw = o.n; *changed = 1;
+    return o.w;
+oom:
+    snprintf(err, errn, "out of memory");
+none:
+    free(sites); free(ids); free(o.w);
+    return NULL;
+}
