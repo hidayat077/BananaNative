@@ -6,7 +6,7 @@ Base game 1.0.5, SDK 12.3.3, NVN, Techland's own engine with FMOD. The profile w
 
 - One `base` package, NCM version `v327680`, with ExeFS and RomFS. The `.nup` carries the game's meta block (title, publisher Techland, version 1.0.5).
 - Modules `main` (`8c93b930348c978708ae9e6bc0c9cca9`), `subsdk0` (NintendoSDK_movie, `434729719bfacada3bd0ed4842a10e55`), `sdk` (`dfa12b7019fffbe725fa4b4f1335988c`) and `rtld`. `main` imports from `subsdk0`, so the movie module is kept; `rtld` is replaced by the host.
-- The NPDM declares 12 MB of system resource and `main` never sets a heap: memory values in `game.tsv` follow the usual 5 GB block with a 4.375 GB alias region and are provisional until a real boot.
+- The NPDM declares 12 MB of system resource and `main` never sets a heap. The first phone run (2026-11-28) trapped at `main+0x732854` (SIGILL, the game's own abort) after `VIRTUAL_MEMORY_ALLOCERROR_OUT_OF_PHYSICAL_MEMORY`: the game's allocator asked for an 8 GiB virtual region (`x21 = 0x200000000`) which the survey's default 4.375 GB alias region could not hold. `game.tsv` now uses a Switch-sized 64 GB alias region, like other games whose engines reserve large address ranges; this is a virtual reservation only, still unvalidated on the next boot.
 - RomFS: 583 files, about 16.28 GB. The base package also holds the game's DLC folders (`DW_DLC0` … `DW_DLC49`), with `DW/` carrying the game data.
 - Techland `.pak` archives are ZIPs; `shader_split.py`'s generic ZIP reader finds the game's GLSLC outputs in `DW/Data/optimized_nvn.mp`. The `.ppfx` files are the engine's text shader scripts, not NVN binaries.
 

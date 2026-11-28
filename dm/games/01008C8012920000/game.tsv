@@ -22,10 +22,13 @@ romfs_marker	DW/Data1.pak
 zip_store	.rpacz:.mp4:.csb:.pak:.rpack:.zip
 
 # ---- Memory ----
-# From the survey: the NPDM declares 12 MB of system resource (virtual address memory) and main never sets
-# a heap, so the game maps its memory itself in a 4.375 GB alias region; refine these on a real boot.
-mem_reserve	0x140000000
-mem_alias	0x118000000
+# The first phone run trapped in the game's own allocator: it asked for an 8 GiB virtual region
+# (x21 = 0x200000000) and got VIRTUAL_MEMORY_ALLOCERROR_OUT_OF_PHYSICAL_MEMORY, because the survey's
+# default 4.375 GB alias region had no room for it (SIGILL at main+0x732854 was the game's own abort).
+# The alias region is now a Switch-sized 64 GB, as for other games whose engine reserves large address
+# regions; that is only a virtual reservation, refined on the next boot.
+mem_reserve	0x1028000000
+mem_alias	0x1000000000
 mem_stack	0x10000000
 app_pool	0xCD500000
 sys_resource	0xc00000
