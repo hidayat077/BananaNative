@@ -1,0 +1,37 @@
+# Dying Light: Platinum Edition (Techland), base game 1.0.5, SDK 12.3.3, NVN, FMOD.
+# Profile made from a survey of the user's own .nup (read in place, no extraction); bring-up and on-device validation are still open. See README.md.
+# Format: see dm/games/README.md.
+
+# ---- Identity ----
+title_id	01008C8012920000
+program_id	01008C8012920000
+
+# ---- App ----
+name	Dying Light: Platinum Edition
+ipa	DyingLightPlatinumEdition.ipa
+app_category	public.app-category.action-games
+
+# ---- Versions ----
+build	v0	1.0.5	main=8c93b930348c978708ae9e6bc0c9cca9	subsdk0=434729719bfacada3bd0ed4842a10e55	sdk=dfa12b7019fffbe725fa4b4f1335988c
+package	v0
+shader_versions	v0
+
+# ---- Files ----
+modules	main subsdk0 sdk
+romfs_marker	DW/Data1.pak
+zip_store	.rpacz:.mp4:.csb:.pak:.rpack:.zip
+
+# ---- Memory ----
+# From the survey: the NPDM declares 12 MB of system resource (virtual address memory) and main never sets
+# a heap, so the game maps its memory itself in a 4.375 GB alias region; refine these on a real boot.
+mem_reserve	0x140000000
+mem_alias	0x118000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+sys_resource	0xc00000
+
+# ---- Shaders ----
+# The RomFS holds Techland .pak archives (ZIP) with .ppfx text shader scripts and proprietary containers;
+# how the game's NVN programs are stored is still under survey.
+shader_groups	/DW/=dw
+shader_note	Dying Light: Platinum Edition shaders
