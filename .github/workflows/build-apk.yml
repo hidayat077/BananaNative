@@ -1,4 +1,4 @@
-# Builds the APK with Zelda TotK, Zelda BotW, Pokemon Legends: Z-A, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, Pokemon Scarlet, What Remains of Edith Finch, Sid Meier's Civilization VII, LEGO Star Wars: The Skywalker Saga, Hellblade: Senua's Sacrifice, No Man's Sky, and Super Mario Odyssey; add a game by adding its ID to nxGames.
+# Builds the APK with Zelda TotK, Zelda BotW, Pokemon Legends: Z-A, Final Fantasy Resonance, South Park: The Fractured but Whole, Hogwarts Legacy, DRAGON BALL: Sparking! ZERO, Luigi's Mansion 3, Pokemon Scarlet, What Remains of Edith Finch, Sid Meier's Civilization VII, LEGO Star Wars: The Skywalker Saga, Hellblade: Senua's Sacrifice, No Man's Sky, Super Mario Odyssey, and Animal Crossing: New Horizons; add a game by adding its ID to nxGames.
 name: build-apk
 
 on:
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  nxGames: 0100F2C0115B6000,01007EF00011E000,0100F43008C44000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000,0100A3D008C5C000,010038900DFE0000,0100C3601518C000,010042D00D900000,010044500CF8E000,0100853015E86000,0100000000010000
+  nxGames: 0100F2C0115B6000,01007EF00011E000,0100F43008C44000,0100606026F12000,01008F2005154000,0100F7E00C70E000,010035F022078000,0100DCA0064A6000,0100A3D008C5C000,010038900DFE0000,0100C3601518C000,010042D00D900000,010044500CF8E000,0100853015E86000,0100000000010000,01006F8002326000
 
 jobs:
   apk:
@@ -48,6 +48,9 @@ jobs:
           mkdir -p ~/.android && cp /tmp/debug.keystore ~/.android/debug.keystore
           # AGP does not look at ~/.android/debug.keystore on the runner (three runs produced three certificates), so build.gradle signs with this path explicitly
           echo "NX_DEBUG_STORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
+          echo "NX_SIGN_STORE=/tmp/debug.keystore" >> "$GITHUB_ENV"
+          echo "NX_SIGN_ALIAS=androiddebugkey" >> "$GITHUB_ENV"
+          echo "NX_SIGN_PASS=android" >> "$GITHUB_ENV"
       # The APK carries the on-device packer: its native stage is built first (android/README.md), with the tools build.sh calls.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -99,12 +102,14 @@ jobs:
         run: |
           ccache -z
           VER_ARG=""
+          LIVE_ARG=""
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VER_ARG="-PnxVersion=${GITHUB_REF_NAME#v}"
+            LIVE_ARG="-PnxLive=true"
           fi
-          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} $VER_ARG --build-cache apk
+          ./gradlew -PnxGames=$nxGames -PnxVersionCode=${{ github.run_number }} $VER_ARG $LIVE_ARG --build-cache apk
           # Android 12/12L: minSdk 31; UpdateCheck on those phones takes only the asset marked -android12.
-          ./gradlew -PnxGames=$nxGames -PnxMinSdk=31 -PnxVersionCode=${{ github.run_number }} $VER_ARG --build-cache apk
+          ./gradlew -PnxGames=$nxGames -PnxMinSdk=31 -PnxVersionCode=${{ github.run_number }} $VER_ARG $LIVE_ARG --build-cache apk
           ccache -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -117,29 +122,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat <<'EOF' | sed 's/^          //' > /tmp/release-notes.md
-          Currently supported games:
-          - The Legend of Zelda: Tears of the Kingdom (`0100F2C0115B6000`)
-          - The Legend of Zelda: Breath of the Wild (`01007EF00011E000`)
-          - Pokémon Legends: Z-A (`0100F43008C44000`)
-          - FINAL FANTASY RESONANCE (`0100606026F12000`)
-          - South Park: The Fractured but Whole (`01008F2005154000`)
-          - Hogwarts Legacy (`0100F7E00C70E000`)
-          - DRAGON BALL: Sparking! ZERO (`010035F022078000`)
-          - Luigi's Mansion 3 (`0100DCA0064A6000`)
-          - Pokémon Scarlet (`0100A3D008C5C000`)
-          - What Remains of Edith Finch (`010038900DFE0000`)
-          - Sid Meier's Civilization VII (`0100C3601518C000`) — bring-up: no Android run yet
-          - LEGO Star Wars: The Skywalker Saga (`010042D00D900000`)
-          - Hellblade: Senua's Sacrifice (`010044500CF8E000`) — bring-up: no Android run yet
-          - No Man's Sky (`0100853015E86000`)
-          - Super Mario Odyssey (`0100000000010000`)
-
-          Android 13+: `polar-android.apk`. Android 12/12L (experimental): `polar-android-android12.apk`.
-          EOF
           gh release create "$GITHUB_REF_NAME" android/app/out/polar-android.apk android/app/out/polar-android-android12.apk \
             --title "Polar $GITHUB_REF_NAME" \
-            --notes-file /tmp/release-notes.md
+            --notes-from-tag
 
 # The debug keystore is committed as base64 in android/app/debug.keystore.b64 (alias androiddebugkey, password android),
 # generated once with: keytool -genkeypair -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android \

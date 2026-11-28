@@ -608,9 +608,6 @@ public final class MainActivity extends Activity {
         LinearLayout upd = settingsCard(content);
         updateRow = new Ui.Setting(this, "🔄", Tx.s(R.string.common_check_for_updates), v -> Updater.checkNow(this)).chevron(this);
         upd.addView(updateRow.view);
-        upd.addView(new Ui.Setting(this, "🩹", Tx.s(R.string.settings_small_fix_updates), null)
-                .toggle(this, Prefs.hotfixUpdates(this), (b, on) -> Prefs.hotfixUpdates(this, on))
-                .value(Tx.s(R.string.settings_small_fix_updates_help)).view);
 
         Ui.add(content, Ui.section(this, Tx.s(R.string.common_display)), Ui.SECTION_GAP);
         LinearLayout play = settingsCard(content);
