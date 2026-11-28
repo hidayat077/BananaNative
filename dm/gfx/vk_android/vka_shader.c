@@ -572,6 +572,10 @@ static void infer_precomp_retype(const vka_shlib *L, const dmsh_vk_entry *e, uin
     // fout_types == FLOAT outputs. OpBitcast fout inference only yields false positives and
     // poisons tex-retyped FS modules. want_fout stays functional in the scanner for tests.
     if (!vka_spv_infer_retype(raw, nb / 4, base, st == DMSH_VK_STAGE_VS, 1, 0, &h)) return;
+    // Maxwell->SPIR-V emits OpTypeInt 32 1 (signed) as its canonical register type for OpBitcast,
+    // whereas runtime integer vertex attributes and texture views are overwhelmingly UINT.
+    h.vin_u |= h.vin_s; h.vin_s = 0;
+    h.tex_u |= h.tex_s; h.tex_s = 0;
     out->retype_hint = h;
     size_t onb = nb;
     uint32_t *w = malloc(nb);
@@ -619,6 +623,10 @@ int vka_shader_infer_hint(const vka_shader *s, vka_spv_retype_hint *out) {
         base = (uint32_t)rg * DMSH_VK_STAGE_BINDINGS;
     }
     r = vka_spv_infer_retype(w, nb / 4, base, st == DMSH_VK_STAGE_VS, 1, 0, out);
+    if (r) {   // mirror Boot #1's UINT normalization in the bounded miss diagnostic
+        out->vin_u |= out->vin_s; out->vin_s = 0;
+        out->tex_u |= out->tex_s; out->tex_s = 0;
+    }
     free(w);
     return r;
 }
