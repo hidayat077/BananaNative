@@ -11,11 +11,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../host ${CMAKE_CURRENT_BI
 # Source paths in nxlaunch (__FILE__, debug info) relative to the repository, not the build machine's folders; android/host sets the same for the hosts
 get_filename_component(NX_REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../.. ABSOLUTE)
 add_compile_options(-ffile-prefix-map=${NX_REPO_ROOT}/=)
-string(REPLACE "," ";" games "${NX_GAMES}")
-foreach(g ${games})
-  add_library(nxlaunch_${g} SHARED nxlaunch.c)
-  target_include_directories(nxlaunch_${g} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/host/android ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/gfx/vk_android)   # the host's launcher interface
-  target_compile_options(nxlaunch_${g} PRIVATE -O2 -g -Wall -Wextra -Wno-unused-parameter)
-  target_link_options(nxlaunch_${g} PRIVATE -Wl,--no-undefined)
-  target_link_libraries(nxlaunch_${g} PRIVATE nxhost_${g} android log)
-endforeach()
+add_library(nxlaunch SHARED nxlaunch.c)
+target_include_directories(nxlaunch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/host/android ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../dm/gfx/vk_android)   # the host's launcher interface
+target_compile_options(nxlaunch PRIVATE -O2 -g -Wall -Wextra -Wno-unused-parameter)
+target_link_options(nxlaunch PRIVATE -Wl,--no-undefined)
+target_link_libraries(nxlaunch PRIVATE nxhost android log)

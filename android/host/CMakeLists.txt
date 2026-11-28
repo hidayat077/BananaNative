@@ -103,20 +103,9 @@ target_include_directories(dav1d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dav1d_confi
 target_compile_options(dav1d PRIVATE -O2 -w -fvisibility=hidden)
 target_compile_definitions(dav1d PRIVATE _GNU_SOURCE)
 
-# One host: target <tgt> with the profile of <game> compiled in. The game profile header, as dm/host/Makefile makes it (game.py header), goes into gen/<game>
-function(nxhost_add tgt game)
-  set(GAME_H ${GEN}/${game}/game_profile.h)
-  add_custom_command(OUTPUT ${GAME_H}
-    COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py header ${game} ${GAME_H}
-    DEPENDS ${ROOT}/dm/games/${game}/game.tsv ${ROOT}/dm/games/game.py
-    COMMENT "game profile ${game}")
-  # The profile's prewarm seed list (vk_prewarm.bin, when it has one) as bytes for the Vulkan replay (vka_pso.c pw_load; dm/gfx/vk_android/vka_pwlist.h). A target that runs at
-  # every build (a seed file added after CMake configured would not be seen by a DEPENDS list); game.py writes the header only when it changes
-  set(SEED_H ${GEN}/${game}/vk_prewarm_seed.h)
-  add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
-  add_library(${tgt} SHARED ${HOST_C} ${GFX_C} ${ASM_OUT} ${GAME_H} ${SEED_H})
-  add_dependencies(${tgt} ${tgt}_seed)
-  target_include_directories(${tgt} PRIVATE ${GEN}/${game} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${HOST} ${NX_COOP_VENDOR_DIR})
+# Shared compile/link configuration for a libnxhost target
+function(_nxhost_configure tgt incdir)
+  target_include_directories(${tgt} PRIVATE ${incdir} ${GFX}/nvn/include ${TP}/vulkan-headers/include ${TP}/libvpx ${TP}/libvpx/config ${TP}/dav1d/include ${TP}/stb_vorbis ${HOST} ${NX_COOP_VENDOR_DIR})
   # DM_NUP_ZSTD: compressed files of a NUP container are decompressed with zstddec (dm/host/nup_image.h)
   target_compile_definitions(${tgt} PRIVATE _GNU_SOURCE DM_NUP_ZSTD NX_COOP_VENDOR=${NX_COOP_VENDOR} $<$<BOOL:${NX_LSFG}>:NX_LSFG>)
   # As the Mac host (-O1 -g -Wall -Wno-unused-function). Hidden visibility: the assembly reaches C symbols with adrp, which a shared library allows only for symbols it binds itself
@@ -130,13 +119,44 @@ function(nxhost_add tgt game)
   target_link_libraries(${tgt} PRIVATE vpx dav1d zstddec aaudio mediandk android log m dl z)   # libvulkan.so is opened at run time (vka_dev.c)
 endfunction()
 
+# One host: target <tgt> with the profile of <game> compiled in. The game profile header, as dm/host/Makefile makes it (game.py header), goes into gen/<game>
+function(nxhost_add tgt game)
+  set(GAME_H ${GEN}/${game}/game_profile.h)
+  add_custom_command(OUTPUT ${GAME_H}
+    COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py header ${game} ${GAME_H}
+    DEPENDS ${ROOT}/dm/games/${game}/game.tsv ${ROOT}/dm/games/game.py
+    COMMENT "game profile ${game}")
+  # The profile's prewarm seed list (vk_prewarm.bin, when it has one) as bytes for the Vulkan replay (vka_pso.c pw_load; dm/gfx/vk_android/vka_pwlist.h). A target that runs at
+  # every build (a seed file added after CMake configured would not be seen by a DEPENDS list); game.py writes the header only when it changes
+  set(SEED_H ${GEN}/${game}/vk_prewarm_seed.h)
+  add_custom_target(${tgt}_seed COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py seed ${game} ${SEED_H} BYPRODUCTS ${SEED_H} COMMENT "prewarm seed ${game}")
+  add_library(${tgt} SHARED ${HOST_C} ${GFX_C} ${ASM_OUT} ${GAME_H} ${SEED_H})
+  add_dependencies(${tgt} ${tgt}_seed)
+  _nxhost_configure(${tgt} ${GEN}/${game})
+endfunction()
+
+# Single multi-game host: one libnxhost.so containing all profiles in NX_GAME_LIST, selected at run time
+function(nxhost_bundle tgt)
+  set(BDIR ${GEN}/bundle)
+  set(GAME_H ${BDIR}/game_profile.h)
+  set(SEED_H ${BDIR}/vk_prewarm_seed.h)
+  set(DATA_C ${BDIR}/game_profiles_data.c)
+  add_custom_target(${tgt}_bundle_gen
+    COMMAND ${Python3_EXECUTABLE} ${ROOT}/dm/games/game.py bundle ${BDIR} ${ARGN}
+    BYPRODUCTS ${GAME_H} ${SEED_H} ${DATA_C}
+    COMMENT "game profiles bundle")
+  add_library(${tgt} SHARED ${HOST_C} ${GFX_C} ${ASM_OUT} ${GAME_H} ${SEED_H} ${DATA_C})
+  add_dependencies(${tgt} ${tgt}_bundle_gen)
+  _nxhost_configure(${tgt} ${BDIR})
+endfunction()
+
 if(NX_GAMES)
   foreach(g ${NX_GAME_LIST})
     if(NOT g MATCHES "^[0-9A-F]+$" OR NOT EXISTS ${ROOT}/dm/games/${g}/game.tsv)
       message(FATAL_ERROR "NX_GAMES: ${g} is not a profile in dm/games")
     endif()
-    nxhost_add(nxhost_${g} ${g})
   endforeach()
+  nxhost_bundle(nxhost ${NX_GAME_LIST})
 else()
   nxhost_add(nxhost ${GAME})
 endif()

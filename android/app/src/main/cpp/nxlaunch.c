@@ -649,6 +649,14 @@ JNIEXPORT jstring JNICALL Java_dev_nxnative_android_Native_skipStatus(JNIEnv *en
 }
 #pragma weak nxhost_precompile_status
 #pragma weak nxhost_precompile_skip
+#pragma weak nxhost_select_profile
+void nxhost_select_profile(const char *id);
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_selectProfile(JNIEnv *env, jclass cls, jstring id) {
+    (void)cls;
+    if (!nxhost_select_profile || !id) return;
+    const char *s = (*env)->GetStringUTFChars(env, id, NULL);
+    if (s) { nxhost_select_profile(s); (*env)->ReleaseStringUTFChars(env, id, s); }
+}
 JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_precompileStatus(JNIEnv *env, jclass cls, jlongArray out) {
     (void)cls;
     if (!nxhost_precompile_status) return JNI_FALSE;

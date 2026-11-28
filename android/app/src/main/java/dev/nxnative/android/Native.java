@@ -20,13 +20,16 @@ final class Native {
         String why = Profile.missing(titleId, null);
         if (why != null) throw new IllegalStateException(why);
         try {
-            System.loadLibrary("nxhost_" + titleId);
-            System.loadLibrary("nxlaunch_" + titleId);
+            System.loadLibrary("nxhost");
+            System.loadLibrary("nxlaunch");
+            selectProfile(titleId);
         } catch (UnsatisfiedLinkError e) {
             throw new IllegalStateException("The host of " + titleId + " cannot be loaded: " + e.getMessage());
         }
         loaded = titleId;
     }
+
+    private static native void selectProfile(String titleId);
 
     /** Starts nxhost_main(args) on a thread with an 8 MB stack after setting env (KEY=VALUE) and sending stdout / stderr to logPath. 0 = started. */
     static native int start(String[] args, String[] env, String logPath, String cwd);

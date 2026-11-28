@@ -415,7 +415,11 @@ static void one_lane_env(void) {
     else if (g_one_nenv) VLOG("subgroup_one_lane: %d shader key%s from DM_VK_ONE_LANE", g_one_nenv, g_one_nenv == 1 ? "" : "s");
 }
 static int one_lane_forced(uint64_t key) {
+#ifdef DM_SINGLE_HOST
+    const uint64_t *prof = g_dm_profile->subgroup_one_lane; static pthread_once_t once = PTHREAD_ONCE_INIT;
+#else
     static const uint64_t prof[] = DM_GAME_SUBGROUP_ONE_LANE; static pthread_once_t once = PTHREAD_ONCE_INIT;
+#endif
     pthread_once(&once, one_lane_env);
     for (int i = 0; i < g_one_nenv; i++) if (g_one_env[i] == key) return 1;
     if (g_one_mode > 0 || (!g_one_mode && V.driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY))

@@ -128,13 +128,21 @@ static const lock_t k_locks[] = {
 // three or four players; any other value leaves the count as it is), count +0x214. A cap of 30 writes mode 2, the game's own 30 fps; 20 writes the count 3 and a mode outside
 // 0..2 (STEPS_HOLD), which keeps it; 60 and 0 leave the game's own mode (it runs 2 steps on a frame that overran: full speed at 60 or below). Each step stays 1/60 s, so the race,
 // ghosts, time trials and online races step as at 60. DM_FPS_STEPS_ROWS: the unit tests' own rows
+#if defined(DM_SINGLE_HOST) && !defined(DM_FPS_STEPS_ROWS)
+typedef dm_fps_steps_row_t steps_row_t;
+#define k_steps (g_dm_profile->fps_steps)
+#define NSTEPS (g_dm_profile->nfps_steps)
+#define NSTEPS_MAX DM_GAME_MAX_FPS_STEPS
+#else
+typedef struct { const char *build; uint64_t ptr_off; uint32_t mode, count; uint8_t nderef; uint16_t deref[3]; } steps_row_t;
 #ifndef DM_FPS_STEPS_ROWS
 #define DM_FPS_STEPS_ROWS DM_GAME_FPS_STEPS
 #define DM_FPS_NSTEPS_ROWS DM_GAME_NFPS_STEPS
 #endif
-typedef struct { const char *build; uint64_t ptr_off; uint32_t mode, count; uint8_t nderef; uint16_t deref[3]; } steps_row_t;
 static const steps_row_t k_steps[] = DM_FPS_STEPS_ROWS;
 #define NSTEPS DM_FPS_NSTEPS_ROWS
+#define NSTEPS_MAX (NSTEPS > 0 ? NSTEPS : 1)
+#endif
 #define STEPS_MAX 3    // 20 fps: the most steps a frame offered (each 1/60 s)
 #define STEPS_HOLD 3   // a mode outside the game's 0..2: its pick then leaves the count the host wrote
 // A draw-every-other-step flag, the profile's fps_half_draw rows (dm/games/game.py; one per build of the module that holds it, which may be an NRO): an engine that steps once a
@@ -143,13 +151,19 @@ static const steps_row_t k_steps[] = DM_FPS_STEPS_ROWS;
 // (nro0+0x11f75b0). A cap of 30 sets the bit: 60 steps a second, 30 frames drawn, so the game keeps its speed where a late frame at interval 1 halves it. Any other cap, and no
 // cap, clears a bit the host set (one the game set itself stays). The game sets its present interval itself, so presentation follows the game (follows_game's rule: half_find in
 // dm_fps_lock_floor). The module may load after main (an NRO), so it is looked for until found. DM_FPS_HALF_ROWS: the unit tests' own rows
+#if defined(DM_SINGLE_HOST) && !defined(DM_FPS_HALF_ROWS)
+typedef dm_fps_half_row_t half_row_t;
+#define k_half (g_dm_profile->fps_half_draw)
+#define NHALF (g_dm_profile->nfps_half_draw)
+#else
+typedef struct { const char *module, *build; uint64_t off; uint8_t mask; } half_row_t;
 #ifndef DM_FPS_HALF_ROWS
 #define DM_FPS_HALF_ROWS DM_GAME_FPS_HALF_DRAW
 #define DM_FPS_NHALF_ROWS DM_GAME_NFPS_HALF_DRAW
 #endif
-typedef struct { const char *module, *build; uint64_t off; uint8_t mask; } half_row_t;
 static const half_row_t k_half[] = DM_FPS_HALF_ROWS;
 #define NHALF DM_FPS_NHALF_ROWS
+#endif
 static struct { _Atomic(uint8_t *) p; uint8_t mask, ours; int nlog, refused; } g_half;
 static uint8_t *half_find(void) {
     uint8_t *p = atomic_load(&g_half.p);
@@ -350,8 +364,8 @@ static void unity_vsync_restore(const char *src) {
     uq.at = 0; uq.nlog = 0;
 }
 // The running main's engine limiters, found once: by the first present (dm_fps_lock_tick) or by the graphics layer's present cap, which may ask first (dm_fps_lock_engine, from the acquire)
-#define NROWS (NLOCKS + 7 + NSTEPS)   // target, Monolith, four Unreal rows, Unity targetFrameRate, the steps rows
-static lock_t ue[4], target_lock, monolith_lock, unity_tfr, steps[NSTEPS > 0 ? NSTEPS : 1]; static const lock_t *rows[NROWS]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
+#define NROWS (NLOCKS + 7 + NSTEPS_MAX)   // target, Monolith, four Unreal rows, Unity targetFrameRate, the steps rows
+static lock_t ue[4], target_lock, monolith_lock, unity_tfr, steps[NSTEPS_MAX]; static const lock_t *rows[NROWS]; static int nrow, nier, ue_missing; static uint8_t *base; static uint32_t display;
 static pthread_once_t g_found = PTHREAD_ONCE_INIT;
 static void lock_find(void) {
     for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) {

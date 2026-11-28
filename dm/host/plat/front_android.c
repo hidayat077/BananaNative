@@ -26,7 +26,17 @@ int main(int argc, char **argv);
 // The launcher (android/app) calls this on a thread of its own with an 8 MB stack, which is not attached to ART. Heap pointer tagging goes off first: Bionic's malloc hands
 // out pointers with a tag in the top byte (0xb4) since Android 11, and the host gives malloc'd blocks to the guest (its TLS and thread-local region, the libc passthrough),
 // whose code may compare or mask pointers as Horizon's untagged ones. The manifest says the same (allowNativeHeapPointerTagging), this covers a launcher without it
+__attribute__((visibility("default"))) void nxhost_select_profile(const char *id) {
+#ifdef DM_SINGLE_HOST
+    dm_game_profile_select(id);
+#else
+    (void)id;
+#endif
+}
 __attribute__((visibility("default"))) int nxhost_main(int argc, char **argv) {
+#ifdef DM_SINGLE_HOST
+    dm_game_profile_select(getenv("DM_GAME"));
+#endif
     if (!mallopt(M_BIONIC_SET_HEAP_TAGGING_LEVEL, M_HEAP_TAGGING_LEVEL_NONE)) LOG("[RED] heap pointer tagging could not be turned off: guest code sees tagged pointers");
     return main(argc, argv);
 }

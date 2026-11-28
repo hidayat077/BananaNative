@@ -682,7 +682,11 @@ static void map_image(module_t *m, const char *dir) {
 // maximum instead broke the terrain: something else assumes the game's own maximum). Rows are checked: the table must grow, every list byte must be a level; read-only data
 // is still writable here (map_image seals the text and the patch area only)
 static int levels_apply(module_t *m, unsigned cw, unsigned ch) {
+#ifdef DM_SINGLE_HOST
+    const dm_res_levels_row_t *rows = g_dm_profile->res_levels;
+#else
     static const struct { const char *build; uint64_t table; unsigned n, nl; struct { uint64_t off; unsigned len; } l[12]; } rows[] = DM_GAME_RES_LEVELS;
+#endif
     int r = -1;
     for (int i = 0; i < DM_GAME_NRES_LEVELS; i++) if (!strcmp(rows[i].build, m->build_id)) r = i;
     if (r < 0) return 0;
@@ -714,14 +718,22 @@ static int levels_apply(module_t *m, unsigned cw, unsigned ch) {
 // A main build with a render_cfg row takes DM_WINDOW_SIZE as the output of its render configurations instead (hle_render.c), at run time
 #include "render_cfg.h"
 static int render_cfg_row(const char *build) {
+#ifdef DM_SINGLE_HOST
+    const rcfg_row_t *rows = g_dm_profile->render_cfg;
+#else
     static const rcfg_row_t rows[] = DM_GAME_RENDER_CFG;
+#endif
     for (int i = 0; i < DM_GAME_NRENDER_CFG; i++) if (rows[i].build[0] && !strcmp(rows[i].build, build)) return 1;
     return 0;
 }
 static void window_apply(module_t *m) {
     if (strcmp(m->name, "main") || m->nro || render_cfg_row(m->build_id)) return;
     const char *e = getenv("DM_WINDOW_SIZE");
+#ifdef DM_SINGLE_HOST
+    const dm_window_fn_t *rows = g_dm_profile->window_fn;
+#else
     static const struct { const char *build; uint64_t wfn, hfn; unsigned w, h; } rows[] = DM_GAME_WINDOW_FN;
+#endif
     int r = -1, own = !e || !*e || !strcmp(e, "original");
     for (int i = 0; i < DM_GAME_NWINDOW_FN; i++) if (!strcmp(rows[i].build, m->build_id)) r = i;
     if (r < 0) {
@@ -760,7 +772,11 @@ static void window_apply(module_t *m) {
 #include "rt_pool.h"
 __attribute__((weak)) int vka_low_ram(void);
 static void rt_pool_apply(module_t *m) {
+#ifdef DM_SINGLE_HOST
+    const rtpool_row_t *rows = g_dm_profile->rt_pool;
+#else
     static const rtpool_row_t rows[] = DM_GAME_RT_POOL;
+#endif
     if (m->nro) return;
     int r = -1, other = -1;
     for (int i = 0; i < DM_GAME_NRT_POOL; i++) if (rows[i].build[0] && !strcmp(rows[i].module, m->name)) { if (!strcmp(rows[i].build, m->build_id)) r = i; else other = i; }
@@ -769,7 +785,11 @@ static void rt_pool_apply(module_t *m) {
         return;
     }
     const rtpool_row_t *row = &rows[r];
+#ifdef DM_SINGLE_HOST
+    const rcfg_row_t *rc = g_dm_profile->render_cfg;
+#else
     static const rcfg_row_t rc[] = DM_GAME_RENDER_CFG;
+#endif
     const rcfg_row_t *cfg = NULL;
     for (int i = 0; i < DM_GAME_NRENDER_CFG; i++) if (rc[i].build[0] && !strcmp(rc[i].build, m->build_id)) cfg = &rc[i];
     unsigned cw = cfg ? cfg->max_w : 0, ch = cfg ? cfg->max_h : 0, ow = 0, oh = 0, rw = 0, rh = 0; int pct = 50, need = -1;
@@ -813,7 +833,11 @@ static void rt_pool_apply(module_t *m) {
 // (the edge move), nshift = -shift, fade = 1 + shift / 360, top = half the UI height, stretch = the UI height / 1080. A word that does not hold its 4:3 value (another
 // pack's cut) leaves all seven as they are, and so does a shape outside 1:1..16:9: the variant is then the 4:3 mod.
 static void shape_apply(module_t *m) {
+#ifdef DM_SINGLE_HOST
+    const dm_shape_row_t *rows = g_dm_profile->shape_table;
+#else
     static const struct { const char *build, *variant; uint64_t off[7]; } rows[] = DM_GAME_SHAPE_TABLE;
+#endif
     static const float four3[7] = {0.75f, 0.75f, 180.0f, -180.0f, 1.5f, 720.0f, 4.0f / 3.0f};
     static const char *names[7] = {"cam", "squeeze", "shift", "nshift", "fade", "top", "stretch"};
     if (strcmp(m->name, "main") || m->nro) return;
