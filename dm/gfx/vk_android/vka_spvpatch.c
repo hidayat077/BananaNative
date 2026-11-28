@@ -2013,3 +2013,79 @@ uint32_t *vka_spv_remap_sets(const uint32_t *w, size_t nw, const uint32_t map[4]
     if (changed) *changed = ch;
     return o;
 }
+
+// A fragment shader whose math divides by zero (or feeds Inf back into 0*Inf) can write NaN to a colour target; Vulkan then spreads it
+// through bloom / downsample passes as bright blue-cyan flashes where Maxwell's fixed-function blend kept a finite value. Replace NaN
+// at the Output store with zero (the class's neutral colour), for scalar and vector float outputs. Component stores through an access
+// chain are left alone: none of the games using this so far need them, and re-typing them would change the write mask.
+uint32_t *vka_spv_nan_out(const uint32_t *w, size_t nw, size_t *out_nw, int *changed, char *err, size_t errn) {
+    *changed = 0; if (err) err[0] = 0;
+    enum { OpTypeBool = 20, OpTypeVector = 23, OpTypePointer = 32, OpConstantNull = 46, OpStore = 62, OpIsNan = 156, OpSelect = 169, SCOutput = 3 };
+    if (nw < 5 || w[0] != 0x07230203) { snprintf(err, errn, "not SPIR-V"); return NULL; }
+    uint32_t bound = w[3], t_f32 = 0, t_bool = 0, t_vec[5] = {0}, t_bvec[5] = {0}, t_null[5] = {0}, p_out[5] = {0};
+    uint32_t *out_n = calloc(bound, 1); vec_t o = {0}; size_t *sites = NULL, ns = 0, first_fn = nw;
+    if (!out_n) { snprintf(err, errn, "out of memory"); return NULL; }
+    for (size_t i = 5; i < nw;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > nw) { free(out_n); snprintf(err, errn, "bad instruction at word %zu", i); return NULL; }
+        if (op == OpTypeFloat && len >= 3 && w[i + 2] == 32) t_f32 = w[i + 1];
+        else if (op == OpTypeBool) t_bool = w[i + 1];
+        else if (op == OpTypeVector && len >= 4 && w[i + 3] >= 2 && w[i + 3] <= 4) {
+            if (w[i + 2] == t_f32 && t_f32) t_vec[w[i + 3]] = w[i + 1];
+            if (w[i + 2] == t_bool && t_bool) t_bvec[w[i + 3]] = w[i + 1];
+        }
+        else if (op == OpTypePointer && len >= 4 && w[i + 2] == SCOutput) {
+            if (w[i + 3] == t_f32 && t_f32) p_out[1] = w[i + 1];
+            for (int n = 2; n <= 4; n++) if (w[i + 3] == t_vec[n] && t_vec[n]) p_out[n] = w[i + 1];
+        }
+        else if (op == OpVariable && len >= 4 && w[i + 3] == SCOutput && w[i + 1] < bound && w[i + 2] < bound) {
+            uint32_t p = w[i + 2];
+            for (int n = 1; n <= 4; n++) if (p == p_out[n] && p_out[n]) out_n[w[i + 1]] = (uint8_t)n;
+        }
+        else if (op == OpConstantNull && len >= 3 && w[i + 1] < bound) {
+            for (int n = 1; n <= 4; n++) if (w[i + 2] == (n == 1 ? t_f32 : t_vec[n])) t_null[n] = w[i + 1];
+        }
+        else if (op == OpFunction && first_fn == nw) first_fn = i;
+        i += len;
+    }
+    if (!t_f32 || !t_bool || first_fn == nw) { free(out_n); return NULL; }
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if ((w[i] & 0xffff) == OpStore && len >= 3 && w[i + 1] < bound && out_n[w[i + 1]]) {
+            size_t *p = realloc(sites, (ns + 1) * sizeof *sites); if (!p) goto oom; sites = p; sites[ns++] = i;
+        }
+        i += len;
+    }
+    if (!ns) { free(out_n); free(sites); return NULL; }
+    uint32_t nb = bound, mk_null[5] = {0}, mk_bvec[5] = {0}, isn[5] = {0}, sel[5] = {0}; uint32_t nsite[5] = {0};
+    for (size_t k = 0; k < ns; k++) {
+        uint32_t n = out_n[w[sites[k] + 1]]; if (!n) continue;
+        if (!t_null[n]) t_null[n] = mk_null[n] = nb++;
+        if (!t_bvec[n]) t_bvec[n] = mk_bvec[n] = nb++;
+        isn[n] = nb++; sel[n] = nb++; nsite[n]++;
+    }
+    if (!put_n(&o, w, 5)) goto oom;
+    for (size_t i = 5; i < nw;) {
+        uint32_t len = w[i] >> 16;
+        if (i == first_fn) {
+            for (int n = 1; n <= 4; n++) {
+                if (mk_bvec[n]) { uint32_t x[5] = {5u << 16 | OpTypeVector, mk_bvec[n], t_bool, n, 0}; if (!put_n(&o, x, 4)) goto oom; }
+                if (mk_null[n]) { uint32_t x[3] = {3u << 16 | OpConstantNull, n == 1 ? t_f32 : t_vec[n], mk_null[n]}; if (!put_n(&o, x, 3)) goto oom; }
+            }
+        }
+        size_t k = 0; while (k < ns && sites[k] != i) k++;
+        if (k < ns) {
+            uint32_t n = out_n[w[i + 1]], val = w[i + 2];
+            uint32_t a[4] = {4u << 16 | OpIsNan, n == 1 ? t_bool : t_bvec[n], isn[n], val};
+            uint32_t b[6] = {6u << 16 | OpSelect, n == 1 ? t_f32 : t_vec[n], sel[n], isn[n], t_null[n], val};
+            uint32_t st[3] = {3u << 16 | OpStore, w[i + 1], sel[n]};
+            if (!put_n(&o, a, 4) || !put_n(&o, b, 6) || !put_n(&o, st, 3)) goto oom;
+        } else if (!put_n(&o, w + i, len)) goto oom;
+        i += len;
+    }
+    free(sites); free(out_n);
+    o.w[3] = nb; *out_nw = o.n; *changed = 1;
+    return o.w;
+oom:
+    free(sites); free(out_n); free(o.w); snprintf(err, errn, "out of memory"); return NULL;
+}

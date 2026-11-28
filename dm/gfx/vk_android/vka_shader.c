@@ -472,6 +472,16 @@ static void safe_rsqrt(uint64_t key, uint32_t **w, size_t *nb) {
     static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("shader %016llx: inverse square roots of scalars clamped before the divide (Maxwell RSQ)", (unsigned long long)key);
     free(*w); *w = o; *nb = on * 4;
 }
+// Vulkan keeps NaN written to a colour target and later passes (bloom, downsampling) spread it across the picture; Maxwell's fixed-function
+// blend ended it. Replace NaN in fragment Output stores with zero. DM_VK_NAN_OUT=0 restores the old module (an A/B switch).
+static void nan_out(uint64_t key, uint32_t **w, size_t *nb) {
+    if (!VKA_ENV("DM_VK_NAN_OUT", 1)) return;
+    size_t on = 0; int ch = 0; char e[256] = "";
+    uint32_t *o = vka_spv_nan_out(*w, *nb / sizeof **w, &on, &ch, e, sizeof e);
+    if (!o) { if (e[0]) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VRED("shader %016llx: NaN output sanitizer not made: %s", (unsigned long long)key, e); } return; }
+    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 8) VLOG("shader %016llx: NaN colour outputs replaced with zero (DM_VK_NAN_OUT)", (unsigned long long)key);
+    free(*w); *w = o; *nb = on * sizeof **w;
+}
 // The library's words for a module, made ready for this device: subgroups of one lane where the stage has none (single_lane), a geometry shader's empty runs filled (gs_fill)
 static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_t *nb) {
     if (e->stage == DMSH_VK_STAGE_FS) {
@@ -483,6 +493,7 @@ static void prep_words(const dmsh_vk_entry *e, uint64_t key, uint32_t **w, size_
     if (e->flags & DMSH_VK_F_SUBGROUP) single_lane(key, e->stage, w, nb);
     gs_fill(key, e->stage, w, nb);
     safe_rsqrt(key, w, nb);
+    if (e->stage == DMSH_VK_STAGE_FS) nan_out(key, w, nb);
 }
 // 512-entry reflection capture table). An entry's records of kind TEX_UBO with a count (a combined image sampler array whose element k is the handle at byte off + 8 k of
 // uniform slot reg, all elements with one sampler: skind SAMP, SAMP_TEX or SAMP_ID) are planned once: every module of the entry is rewritten on trial, and when all take it
