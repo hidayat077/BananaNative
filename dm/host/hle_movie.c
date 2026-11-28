@@ -1051,6 +1051,11 @@ HLE_FORCE("_ZN5movie7Decoder15GetOutputBufferEiPNS_6BufferE", "movie decoder: ge
             static int noted; if (!noted++) LOG("movie: client buffer of %zu bytes holds an NVNtexture (format %#x, %dx%d): native-texture output", cap, tf, tw, th);
             return md_out_tex(d, i, buf);
         }
+        static int noted; if (!noted++) {
+            uint64_t w[2] = {0, 0}; if (p) memcpy(w, p, sizeof w);
+            LOG("movie: GetOutputBuffer index %d: buffer %p cap %zu size %zu data %p words %016llx %016llx", i, buf, cap, G.size(buf), (void *)p,
+                (unsigned long long)w[0], (unsigned long long)w[1]);
+        }
         LOG("[RED] movie: client output buffer is %zu bytes, a frame needs %zu", cap, need); G.set_range(buf, 0, 0); return 0x100b;
     }
     if (d->out[i].pic && d->out[i].frm) {
