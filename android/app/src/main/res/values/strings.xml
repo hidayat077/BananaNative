@@ -189,8 +189,6 @@
     <string name="settings_on_the_controller_or_the">On the controller, or the phone without one</string>
     <string name="settings_overlay">Overlay</string>
     <string name="settings_picture_from_the_release_notes">Picture from the release notes</string>
-    <string name="settings_small_fix_updates">Small fix updates</string>
-    <string name="settings_small_fix_updates_help">Offer small fix releases when the app starts. Off: only big updates are offered; Check for updates still shows the newest. The next big update carries every fix.</string>
     <string name="settings_player_wiki">Player wiki</string>
     <string name="settings_remove_leftovers_and_old_files">Remove leftovers and old files; never saves</string>
     <string name="settings_select_a_user">Select a user</string>

@@ -41,6 +41,7 @@ The [games table](../dm/games/README.md#games) lists every title the app knows a
 | [Hellblade: Senua's Sacrifice](../dm/games/010044500CF8E000/README.md) | 1.1.0 (base) | `010044500CF8E000` |
 | [No Man's Sky](../dm/games/0100853015E86000/README.md) | v5308416 (7.10.0) | `0100853015E86000` |
 | [Super Mario Odyssey](../dm/games/0100000000010000/README.md) | 1.4.1 | `0100000000010000` |
+| [Animal Crossing: New Horizons](../dm/games/01006F8002326000/README.md) | 3.0.3 | `01006F8002326000` |
 
 ## Licence and credits
 

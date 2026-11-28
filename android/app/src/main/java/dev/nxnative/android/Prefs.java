@@ -18,10 +18,6 @@ final class Prefs {
     static SharedPreferences of(Context c) { return open(c, "launcher"); }
 
     /** The overlay over the game (master switch: the frame rate and the other items top right, Overlay; the build tag top left is always shown); on by default. DM_OVERLAY=0 / 1 in env.txt overrides it for a run. */
-    /** Whether the check at start also offers a small fix release ("Update type: hotfix" in its notes); off: only major and critical releases (UpdateCheck.kind). Default on */
-    static boolean hotfixUpdates(Context c) { return of(c).getBoolean("hotfix_updates", true); }
-    static void hotfixUpdates(Context c, boolean on) { of(c).edit().putBoolean("hotfix_updates", on).commit(); }
-
     static boolean overlay(Context c) { return of(c).getBoolean("overlay", true); }
     static void overlay(Context c, boolean on) { of(c).edit().putBoolean("overlay", on).commit(); }
 
